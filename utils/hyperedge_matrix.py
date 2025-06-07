@@ -7,20 +7,24 @@ from PySide6.QtWidgets import QDockWidget, QTableWidget, QTableWidgetItem
 from PySide6.QtGui import QIcon, QPixmap, QColor
 from PySide6.QtCore import Qt, QSize
 
+from .selection_bus import SelectionBus
+
 from .session_model import SessionModel
 
 
 class HyperedgeMatrixDock(QDockWidget):
     """Dock widget showing overlap between hyperedges."""
 
-    def __init__(self, parent=None, thumb_size: int = 64):
+    def __init__(self, bus: SelectionBus, parent=None, thumb_size: int = 64):
         super().__init__("Hyperedge Overlap", parent)
+        self.bus = bus
         self.thumb_size = thumb_size
         self.session: SessionModel | None = None
         self.table = QTableWidget()
         self.table.verticalHeader().setDefaultSectionSize(self.thumb_size)
         self.table.horizontalHeader().setDefaultSectionSize(self.thumb_size)
         self.setWidget(self.table)
+        self.table.cellClicked.connect(self._on_cell_clicked)
 
     # ------------------------------------------------------------------
     def set_model(self, session: SessionModel | None):
@@ -70,6 +74,20 @@ class HyperedgeMatrixDock(QDockWidget):
         self.apply_heatmap_coloring()
 
     # ------------------------------------------------------------------
+    def _on_cell_clicked(self, row: int, col: int):
+        """Send the intersection of the two selected hyperedges via the bus."""
+        if not self.session:
+            return
+        edges = list(self.session.hyperedges.keys())
+        if not (0 <= row < len(edges) and 0 <= col < len(edges)):
+            return
+        r_name = edges[row]
+        c_name = edges[col]
+        idxs = sorted(self.session.hyperedges[r_name] &
+                      self.session.hyperedges[c_name])
+        self.bus.set_images(idxs)
+
+    # ------------------------------------------------------------------
     @lru_cache(maxsize=256)
     def _load_thumb(self, edge_name: str) -> QPixmap:
         idxs = sorted(self.session.hyperedges.get(edge_name, [])) if self.session else []
@@ -94,16 +112,6 @@ class HyperedgeMatrixDock(QDockWidget):
                 if i == j:
                     continue
                 overlap = self._data[rk][ck]
-                p1 = overlap / len(self.session.hyperedges[rk]) if self.session.hyperedges[rk] else 0
-                p2 = overlap / len(self.session.hyperedges[ck]) if self.session.hyperedges[ck] else 0
-                score = 2 * (p1 * p2) / (p1 + p2) if (p1 + p2) > 0 else 0
-                if score > max_score:
-                    max_score = score
-        if max_score == 0:
-            max_score = 1
-
-        # Second pass: set colors
-        for i, rk in enumerate(hyperedge_keys):
             for j, ck in enumerate(hyperedge_keys):
                 item = self.table.item(i, j)
                 if item is None:

@@ -279,7 +279,7 @@ class MainWin(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, self.image_grid)
 
         # dock showing hyperedge overlap matrix
-        self.matrix_dock = HyperedgeMatrixDock(self)
+        self.matrix_dock = HyperedgeMatrixDock(self.bus, self)
         self.addDockWidget(Qt.BottomDockWidgetArea, self.matrix_dock)
 
         # menu ----------------------------------------------------------------

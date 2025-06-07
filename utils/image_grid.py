@@ -41,11 +41,13 @@ class ImageListModel(QAbstractListModel):
         self._session = session
         self._indexes = idxs
         self._thumb = thumb_size
+        self._preload = 64
 
         self._pixmaps: dict[int, QPixmap] = {}
         self._index_map = {idx: row for row, idx in enumerate(self._indexes)}
         self._placeholder = QPixmap(self._thumb, self._thumb)
         self._placeholder.fill(Qt.gray)
+        self._requested: set[int] = set()
 
         # background worker for loading thumbnails
         self._thread = QThread(self)
@@ -72,7 +74,7 @@ class ImageListModel(QAbstractListModel):
             idx = self._indexes[index.row()]
             pix = self._pixmaps.get(idx)
             if pix is None:
-                self.requestThumb.emit(idx)
+                self._request_range(index.row())
                 pix = self._placeholder
             return QIcon(pix)
         return None
@@ -85,10 +87,20 @@ class ImageListModel(QAbstractListModel):
 
     def _on_thumb_ready(self, idx: int, img: QImage):
         self._pixmaps[idx] = QPixmap.fromImage(img)
+        self._requested.discard(idx)
         row = self._index_map.get(idx)
         if row is not None:
             i = self.index(row)
             self.dataChanged.emit(i, i, [Qt.DecorationRole])
+
+    def _request_range(self, row: int):
+        start = max(0, row - self._preload)
+        end = min(len(self._indexes), row + self._preload + 1)
+        for r in range(start, end):
+            idx = self._indexes[r]
+            if idx not in self._pixmaps and idx not in self._requested:
+                self._requested.add(idx)
+                self.requestThumb.emit(idx)
 
 
 class ImageGridDock(QDockWidget):
