@@ -19,6 +19,7 @@ from utils.data_loader import (
 from utils.selection_bus import SelectionBus 
 from utils.session_model import SessionModel
 from utils.image_grid import ImageGridDock
+from utils.hyperedge_matrix import HyperedgeMatrixDock
 # from utils.hyperedge_list_utils import (
 #     calculate_similarity_matrix, perform_hierarchical_grouping, 
 #     rename_groups_sequentially, build_row_data
@@ -277,6 +278,9 @@ class MainWin(QMainWindow):
         self.image_grid = ImageGridDock(self.bus, self)
         self.addDockWidget(Qt.RightDockWidgetArea, self.image_grid)
 
+        # dock showing hyperedge overlap matrix
+        self.matrix_dock = HyperedgeMatrixDock(self)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.matrix_dock)
 
         # menu ----------------------------------------------------------------
         open_act = QAction("&Open Session…", self, triggered=self.open_session)
@@ -307,6 +311,7 @@ class MainWin(QMainWindow):
             QMessageBox.critical(self, "Load error", str(e))
             return
         self.image_grid.set_model(self.model)
+        self.matrix_dock.set_model(self.model)
         self.regroup()
 
 
@@ -361,6 +366,12 @@ class MainWin(QMainWindow):
         self.tree.selectionModel().selectionChanged.connect(
             self.tree._send_bus_update)
         self.tree.expandAll()
+
+        if hasattr(self, 'matrix_dock'):
+            self.matrix_dock.update_matrix()
+
+
+
 
     def _update_group_similarity(self, group_item: QStandardItem):
         """Recompute mean(similarity of children) and update group's cell."""
