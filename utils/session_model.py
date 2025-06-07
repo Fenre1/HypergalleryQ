@@ -1,0 +1,101 @@
+from __future__ import annotations           # for -> SessionModel typing
+import uuid, numpy as np, pandas as pd, h5py
+from pathlib import Path
+from typing import Dict, List, Set
+from PySide6.QtCore import QObject, Signal
+
+from .similarity import SIM_METRIC
+
+
+class SessionModel(QObject):
+    # ─── signals any view can subscribe to ──────────────────────────────
+    edgeRenamed      = Signal(str, str)      # old, new
+    layoutChanged    = Signal()              # big regroup or reload
+    similarityDirty  = Signal()              # vectors changed; views may flush
+
+    # ─── construction helpers ───────────────────────────────────────────
+    @classmethod
+    def load_h5(cls, path: Path) -> "SessionModel":
+        with h5py.File(path, "r") as hdf:
+            im_list = [x.decode() if isinstance(x, bytes) else x
+                       for x in hdf["file_list"][()]]
+            matrix  = hdf["clustering_results"][()]
+            cat_raw = (hdf["catList"][()] if "catList" in hdf
+                       else [f"edge_{i}" for i in range(matrix.shape[1])])
+            cat_list = [x.decode() if isinstance(x, bytes) else x for x in cat_raw]
+            df_edges = pd.DataFrame(matrix, columns=cat_list)
+            features = hdf["features"][()]
+
+        return cls(im_list, df_edges, features, path)
+
+    def __init__(self,
+                 im_list: List[str],
+                 df_edges: pd.DataFrame,
+                 features: np.ndarray,
+                 h5_path: Path):
+        super().__init__()
+        self.im_list  = im_list                              # list[str]
+        self.cat_list = list(df_edges.columns)               # list[str]
+        self.df_edges = df_edges                             # DataFrame (images×edges)
+        self.hyperedges, self.image_mapping = \
+            self._prepare_hypergraph_structures(df_edges)
+
+        self.features = features                             # np.ndarray (N×D)
+        self.hyperedge_avg_features = \
+            self._calculate_hyperedge_avg_features(features)
+
+        self.status_map = {n: {"uuid": str(uuid.uuid4()), "status": "Original"}
+                           for n in self.cat_list}
+        self.h5_path = h5_path
+
+    # ─── internal helpers (static) ──────────────────────────────────────
+    @staticmethod
+    def _prepare_hypergraph_structures(df):
+        hyperedges = {col: set(np.where(df[col] == 1)[0]) for col in df.columns}
+        image_mapping: Dict[int, Set[str]] = {}
+        rows, cols = np.where(df.values == 1)
+        for r, c in zip(rows, cols):
+            image_mapping.setdefault(r, set()).add(df.columns[c])
+        return hyperedges, image_mapping
+
+    def _calculate_hyperedge_avg_features(self, features):
+        n_feat = features.shape[1]
+        return {name: features[list(idx)].mean(axis=0) if idx else np.zeros(n_feat)
+                for name, idx in self.hyperedges.items()}
+
+    # ─── public API used by the GUI today ───────────────────────────────
+    def rename_edge(self, old: str, new: str) -> bool:
+        """Return True on success, False if duplicate/invalid."""
+        new = new.strip()
+        if (not new) or (new in self.hyperedges):
+            return False
+
+        # raw structures -------------------------------------------------
+        self.hyperedges[new] = self.hyperedges.pop(old)
+        self.df_edges.rename(columns={old: new}, inplace=True)
+        self.cat_list[self.cat_list.index(old)] = new
+        self.hyperedge_avg_features[new] = self.hyperedge_avg_features.pop(old)
+        self.status_map[new] = self.status_map.pop(old)
+
+        for imgs in self.image_mapping.values():
+            if old in imgs:
+                imgs.remove(old)
+                imgs.add(new)
+
+        # tell views -----------------------------------------------------
+        self.edgeRenamed.emit(old, new)
+        self.similarityDirty.emit()
+        return True
+
+    # convenience read-only properties -----------------------------------
+    def vector_for(self, name: str) -> np.ndarray | None:
+        return self.hyperedge_avg_features.get(name)
+
+    def similarity_map(self, ref_name: str) -> Dict[str, float]:
+        ref = self.vector_for(ref_name)
+        if ref is None:
+            return {}
+        names = list(self.hyperedge_avg_features)
+        mat   = np.stack([self.hyperedge_avg_features[n] for n in names])
+        sims  = SIM_METRIC(ref.reshape(1, -1), mat)[0]
+        return dict(zip(names, sims))
