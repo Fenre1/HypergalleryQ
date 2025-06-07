@@ -20,6 +20,10 @@ from utils.selection_bus import SelectionBus
 from utils.session_model import SessionModel
 from utils.image_grid import ImageGridDock
 from utils.hyperedge_matrix import HyperedgeMatrixDock
+# from utils.spatial_view import SpatialViewDock
+# from utils.spatial_view import SpatialViewDock
+from utils.spatial_viewQ import SpatialViewQDock
+
 # from utils.hyperedge_list_utils import (
 #     calculate_similarity_matrix, perform_hierarchical_grouping, 
 #     rename_groups_sequentially, build_row_data
@@ -274,6 +278,14 @@ class MainWin(QMainWindow):
         self.tree_dock.setWidget(self.tree)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.tree_dock)
 
+        # # 2D spatial visualization dock
+        # self.spatial_dock = SpatialViewDock(self.bus, self)
+        # self.addDockWidget(Qt.BottomDockWidgetArea, self.spatial_dock)
+        # 2D spatial visualization dock
+        self.spatial_dock = SpatialViewQDock(self.bus, self)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.spatial_dock)
+
+
         # dock for displaying images
         self.image_grid = ImageGridDock(self.bus, self)
         self.addDockWidget(Qt.RightDockWidgetArea, self.image_grid)
@@ -312,6 +324,8 @@ class MainWin(QMainWindow):
             return
         self.image_grid.set_model(self.model)
         self.matrix_dock.set_model(self.model)
+        if hasattr(self, 'spatial_dock'):
+            self.spatial_dock.set_model(self.model)
         self.regroup()
 
 

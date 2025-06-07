@@ -3,3 +3,4 @@ pandas
 scikit-learn
 h5py
 PySide6
+pyqtgraph
