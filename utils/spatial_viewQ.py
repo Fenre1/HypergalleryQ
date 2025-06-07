@@ -23,6 +23,9 @@ class LassoViewBox(pg.ViewBox):
         self._drawing = False
         self._path = QPainterPath()
         self._item = None
+        self._panning = False
+        self._pan_start = None
+        self._range_start = None
 
     def mousePressEvent(self, ev):
         if ev.button() == Qt.LeftButton:
@@ -31,33 +34,65 @@ class LassoViewBox(pg.ViewBox):
             pen = QPen(pg.mkColor('y'))
             self._item = pg.QtWidgets.QGraphicsPathItem()
             self._item.setPen(pen)
+            self._item.setFlag(
+                pg.QtWidgets.QGraphicsPathItem.ItemIgnoresTransformations
+            )
             self.addItem(self._item)
             ev.accept()
-        else:
-            super().mousePressEvent(ev)
+            return
+        if ev.button() == Qt.RightButton:
+            self._panning = True
+            self._pan_start = ev.pos()
+            self._range_start = self.viewRange()
+            ev.accept()
+            return
+        super().mousePressEvent(ev)
 
     def mouseMoveEvent(self, ev):
         if self._drawing:
             self._path.lineTo(self.mapToView(ev.pos()))
             self._item.setPath(self._path)
             ev.accept()
-        else:
-            super().mouseMoveEvent(ev)
+            return
+        if self._panning:
+            if self._pan_start is None or self._range_start is None:
+                return
+            dx = ev.pos().x() - self._pan_start.x()
+            dy = ev.pos().y() - self._pan_start.y()
+            (x0, x1), (y0, y1) = self._range_start
+            w = self.width()
+            h = self.height()
+            dx_data = -dx * (x1 - x0) / w
+            dy_data = -dy * (y1 - y0) / h
+            self.setXRange(x0 + dx_data, x1 + dx_data, padding=0)
+            self.setYRange(y0 + dy_data, y1 + dy_data, padding=0)
+            ev.accept()
+            return
+        super().mouseMoveEvent(ev)
 
     def mouseReleaseEvent(self, ev):
         if self._drawing and ev.button() == Qt.LeftButton:
             self._drawing = False
-            self.removeItem(self._item)
-            pts = [self.mapToView(ev.pos())]
-            path = []
-            for i in range(self._path.elementCount()):
-                el = self._path.elementAt(i)
-                path.append(QPointF(el.x, el.y))
-            if len(path) > 2:
-                self.sigLassoFinished.emit(path)
+            item = self._item
+            path = self._path
+            self.removeItem(item)
+            self._item = None
+            self._path = QPainterPath()
+            pts = []
+            for i in range(path.elementCount()):
+                el = path.elementAt(i)
+                pts.append(QPointF(el.x, el.y))
+            if len(pts) > 2:
+                self.sigLassoFinished.emit(pts)
             ev.accept()
-        else:
-            super().mouseReleaseEvent(ev)
+            return
+        if self._panning and ev.button() == Qt.RightButton:
+            self._panning = False
+            self._pan_start = None
+            self._range_start = None
+            ev.accept()
+            return
+        super().mouseReleaseEvent(ev)
 
 
 class SpatialViewQDock(QDockWidget):
@@ -117,11 +152,20 @@ class SpatialViewQDock(QDockWidget):
             return
 
         self.embedding = umap.UMAP(n_components=2).fit_transform(session.features)
-        self.scatter = pg.ScatterPlotItem(x=self.embedding[:, 0],
-                                          y=self.embedding[:, 1],
-                                          size=5,
-                                          brush=pg.mkBrush('gray'))
+        self.scatter = pg.ScatterPlotItem(
+            x=self.embedding[:, 0],
+            y=self.embedding[:, 1],
+            size=5,
+            pen=None,
+            brush=pg.mkBrush('gray'),
+            symbol='o',
+        )
+        self.scatter.setZValue(0)
         self.plot.addItem(self.scatter)
+        # auto-range once after adding scatter plot
+        self.plot.enableAutoRange(pg.ViewBox.XYAxes, True)
+        self.plot.autoRange()
+        self.plot.enableAutoRange(pg.ViewBox.XYAxes, False)
 
         edges = list(session.hyperedges)
         self.color_map = {
@@ -134,6 +178,8 @@ class SpatialViewQDock(QDockWidget):
         if self.embedding is None:
             return
         poly = [(p.x(), p.y()) for p in pts]
+        if poly and poly[0] != poly[-1]:
+            poly.append(poly[0])
         path = MplPath(poly)
         idxs = np.nonzero(path.contains_points(self.embedding))[0]
         self.bus.set_images(list(map(int, idxs)))
@@ -198,10 +244,18 @@ class SpatialViewQDock(QDockWidget):
                 continue
             pix = pix.scaled(128, 128, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             item = QGraphicsPixmapItem(pix)
-            item.setOffset(-pix.width()/2, -pix.height()/2)
+            item.setOffset(-pix.width() / 2, -pix.height() / 2)
             item.setPos(self.embedding[idx, 0], self.embedding[idx, 1])
             item.setFlag(QGraphicsPixmapItem.ItemIgnoresTransformations)
-            rect = QGraphicsRectItem(0, 0, pix.width(), pix.height(), item)
+            item.setZValue(1)
+            rect = QGraphicsRectItem(
+                -pix.width() / 2,
+                -pix.height() / 2,
+                pix.width(),
+                pix.height(),
+                item,
+            )
+            rect.setFlag(QGraphicsRectItem.ItemIgnoresTransformations)
             pen = QPen(QColor(color))
             pen.setWidth(2)
             rect.setPen(pen)
