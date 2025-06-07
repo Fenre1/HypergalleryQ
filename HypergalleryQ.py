@@ -324,8 +324,7 @@ class MainWin(QMainWindow):
             return
         self.image_grid.set_model(self.model)
         self.matrix_dock.set_model(self.model)
-        if hasattr(self, 'spatial_dock'):
-            self.spatial_dock.set_model(self.model)
+        self.spatial_dock.set_model(self.model)
         self.regroup()
 
 
