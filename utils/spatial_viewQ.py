@@ -8,6 +8,7 @@ import pyqtgraph as pg
 # Pull all Qt classes through pyqtgraph's wrapper so bindings stay consistent
 from pyqtgraph.Qt import QtWidgets, QtGui, QtCore
 from matplotlib.path import Path as MplPath
+from matplotlib import pyplot as plt
 import umap
 
 from .selection_bus import SelectionBus
@@ -74,6 +75,7 @@ class LassoViewBox(pg.ViewBox):
             current_pos = self.mapToView(ev.pos())
             delta = self._pan_start_pos - current_pos
             self.translateBy(delta)
+            self._pan_start_pos = current_pos
             ev.accept()
         else:
             super().mouseMoveEvent(ev)
@@ -136,8 +138,8 @@ class SpatialViewQDock(QDockWidget):
     def set_model(self, session: SessionModel | None):
         print("\n--- [set_model] called ---")
         self.session = session
-        # self.plot.clear()
-        # self._clear_image_items()
+        self.plot.clear()
+        self._clear_image_items()
         self.scatter = None
         if not session or session.features is None or len(session.features) == 0:
             print("[set_model] No data; clearing.")
@@ -149,6 +151,12 @@ class SpatialViewQDock(QDockWidget):
             size=7, pen=None, brush=pg.mkBrush('gray'), symbol='o'
         )
         self.plot.addItem(self.scatter)
+        edges = list(session.hyperedges)
+        cmap = plt.get_cmap("tab20")
+        self.color_map = {
+            n: plt.matplotlib.colors.to_hex(cmap(i / len(edges)))
+            for i, n in enumerate(edges)
+        }
         self.plot.autoRange()
         print('self.scatter2',self.scatter.getData())
 
@@ -167,14 +175,82 @@ class SpatialViewQDock(QDockWidget):
         if not self.session or self.embedding is None or self.scatter is None:
             return
         self._clear_image_items()
-        # Example: re-center on selection or recolor...
-        # (Implementation omitted for brevity.)
+
+        brushes = [pg.mkBrush('gray')] * len(self.embedding)
+        if names:
+            main = names[0]
+            selected = set(self.session.hyperedges.get(main, set()))
+            overlaps = set()
+            for idx in selected:
+                overlaps.update(self.session.image_mapping.get(idx, set()))
+            overlaps.discard(main)
+
+            for idx in range(len(self.embedding)):
+                edges = self.session.image_mapping.get(idx, set())
+                if main in edges:
+                    brushes[idx] = pg.mkBrush(self.color_map.get(main, 'red'))
+                else:
+                    ov = next((e for e in overlaps if e in edges), None)
+                    if ov:
+                        brushes[idx] = pg.mkBrush(self.color_map.get(ov, 'blue'))
+
+            pts = self.embedding[list(selected)]
+            if len(pts):
+                xmin, xmax = pts[:, 0].min(), pts[:, 0].max()
+                ymin, ymax = pts[:, 1].min(), pts[:, 1].max()
+                dx = xmax - xmin
+                dy = ymax - ymin
+                pad_x = dx * 0.1 if dx > 0 else 1
+                pad_y = dy * 0.1 if dy > 0 else 1
+                self.view.setXRange(xmin - pad_x, xmax + pad_x)
+                self.view.setYRange(ymin - pad_y, ymax + pad_y)
+
+            unique = [i for i in selected
+                      if len(self.session.image_mapping.get(i, set())) == 1]
+            if not unique:
+                imgs = list(selected)
+                if len(imgs) > 3:
+                    imgs = list(np.random.choice(imgs, 3, replace=False))
+            else:
+                imgs = unique[:3]
+            self._add_sample_images(imgs, self.color_map.get(main, 'yellow'))
+
+            for edge in overlaps:
+                inter = list(self.session.hyperedges.get(edge, set()) & selected)
+                if len(inter) > 3:
+                    inter = list(np.random.choice(inter, 3, replace=False))
+                self._add_sample_images(inter, self.color_map.get(edge, 'yellow'))
+
+        self.scatter.setData(x=self.embedding[:,0], y=self.embedding[:,1],
+                             brush=brushes, size=7, pen=None, symbol='o')
 
     def _clear_image_items(self):
         for item in self.image_items:
             if item.scene():
                 self.plot.removeItem(item)
         self.image_items.clear()
+
+    def _add_sample_images(self, idxs: list[int], color: str):
+        for idx in idxs:
+            img_path = self.session.im_list[idx]
+            pix = QPixmap(img_path)
+            if pix.isNull():
+                continue
+            if pix.width() > pix.height():
+                pix = pix.scaledToWidth(64, Qt.SmoothTransformation)
+            else:
+                pix = pix.scaledToHeight(64, Qt.SmoothTransformation)
+
+            item = QGraphicsPixmapItem(pix)
+            item.setOffset(-pix.width() / 2, -pix.height() / 2)
+            item.setPos(self.embedding[idx, 0], self.embedding[idx, 1])
+            rect = QGraphicsRectItem(0, 0, pix.width(), pix.height(), parent=item)
+            pen = QPen(QColor(color))
+            pen.setWidth(2)
+            rect.setPen(pen)
+            rect.setBrush(Qt.NoBrush)
+            self.plot.addItem(item)
+            self.image_items.append(item)
 
     def _run_sanity_check_test(self):
         test_scatter = pg.ScatterPlotItem(x=[0,1,2], y=[0,1,0], size=20, pen=None, brush='r')
