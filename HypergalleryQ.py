@@ -6,7 +6,8 @@ from utils.similarity import SIM_METRIC
 from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QTreeView, QMainWindow, QFileDialog, QVBoxLayout,
-    QWidget, QLabel, QSlider, QMessageBox, QPushButton
+    QWidget, QLabel, QSlider, QMessageBox, QPushButton, QDockWidget,
+    QStackedWidget
 )
 from PySide6.QtGui import QStandardItem, QStandardItemModel, QAction
 from PySide6.QtCore import Qt, QSignalBlocker, QObject, Signal
@@ -17,6 +18,7 @@ from utils.data_loader import (
 )
 from utils.selection_bus import SelectionBus 
 from utils.session_model import SessionModel
+from utils.image_grid import ImageGridDock
 # from utils.hyperedge_list_utils import (
 #     calculate_similarity_matrix, perform_hierarchical_grouping, 
 #     rename_groups_sequentially, build_row_data
@@ -236,6 +238,7 @@ class MainWin(QMainWindow):
 
         self.model = None           # your SessionModel; unchanged
         self.bus   = SelectionBus() # ← single shared bus
+        self.bus.edgesChanged.connect(self._update_bus_images)
         self.bus.edgesChanged.connect(print)
         # ───────────────── existing widgets … ─────────────────────────
         self.tree = HyperEdgeTree(self.bus)  
@@ -257,10 +260,23 @@ class MainWin(QMainWindow):
         lay.addWidget(self.label)
         lay.addWidget(self.slider)
         lay.addWidget(self.btn_sim)
-        lay.addWidget(self.tree)
+        # lay.addWidget(self.tree)
 
-        w = QWidget(); w.setLayout(lay)
-        self.setCentralWidget(w)
+        # w = QWidget(); w.setLayout(lay)
+        # self.setCentralWidget(w)
+        page = QWidget(); page.setLayout(lay)
+        self.stack = QStackedWidget()
+        self.stack.addWidget(page)
+        self.setCentralWidget(self.stack)
+
+        self.tree_dock = QDockWidget("Edges", self)
+        self.tree_dock.setWidget(self.tree)
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.tree_dock)
+
+        # dock for displaying images
+        self.image_grid = ImageGridDock(self.bus, self)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.image_grid)
+
 
         # menu ----------------------------------------------------------------
         open_act = QAction("&Open Session…", self, triggered=self.open_session)
@@ -290,6 +306,7 @@ class MainWin(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Load error", str(e))
             return
+        self.image_grid.set_model(self.model)
         self.regroup()
 
 
@@ -313,7 +330,17 @@ class MainWin(QMainWindow):
         sim_item.setData("",   Qt.DisplayRole)
     
     
+    def _update_bus_images(self, names: list[str]):
+            """Update bus.imagesChanged based on selected hyper-edge names."""
+            if not self.model:
+                self.bus.set_images([])
+                return
 
+            idxs = set()
+            for n in names:
+                idxs.update(self.model.hyperedges.get(n, set()))
+
+            self.bus.set_images(sorted(idxs))
 
     def regroup(self):
         if not self.model:
@@ -340,7 +367,13 @@ class MainWin(QMainWindow):
         vals = [group_item.child(r, SIM_COL).data(Qt.UserRole)
                 for r in range(group_item.rowCount())]
         vals = [v for v in vals if v is not None]
-        sim_item = group_item.child(0, SIM_COL).parent().child(group_item.row(), SIM_COL)
+        
+        parent = group_item.parent()
+        if parent is None:
+            parent = group_item.model().invisibleRootItem()
+        sim_item = parent.child(group_item.row(), SIM_COL)
+
+
         if vals:
             mean_val = float(np.mean(vals))
             sim_item.setData(mean_val, Qt.UserRole)
