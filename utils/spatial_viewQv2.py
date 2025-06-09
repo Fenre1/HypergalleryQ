@@ -23,7 +23,7 @@ import umap
 
 
 class LassoViewBox(pg.ViewBox):
-    """ViewBox that emits a polygon drawn with the left mouse button."""
+    """ViewBox that emits a polygon drawn with Shift + left mouse."""
   
     sigLassoFinished = Signal(list)
 
@@ -34,24 +34,29 @@ class LassoViewBox(pg.ViewBox):
         self._item = None
 
     def mousePressEvent(self, ev):
-        if ev.button() == Qt.LeftButton:
+        if (
+            ev.button() == Qt.LeftButton
+            and ev.modifiers() & Qt.ShiftModifier
+        ):
             self._drawing = True
             self._path = QPainterPath(self.mapToView(ev.pos()))
-            pen = QPen(pg.mkColor('y'))
+            pen = QPen(pg.mkColor("y"))
             self._item = pg.QtWidgets.QGraphicsPathItem()
             self._item.setPen(pen)
             self.addItem(self._item)
             ev.accept()
-        else:
-            super().mousePressEvent(ev)
+            return
+
+        super().mousePressEvent(ev)
 
     def mouseMoveEvent(self, ev):
         if self._drawing:
             self._path.lineTo(self.mapToView(ev.pos()))
             self._item.setPath(self._path)
             ev.accept()
-        else:
-            super().mouseMoveEvent(ev)
+            return
+
+        super().mouseMoveEvent(ev)
 
 
 
@@ -69,8 +74,10 @@ class LassoViewBox(pg.ViewBox):
             if len(path) > 2:
                 self.sigLassoFinished.emit(path)
             ev.accept()
-        else:
-            super().mouseReleaseEvent(ev)
+            return
+
+        super().mouseReleaseEvent(ev)
+
 
 
 
