@@ -4,14 +4,21 @@ import pandas as pd
 import numpy as np
 from utils.similarity import SIM_METRIC
 from pathlib import Path
-from PySide6.QtWidgets import (
+# from PySide6.QtWidgets import (
+#     QApplication, QTreeView, QMainWindow, QFileDialog, QVBoxLayout,
+#     QWidget, QLabel, QSlider, QMessageBox, QPushButton, QDockWidget,
+#     QStackedWidget
+# )
+# from PySide6.QtGui import QStandardItem, QStandardItemModel, QAction
+# from PySide6.QtCore import Qt, QSignalBlocker, QObject, Signal
+
+from PyQt5.QtWidgets import (
     QApplication, QTreeView, QMainWindow, QFileDialog, QVBoxLayout,
     QWidget, QLabel, QSlider, QMessageBox, QPushButton, QDockWidget,
-    QStackedWidget
+    QStackedWidget, QAction
 )
-from PySide6.QtGui import QStandardItem, QStandardItemModel, QAction
-from PySide6.QtCore import Qt, QSignalBlocker, QObject, Signal
-
+from PyQt5.QtGui import QStandardItem, QStandardItemModel
+from PyQt5.QtCore import Qt, QSignalBlocker, QObject, pyqtSignal as Signal
 
 from utils.data_loader import (
     DATA_DIRECTORY, get_h5_files_in_directory, load_session_data
@@ -22,8 +29,8 @@ from utils.image_grid import ImageGridDock
 from utils.hyperedge_matrix import HyperedgeMatrixDock
 # from utils.spatial_view import SpatialViewDock
 # from utils.spatial_view import SpatialViewDock
-from utils.spatial_viewQ import SpatialViewQDock
-
+from utils.spatial_viewQv2 import SpatialViewQDock
+# from utils.scatter_widget import ScatterPlotWidget
 # from utils.hyperedge_list_utils import (
 #     calculate_similarity_matrix, perform_hierarchical_grouping, 
 #     rename_groups_sequentially, build_row_data
@@ -272,20 +279,35 @@ class MainWin(QMainWindow):
         page = QWidget(); page.setLayout(lay)
         self.stack = QStackedWidget()
         self.stack.addWidget(page)
-        self.setCentralWidget(self.stack)
+        #self.setCentralWidget(self.stack)
 
         self.tree_dock = QDockWidget("Edges", self)
         self.tree_dock.setWidget(self.tree)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.tree_dock)
 
-        # # 2D spatial visualization dock
-        # self.spatial_dock = SpatialViewDock(self.bus, self)
-        # self.addDockWidget(Qt.BottomDockWidgetArea, self.spatial_dock)
-        # 2D spatial visualization dock
+        #2D spatial visualization dock
         self.spatial_dock = SpatialViewQDock(self.bus, self)
         self.addDockWidget(Qt.BottomDockWidgetArea, self.spatial_dock)
-
-
+        # 2D spatial visualization dock
+        # self.spatial_dock = SpatialViewDock(self.bus, self)
+        # self.addDockWidget(Qt.BottomDockWidgetArea, self.spatial_dock)
+        # import pyqtgraph as pg
+        # print(pg.__version__)
+        # # self.scatter = ScatterPlotWidget()
+        # # self.setCentralWidget(self.scatter)           # that’s it
+        # plot_widget = pg.PlotWidget()
+        # self.setCentralWidget(plot_widget)
+        # scatter = pg.ScatterPlotItem(
+        #     x=[1, 3], y=[2, 4],
+        #     pen=None, brush=pg.mkBrush('r'), size=10,
+        #     pxMode=False           # <- data-space, unaffected by the Qt bug
+        # )
+        # print(scatter.opts['pxMode'])             # will say True
+        # plot_widget.addItem(scatter)
+        # vb = plot_widget.getViewBox()
+        # print("autoRange flags:", vb.state['autoRange'])
+        # print("ViewBox class:", type(vb))
+        # print(scatter.getData())
         # dock for displaying images
         self.image_grid = ImageGridDock(self.bus, self)
         self.addDockWidget(Qt.RightDockWidgetArea, self.image_grid)

@@ -3,9 +3,13 @@ from __future__ import annotations
 from typing import List
 from functools import lru_cache
 
-from PySide6.QtWidgets import QDockWidget, QTableWidget, QTableWidgetItem
-from PySide6.QtGui import QIcon, QPixmap, QColor
-from PySide6.QtCore import Qt, QSize
+# from PySide6.QtWidgets import QDockWidget, QTableWidget, QTableWidgetItem
+# from PySide6.QtGui import QIcon, QPixmap, QColor
+# from PySide6.QtCore import Qt, QSize
+from PyQt5.QtWidgets import QDockWidget, QTableWidget, QTableWidgetItem
+from PyQt5.QtGui import QIcon, QPixmap, QColor
+from PyQt5.QtCore import Qt, QSize
+
 
 from .selection_bus import SelectionBus
 

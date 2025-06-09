@@ -10,8 +10,11 @@ from matplotlib.figure import Figure
 from matplotlib.widgets import LassoSelector
 from matplotlib.path import Path
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
-from PySide6.QtWidgets import QDockWidget, QWidget, QVBoxLayout
-from PySide6.QtGui import QPalette
+# from PySide6.QtWidgets import QDockWidget, QWidget, QVBoxLayout
+# from PySide6.QtGui import QPalette
+from PyQt5.QtWidgets import QDockWidget, QWidget, QVBoxLayout
+from PyQt5.QtGui import QPalette
+
 
 from .selection_bus import SelectionBus
 from .session_model import SessionModel
@@ -93,7 +96,8 @@ class SpatialViewDock(QDockWidget):
         rely = (cur_ymax - ydata) / (cur_ymax - cur_ymin)
         self.ax.set_xlim(xdata - (1 - relx) * width, xdata + relx * width)
         self.ax.set_ylim(ydata - (1 - rely) * height, ydata + rely * height)
-        self.canvas.draw_idle()
+        self._invalidate_background()
+        self.blit()
 
     # ------------------------------------------------------------------
     def _on_press(self, event):
@@ -123,7 +127,8 @@ class SpatialViewDock(QDockWidget):
         dy_data = dy / self.canvas.height() * height
         self.ax.set_xlim(xmin - dx_data, xmax - dx_data)
         self.ax.set_ylim(ymin - dy_data, ymax - dy_data)
-        self.canvas.draw_idle()
+        self._invalidate_background()
+        self.blit()
 
     # ------------------------------------------------------------------
     def set_model(self, session: SessionModel | None):
@@ -132,7 +137,7 @@ class SpatialViewDock(QDockWidget):
         self.image_annotations.clear()
         self._apply_theme()
         if not session:
-            self.canvas.draw_idle()
+            self.blit()
             return
 
         self.embedding = umap.UMAP(n_components=2).fit_transform(session.features)
@@ -154,7 +159,7 @@ class SpatialViewDock(QDockWidget):
 
         self.lasso = LassoSelector(self.ax, onselect=self._on_lasso_select, button=1)
         self.ax.set_title("UMAP embedding")
-        self.canvas.draw_idle()
+        self.blit()
 
     # ------------------------------------------------------------------
     def _on_lasso_select(self, verts):
@@ -199,7 +204,7 @@ class SpatialViewDock(QDockWidget):
                 pad_y = dy * 0.1 if dy > 0 else 1
                 self.ax.set_xlim(xmin - pad_x, xmax + pad_x)
                 self.ax.set_ylim(ymin - pad_y, ymax + pad_y)
-
+                self._invalidate_background()
             # show sample images
             # images unique to the main hyperedge (or random if none)
             unique = [i for i in selected
@@ -219,7 +224,7 @@ class SpatialViewDock(QDockWidget):
                 self._add_sample_images(inter, self.color_map.get(edge, "yellow"))
 
         self.scatter.set_color(colors)
-        self.canvas.draw_idle()
+        self.blit()
 
     # ------------------------------------------------------------------
     def _add_sample_images(self, idxs: list[int], color: str):
@@ -247,4 +252,31 @@ class SpatialViewDock(QDockWidget):
         for ab in self.image_annotations:
             ab.remove()
         self.image_annotations.clear()
-        self.canvas.draw_idle()
+        self.blit()
+    
+    def _invalidate_background(self, *_):
+        self._background = None
+
+    def blit(self):
+        """Efficiently redraw the canvas using matplotlib's blitting."""
+        if not self.canvas.supports_blit:
+            self.canvas.draw_idle()
+            return
+
+        if self._background is None:
+            # full draw is unavoidable; grab a fresh background afterwards
+            self.canvas.draw()
+            self._background = self.canvas.copy_from_bbox(self.ax.bbox)
+            return  # no need to draw animated artists this round
+
+        if not hasattr(self, "_background"):
+            self._background = self.canvas.copy_from_bbox(self.ax.bbox)
+        else:
+            self.canvas.restore_region(self._background)
+
+        if self.scatter is not None:
+            self.ax.draw_artist(self.scatter)
+        for ab in self.image_annotations:
+            self.ax.draw_artist(ab)
+
+        self.canvas.blit(self.ax.bbox)

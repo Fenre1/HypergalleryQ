@@ -1,11 +1,20 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import (
+# from PySide6.QtWidgets import (
+#     QListView, QDockWidget
+# )
+
+from PyQt5.QtWidgets import (
     QListView, QDockWidget
 )
-from PySide6.QtGui import QPixmap, QIcon, QImage
-from PySide6.QtCore import (
-    Qt, QAbstractListModel, QModelIndex, QSize, QObject, QThread, Signal
+
+# from PySide6.QtGui import QPixmap, QIcon, QImage
+# from PySide6.QtCore import (
+#     Qt, QAbstractListModel, QModelIndex, QSize, QObject, QThread, Signal
+# )
+from PyQt5.QtGui import QPixmap, QIcon, QImage
+from PyQt5.QtCore import (
+    Qt, QAbstractListModel, QModelIndex, QSize, QObject, QThread, pyqtSignal as Signal
 )
 
 from .selection_bus import SelectionBus

@@ -2,8 +2,8 @@ from __future__ import annotations           # for -> SessionModel typing
 import uuid, numpy as np, pandas as pd, h5py
 from pathlib import Path
 from typing import Dict, List, Set
-from PySide6.QtCore import QObject, Signal
-
+# from PySide6.QtCore import QObject, Signal
+from PyQt5.QtCore import QObject, pyqtSignal as Signal
 from .similarity import SIM_METRIC
 
 
