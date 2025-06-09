@@ -29,91 +29,34 @@ import umap
 
 
 class LassoViewBox(pg.ViewBox):
-
-
     """ViewBox that emits a polygon drawn with the left mouse button."""
-
-   
-
-
+  
     sigLassoFinished = Signal(list)
 
-
-
-
-
     def __init__(self, *args, **kwargs):
-
-
         super().__init__(*args, **kwargs)
-
-
         self._drawing = False
-
-
         self._path = QPainterPath()
-
-
         self._item = None
 
-
-
-
-
     def mousePressEvent(self, ev):
-
-
         if ev.button() == Qt.LeftButton:
-
-
             self._drawing = True
-
-
             self._path = QPainterPath(self.mapToView(ev.pos()))
-
-
             pen = QPen(pg.mkColor('y'))
-
-
             self._item = pg.QtWidgets.QGraphicsPathItem()
-
-
             self._item.setPen(pen)
-
-
             self.addItem(self._item)
-
-
             ev.accept()
-
-
         else:
-
-
             super().mousePressEvent(ev)
 
-
-
-
-
     def mouseMoveEvent(self, ev):
-
-
         if self._drawing:
-
-
             self._path.lineTo(self.mapToView(ev.pos()))
-
-
             self._item.setPath(self._path)
-
-
             ev.accept()
-
-
         else:
-
-
             super().mouseMoveEvent(ev)
 
 
@@ -121,44 +64,18 @@ class LassoViewBox(pg.ViewBox):
 
 
     def mouseReleaseEvent(self, ev):
-
-
         if self._drawing and ev.button() == Qt.LeftButton:
-
-
             self._drawing = False
-
-
             self.removeItem(self._item)
-
-
             pts = [self.mapToView(ev.pos())]
-
-
             path = []
-
-
             for i in range(self._path.elementCount()):
-
-
                 el = self._path.elementAt(i)
-
-
                 path.append(QPointF(el.x, el.y))
-
-
             if len(path) > 2:
-
-
                 self.sigLassoFinished.emit(path)
-
-
             ev.accept()
-
-
         else:
-
-
             super().mouseReleaseEvent(ev)
 
 
@@ -169,111 +86,58 @@ class LassoViewBox(pg.ViewBox):
 
 
 class SpatialViewQDock(QDockWidget):
-
-
     """PyQtGraph-based spatial view with lasso selection."""
-
-
-
-
-
     def __init__(self, bus: SelectionBus, parent=None):
-
-
         super().__init__("Spatial View", parent)
-
-
         self.bus = bus
-
-
         self.session: SessionModel | None = None
-
-
         self.embedding: np.ndarray | None = None
-
-
         self.color_map: dict[str, str] = {}
-
-
         self.image_items: list[QGraphicsPixmapItem] = []
 
-
-
-
-
         self.view = LassoViewBox()
-
-
         self.view.sigLassoFinished.connect(self._on_lasso_select)
-
-
         self.plot = pg.PlotWidget(viewBox=self.view)
-
-
-        self._apply_theme()
-
-
-
-
-
+        # self._apply_theme()
         widget = QWidget()
-
-
         layout = QVBoxLayout(widget)
-
-
         layout.addWidget(self.plot)
-
-
         self.setWidget(widget)
 
-
-
-
-
         self.scatter = None
-
-
         self.bus.edgesChanged.connect(self._on_edges_changed)
 
-
-
-
-
     # ------------------------------------------------------------------
 
+   # def _is_dark_mode(self) -> bool:
+   #     """Return True if the application should use dark colors."""
+    #     if os.getenv("HYPERGALLERY_DARK_MODE"):
+    #         return True
+
+    #     pal = QApplication.palette()
+    #     col = pal.color(QPalette.Window)
+    #     # simple luminance check
+    #     lum = 0.299 * col.red() + 0.587 * col.green() + 0.114 * col.blue()
+    #     return lum < 128
 
 
 
-    def _is_dark_mode(self) -> bool:
-        """Return True if the application should use dark colors."""
-        if os.getenv("HYPERGALLERY_DARK_MODE"):
-            return True
-
-        pal = QApplication.palette()
-        col = pal.color(QPalette.Window)
-        # simple luminance check
-        lum = 0.299 * col.red() + 0.587 * col.green() + 0.114 * col.blue()
-        return lum < 128
+    # # ------------------------------------------------------------------
 
 
-
-    # ------------------------------------------------------------------
-
-
-    def _apply_theme(self):
-        if self._is_dark_mode():
-            bg = "#333333"
-            fg = "#FFFFFF"
-        else:
-            bg = "#FFFFFF"
-            fg = "#000000"
-        self.plot.setBackground(bg)
-        ax = self.plot.getPlotItem()
-        ax.getAxis('bottom').setPen(fg)
-        ax.getAxis('left').setPen(fg)
-        ax.getAxis('bottom').setTextPen(fg)
-        ax.getAxis('left').setTextPen(fg)
+    # def _apply_theme(self):
+    #     if self._is_dark_mode():
+    #         bg = "#333333"
+    #         fg = "#FFFFFF"
+    #     else:
+    #         bg = "#FFFFFF"
+    #         fg = "#000000"
+    #     self.plot.setBackground(bg)
+    #     ax = self.plot.getPlotItem()
+    #     ax.getAxis('bottom').setPen(fg)
+    #     ax.getAxis('left').setPen(fg)
+    #     ax.getAxis('bottom').setTextPen(fg)
+    #     ax.getAxis('left').setTextPen(fg)
 
     # ------------------------------------------------------------------
     def set_model(self, session: SessionModel | None):

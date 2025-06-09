@@ -17,7 +17,12 @@ from PyQt5.QtWidgets import (
     QWidget, QLabel, QSlider, QMessageBox, QPushButton, QDockWidget,
     QStackedWidget, QAction
 )
-from PyQt5.QtGui import QStandardItem, QStandardItemModel
+from PyQt5.QtGui import (
+    QStandardItem,
+    QStandardItemModel,
+    QPalette,
+    QColor,
+)
 from PyQt5.QtCore import Qt, QSignalBlocker, QObject, pyqtSignal as Signal
 
 from utils.data_loader import (
@@ -35,6 +40,33 @@ from utils.spatial_viewQv2 import SpatialViewQDock
 #     calculate_similarity_matrix, perform_hierarchical_grouping, 
 #     rename_groups_sequentially, build_row_data
 # )
+
+try:
+    import darkdetect
+    SYSTEM_DARK_MODE = darkdetect.isDark()
+except Exception:
+    SYSTEM_DARK_MODE = False
+
+def apply_dark_palette(app: QApplication) -> None:
+    """Apply a dark color palette to the given QApplication."""
+    app.setStyle("Fusion")
+    palette = QPalette()
+    palette.setColor(QPalette.Window, QColor(53, 53, 53))
+    palette.setColor(QPalette.WindowText, Qt.white)
+    palette.setColor(QPalette.Base, QColor(35, 35, 35))
+    palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
+    palette.setColor(QPalette.ToolTipBase, Qt.white)
+    palette.setColor(QPalette.ToolTipText, Qt.white)
+    palette.setColor(QPalette.Text, Qt.white)
+    palette.setColor(QPalette.Button, QColor(53, 53, 53))
+    palette.setColor(QPalette.ButtonText, Qt.white)
+    palette.setColor(QPalette.BrightText, Qt.red)
+    palette.setColor(QPalette.Link, QColor(42, 130, 218))
+    palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
+    palette.setColor(QPalette.HighlightedText, Qt.black)
+    app.setPalette(palette)
+
+
 
 THRESHOLD_DEFAULT = 0.8
 SIM_COL = 3
@@ -431,6 +463,8 @@ class MainWin(QMainWindow):
 # ---------- main -----------------------------------------------------------
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    if SYSTEM_DARK_MODE:
+        apply_dark_palette(app)
     win = MainWin()
     win.show()
     sys.exit(app.exec())
