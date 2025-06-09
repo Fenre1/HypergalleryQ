@@ -31,7 +31,6 @@ class _ThumbWorker(QObject):
         super().__init__()
         self._im_list = im_list
         self._thumb = thumb
-        print(im_list)
     def load(self, idx: int):
         img = QImage(self._im_list[idx])
         if not img.isNull():

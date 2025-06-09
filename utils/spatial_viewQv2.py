@@ -41,6 +41,8 @@ class LassoViewBox(pg.ViewBox):
             self._drawing = True
             self._path = QPainterPath(self.mapToView(ev.pos()))
             pen = QPen(pg.mkColor("y"))
+            pen.setWidth(2)
+            pen.setCosmetic(True)
             self._item = pg.QtWidgets.QGraphicsPathItem()
             self._item.setPen(pen)
             self.addItem(self._item)
