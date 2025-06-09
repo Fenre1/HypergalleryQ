@@ -22,12 +22,6 @@ from .session_model import SessionModel
 import umap
 
 
-
-
-
-
-
-
 class LassoViewBox(pg.ViewBox):
     """ViewBox that emits a polygon drawn with the left mouse button."""
   
@@ -234,13 +228,13 @@ class SpatialViewQDock(QDockWidget):
             item.setOffset(-pix.width()/2, -pix.height()/2)
             item.setPos(self.embedding[idx, 0], self.embedding[idx, 1])
             item.setFlag(QGraphicsPixmapItem.ItemIgnoresTransformations)
-            rect = QGraphicsRectItem(0, 0, pix.width(), pix.height(), item)
+            rect = QGraphicsRectItem(-pix.width()/2, -pix.height()/2, pix.width(), pix.height(), item)            
             pen = QPen(QColor(color))
             pen.setWidth(2)
             rect.setPen(pen)
             self.plot.addItem(item)
             self.image_items.append(item)
-
+            
     # ------------------------------------------------------------------
     def _clear_image_items(self):
         for item in self.image_items:

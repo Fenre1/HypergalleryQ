@@ -463,8 +463,8 @@ class MainWin(QMainWindow):
 # ---------- main -----------------------------------------------------------
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    if SYSTEM_DARK_MODE:
-        apply_dark_palette(app)
+    # if SYSTEM_DARK_MODE:
+    #     apply_dark_palette(app)
     win = MainWin()
     win.show()
     sys.exit(app.exec())
