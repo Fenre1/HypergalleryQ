@@ -4,18 +4,11 @@ import pandas as pd
 import numpy as np
 from utils.similarity import SIM_METRIC
 from pathlib import Path
-# from PySide6.QtWidgets import (
-#     QApplication, QTreeView, QMainWindow, QFileDialog, QVBoxLayout,
-#     QWidget, QLabel, QSlider, QMessageBox, QPushButton, QDockWidget,
-#     QStackedWidget
-# )
-# from PySide6.QtGui import QStandardItem, QStandardItemModel, QAction
-# from PySide6.QtCore import Qt, QSignalBlocker, QObject, Signal
 
 from PyQt5.QtWidgets import (
     QApplication, QTreeView, QMainWindow, QFileDialog, QVBoxLayout,
     QWidget, QLabel, QSlider, QMessageBox, QPushButton, QDockWidget,
-    QStackedWidget, QAction
+    QStackedWidget, QAction, QInputDialog 
 )
 from PyQt5.QtGui import (
     QStandardItem,
@@ -28,21 +21,12 @@ from PyQt5.QtCore import Qt, QSignalBlocker, QObject, pyqtSignal as Signal
 from utils.data_loader import (
     DATA_DIRECTORY, get_h5_files_in_directory, load_session_data
 )
-from utils.selection_bus import SelectionBus 
+from utils.selection_bus import SelectionBus
 from utils.session_model import SessionModel
 from utils.image_grid import ImageGridDock
 from utils.hyperedge_matrix import HyperedgeMatrixDock
-# from utils.spatial_view import SpatialViewDock
-# from utils.spatial_view import SpatialViewDock
-
-# from utils.spatial_viewQv2 import SpatialViewQDock
 from utils.spatial_viewQv3 import SpatialViewQDock
 
-# from utils.scatter_widget import ScatterPlotWidget
-# from utils.hyperedge_list_utils import (
-#     calculate_similarity_matrix, perform_hierarchical_grouping, 
-#     rename_groups_sequentially, build_row_data
-# )
 
 try:
     import darkdetect
@@ -69,8 +53,6 @@ def apply_dark_palette(app: QApplication) -> None:
     palette.setColor(QPalette.HighlightedText, Qt.black)
     app.setPalette(palette)
 
-
-
 THRESHOLD_DEFAULT = 0.8
 SIM_COL = 3
 DECIMALS = 3
@@ -88,10 +70,6 @@ class HyperEdgeTree(QTreeView):
         self.setSortingEnabled(True)
         self.setSelectionBehavior(QTreeView.SelectRows)
 
-        # publish every time the user changes selection
-        # self.selectionModel().selectionChanged.connect(self._send_bus_update)
-
-    # ------------------------------------------------------------------
     def _send_bus_update(self, *_):
         # column-0 indexes (name column)
         names = [idx.data(Qt.DisplayRole)
@@ -106,7 +84,7 @@ def _make_item(text: str = "", value=None, editable: bool = False):
     if editable:
         it.setFlags(it.flags() |  Qt.ItemIsEditable)
     else:
-        it.setFlags(it.flags() & ~Qt.ItemIsEditable)  
+        it.setFlags(it.flags() & ~Qt.ItemIsEditable)
 
     return it
 
@@ -121,7 +99,7 @@ def build_qmodel(rows, headers):
 
         # ——— A. special-case “Ungrouped”: insert leaf at root
         if g == UNGROUPED:
-            _append_leaf(model, r)           # helper defined just below
+            _append_leaf(model, r)
             continue
 
         # ——— B. ordinary meta-group
@@ -147,8 +125,7 @@ def _append_leaf(parent_or_model, rowdict):
                    None if rowdict["similarity"] is None
                    else float(rowdict["similarity"])),
     ]
-    container.appendRow(leaf) if isinstance(container, QStandardItem) \
-        else container.appendRow(leaf)
+    container.appendRow(leaf)
 
 
 def calculate_similarity_matrix(vecs):
@@ -156,8 +133,8 @@ def calculate_similarity_matrix(vecs):
     if not names:
         return pd.DataFrame()
     m = np.array(list(vecs.values()))
-    s = SIM_METRIC(m, m)                         # cosine for both axes
-    np.fill_diagonal(s, -np.inf)                # exclude self-matches
+    s = SIM_METRIC(m, m)
+    np.fill_diagonal(s, -np.inf)
     return pd.DataFrame(s, index=names, columns=names)
 
 
@@ -167,7 +144,7 @@ def perform_hierarchical_grouping(model, thresh=0.8):
     counts = {k: 1     for k in vecs}
 
     while len(vecs) > 1:
-        sim = calculate_similarity_matrix(vecs)  # uses SIM_METRIC
+        sim = calculate_similarity_matrix(vecs)
         if sim.empty or sim.values.max() < thresh:
             break
         col = sim.max().idxmax()
@@ -215,253 +192,256 @@ def build_row_data(groups, model):
 
 
 class MainWin(QMainWindow):
-        # ---------- similarity helpers ---------------------------------------
     def _vector_for(self, name: str) -> np.ndarray | None:
-        """Return (1,d) vector for edge or meta-group (mean of children)."""
         avg = self.model.hyperedge_avg_features
         if name in avg:
-            return avg[name][None, :]                 # (1,d)
+            return avg[name][None, :]
 
-        # meta-group → mean of its children
         if name in self.groups:
             child_vecs = [avg[c] for c in self.groups[name] if c in avg]
             if child_vecs:
                 return np.mean(child_vecs, axis=0, keepdims=True)
         return None
 
-    # ---------- slot ------------------------------------------------------
     def compute_similarity(self):
-        if not self.model:
-            return
-
+        if not self.model: return
         sel = self.tree.selectionModel().selectedRows(0)
-        if not sel:
-            return
+        if not sel: return
         ref_name = sel[0].data(Qt.DisplayRole)
 
         ref_vec = self._vector_for(ref_name)
         if ref_vec is None:
-            QMessageBox.warning(self, "No features",
-                                 f"No feature vector for “{ref_name}”.")
+            QMessageBox.warning(self, "No features", f"No feature vector for “{ref_name}”.")
             return
 
         avg = self.model.hyperedge_avg_features
-        names   = list(avg)
-        vectors = np.stack([avg[n] for n in names])
-        sims    = SIM_METRIC(ref_vec, vectors)[0]
+        names, vectors = list(avg), np.stack(list(avg.values()))
+        sims = SIM_METRIC(ref_vec, vectors)[0]
         sim_map = dict(zip(names, sims))
 
         model = self.tree.model()
         self._update_similarity_items(model.invisibleRootItem(), sim_map)
         model.sort(SIM_COL, Qt.DescendingOrder)
 
-    # ---------- recursive update -----------------------------------------
     def _update_similarity_items(self, parent: QStandardItem, sim_map):
         for r in range(parent.rowCount()):
-            name_item = parent.child(r, 0)
-            sim_item  = parent.child(r, SIM_COL)
+            name_item, sim_item = parent.child(r, 0), parent.child(r, SIM_COL)
 
-            if name_item.hasChildren():                # meta-group
+            if name_item.hasChildren():
                 self._update_similarity_items(name_item, sim_map)
-                child_vals = [name_item.child(c, SIM_COL)
-                              .data(Qt.UserRole)
-                              for c in range(name_item.rowCount())]
-                val = np.nanmean([v for v in child_vals if v is not None]) \
-                      if child_vals else None          # mean, not max
-            else:                                      # leaf
+                child_vals = [name_item.child(c, SIM_COL).data(Qt.UserRole) for c in range(name_item.rowCount())]
+                val = np.nanmean([v for v in child_vals if v is not None]) if child_vals else None
+            else:
                 val = sim_map.get(name_item.text())
 
             if val is None:
-                sim_item.setData(None, Qt.UserRole)
-                sim_item.setData("",   Qt.DisplayRole)
+                sim_item.setData(None, Qt.UserRole); sim_item.setData("", Qt.DisplayRole)
             else:
-                sim_item.setData(float(val), Qt.UserRole)
-                sim_item.setData(f"{val:.{DECIMALS}f}", Qt.DisplayRole)
-                
+                sim_item.setData(float(val), Qt.UserRole); sim_item.setData(f"{val:.{DECIMALS}f}", Qt.DisplayRole)
+
     def __init__(self):
         super().__init__()
+        self.setDockNestingEnabled(True)
         self.setWindowTitle("Hypergraph Desktop Prototype")
-        self.resize(1000, 700)
+        self.resize(1200, 800)
 
-        self.model = None           # your SessionModel; unchanged
-        self.bus   = SelectionBus() # ← single shared bus
+        self.model = None
+        self.bus = SelectionBus()
         self.bus.edgesChanged.connect(self._update_bus_images)
         self.bus.edgesChanged.connect(print)
-        # ───────────────── existing widgets … ─────────────────────────
-        self.tree = HyperEdgeTree(self.bus)  
 
+        # ----------------- WIDGET AND DOCK CREATION ------------------------------------
+        # Create all widgets and docks first, then arrange them.
 
-        # buttons
-        self.btn_sim = QPushButton("Compute similarity → sort")
+        # --- List Tree ---
+        self.tree = HyperEdgeTree(self.bus)
+        self.tree_dock = QDockWidget("List tree", self)
+        self.tree_dock.setWidget(self.tree)
+
+        # --- Buttons / Tools Dock ---
+        self.toolbar_dock = QDockWidget("Buttons", self)
+        toolbar_container = QWidget()
+        toolbar_layout = QVBoxLayout(toolbar_container)
+        toolbar_layout.setContentsMargins(10, 10, 10, 10)
+        toolbar_layout.setSpacing(10)
+
+        self.btn_sim = QPushButton("Compute similarity")
         self.btn_sim.clicked.connect(self.compute_similarity)
         
-        # self.tree = QTreeView(uniformRowHeights=True, alternatingRowColors=True,
-        #                       sortingEnabled=True, selectionBehavior=QTreeView.SelectRows)
+        self.btn_add_hyperedge = QPushButton("Add Hyperedge")
+        self.btn_add_hyperedge.clicked.connect(self.on_add_hyperedge)
+        
+        self.btn_analyze = QPushButton("Run Analysis")
+        self.btn_settings = QPushButton("Settings")
+        toolbar_layout.addWidget(self.btn_sim)
+        toolbar_layout.addWidget(self.btn_add_hyperedge)
+        toolbar_layout.addWidget(self.btn_analyze)
+        toolbar_layout.addWidget(self.btn_settings)
+        toolbar_layout.addStretch()
+        self.toolbar_dock.setWidget(toolbar_container)
 
-        self.slider = QSlider(Qt.Horizontal, minimum=50, maximum=100, singleStep=5,
-                              value=int(THRESHOLD_DEFAULT * 100))
+        # --- Image Grid ---
+        self.image_grid = ImageGridDock(self.bus, self)
+        self.image_grid.setObjectName("ImageGridDock") # Use object name for clarity
+
+        # --- Spatial View ---
+        self.spatial_dock = SpatialViewQDock(self.bus, self)
+        self.spatial_dock.setObjectName("SpatialViewDock")
+
+        # --- Hyperedge Matrix ---
+        self.matrix_dock = HyperedgeMatrixDock(self.bus, self)
+        self.matrix_dock.setObjectName("HyperedgeMatrixDock")
+
+        # --- Grouping Slider (no longer in central widget) ---
+        # We can place these controls in one of the docks, e.g., the 'Buttons' dock.
+        self.slider = QSlider(Qt.Horizontal, minimum=50, maximum=100, singleStep=5, value=int(THRESHOLD_DEFAULT * 100))
         self.label = QLabel()
         self.label.setAlignment(Qt.AlignCenter)
+        toolbar_layout.insertWidget(0, self.label)
+        toolbar_layout.insertWidget(1, self.slider)
 
-        lay = QVBoxLayout()
-        lay.addWidget(self.label)
-        lay.addWidget(self.slider)
-        lay.addWidget(self.btn_sim)
-        # lay.addWidget(self.tree)
 
-        # w = QWidget(); w.setLayout(lay)
-        # self.setCentralWidget(w)
-        page = QWidget(); page.setLayout(lay)
-        self.stack = QStackedWidget()
-        self.stack.addWidget(page)
-        #self.setCentralWidget(self.stack)
+        # ----------------- DOCK LAYOUT ARRANGEMENT ------------------------------------
+        # Arrange the created docks to match the wireframe.
+        # No central widget is set, allowing docks to fill the entire window.
 
-        self.tree_dock = QDockWidget("Edges", self)
-        self.tree_dock.setWidget(self.tree)
+        # 1. Add the "List tree" to the left area.
         self.addDockWidget(Qt.LeftDockWidgetArea, self.tree_dock)
 
-        #2D spatial visualization dock
-        self.spatial_dock = SpatialViewQDock(self.bus, self)
-        self.addDockWidget(Qt.BottomDockWidgetArea, self.spatial_dock)
-        # 2D spatial visualization dock
-        # self.spatial_dock = SpatialViewDock(self.bus, self)
-        # self.addDockWidget(Qt.BottomDockWidgetArea, self.spatial_dock)
-        # import pyqtgraph as pg
-        # print(pg.__version__)
-        # # self.scatter = ScatterPlotWidget()
-        # # self.setCentralWidget(self.scatter)           # that’s it
-        # plot_widget = pg.PlotWidget()
-        # self.setCentralWidget(plot_widget)
-        # scatter = pg.ScatterPlotItem(
-        #     x=[1, 3], y=[2, 4],
-        #     pen=None, brush=pg.mkBrush('r'), size=10,
-        #     pxMode=False           # <- data-space, unaffected by the Qt bug
-        # )
-        # print(scatter.opts['pxMode'])             # will say True
-        # plot_widget.addItem(scatter)
-        # vb = plot_widget.getViewBox()
-        # print("autoRange flags:", vb.state['autoRange'])
-        # print("ViewBox class:", type(vb))
-        # print(scatter.getData())
-        # dock for displaying images
-        self.image_grid = ImageGridDock(self.bus, self)
+        # 2. Add the "Buttons" dock under the "List tree" dock.
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.toolbar_dock)
+
+        # 3. Add the "Image grid" to the right area. It will take up the remaining space.
         self.addDockWidget(Qt.RightDockWidgetArea, self.image_grid)
 
-        # dock showing hyperedge overlap matrix
-        self.matrix_dock = HyperedgeMatrixDock(self.bus, self)
-        self.addDockWidget(Qt.BottomDockWidgetArea, self.matrix_dock)
+        # 4. Add the "Spatial view" below the "Image grid".
+        self.addDockWidget(Qt.RightDockWidgetArea, self.spatial_dock)
 
-        # menu ----------------------------------------------------------------
+        # 5. Split the area occupied by the "Spatial view" to place the "Hyperedge matrix" to its right.
+        self.splitDockWidget(self.spatial_dock, self.matrix_dock, Qt.Horizontal)
+
+        # Optional: Set initial relative sizes of the docks
+        self.resizeDocks([self.tree_dock, self.image_grid], [300, 900], Qt.Horizontal)
+        self.resizeDocks([self.tree_dock, self.toolbar_dock], [550, 250], Qt.Vertical)
+        self.resizeDocks([self.spatial_dock, self.matrix_dock], [450, 450], Qt.Horizontal)
+
+
+        # ----------------- MENU AND STATE ------------------------------------
         open_act = QAction("&Open Session…", self, triggered=self.open_session)
-        
         self.menuBar().addMenu("&File").addAction(open_act)
 
-        # state ----------------------------------------------------------------
         self.model = None
         self.slider.valueChanged.connect(self.regroup)
 
-        # auto-load first file if present
         files = get_h5_files_in_directory()
         if files:
             self.load_session(Path(DATA_DIRECTORY) / files[0])
-        
-    # ------------ slots -----------------------------------------------------
+
+
+    def on_add_hyperedge(self):
+        if not self.model:
+            QMessageBox.warning(self, "No Session", "Please load a session first.")
+            return
+
+        # Use QInputDialog to get text from the user
+        new_name, ok = QInputDialog.getText(self, "Add New Hyperedge", "Enter name for the new hyperedge:")
+
+        if ok and new_name:
+            # User clicked OK and entered text
+            clean_name = new_name.strip()
+
+            # --- Validation ---
+            if not clean_name:
+                QMessageBox.warning(self, "Invalid Name", "Hyperedge name cannot be empty.")
+                return
+
+            if clean_name in self.model.hyperedges:
+                QMessageBox.warning(self, "Duplicate Name",
+                                    f"A hyperedge named '{clean_name}' already exists.")
+                return
+
+            # --- Call the model method to perform the addition ---
+            self.model.add_empty_hyperedge(clean_name)
+            # The model will emit layoutChanged, which is connected to self.regroup in load_session
+        else:
+            # User clicked Cancel or entered nothing
+            print("Add hyperedge cancelled.")
+
+
+
     def open_session(self):
-        file, _ = QFileDialog.getOpenFileName(
-            self, "Select .h5 session", DATA_DIRECTORY, "H5 files (*.h5)"
-        )
-        if file:
-            self.load_session(Path(file))
+        file, _ = QFileDialog.getOpenFileName(self, "Select .h5 session", DATA_DIRECTORY, "H5 files (*.h5)")
+        if file: self.load_session(Path(file))
 
     def load_session(self, path: Path):
         try:
+            # If a model already exists, disconnect its signal first
+            if self.model:
+                try:
+                    self.model.layoutChanged.disconnect(self.regroup)
+                except TypeError:
+                    # This can happen if the signal was never connected
+                    pass
+
             self.model = SessionModel.load_h5(path)
+
+            # --- THIS IS THE NEWLY ADDED, CRUCIAL CONNECTION ---
+            # Connect the new model's signal to our UI refresh method.
+            self.model.layoutChanged.connect(self.regroup)
+
         except Exception as e:
             QMessageBox.critical(self, "Load error", str(e))
             return
+
         self.image_grid.set_model(self.model)
         self.matrix_dock.set_model(self.model)
         self.spatial_dock.set_model(self.model)
         self.regroup()
 
-
     def _on_item_changed(self, item: QStandardItem):
-        if item.column() != 0 or item.hasChildren():
-            return                  # ignore group names & other columns
-
-        parent = item.parent()      # may be None (root-level leaf)        
-        old_name = item.data(Qt.UserRole)      # stored key
-        new_name = item.text().strip()
+        if item.column() != 0 or item.hasChildren(): return
+        parent = item.parent()
+        old_name, new_name = item.data(Qt.UserRole), item.text().strip()
         self.model.rename_edge(old_name, new_name)
+        if parent is not None: self._update_group_similarity(parent)
 
-        if parent is not None:          # skip for root-level leaves
-            self._update_group_similarity(parent)
-
-    
     def _invalidate_similarity_column(self, name_item: QStandardItem):
         row = name_item.row()
         sim_item = name_item.parent().child(row, SIM_COL)
-        sim_item.setData(None, Qt.UserRole)
-        sim_item.setData("",   Qt.DisplayRole)
-    
-    
+        sim_item.setData(None, Qt.UserRole); sim_item.setData("", Qt.DisplayRole)
+
     def _update_bus_images(self, names: list[str]):
-            """Update bus.imagesChanged based on selected hyper-edge names."""
-            if not self.model:
-                self.bus.set_images([])
-                return
-
-            idxs = set()
-            for n in names:
-                idxs.update(self.model.hyperedges.get(n, set()))
-
-            self.bus.set_images(sorted(idxs))
+        if not self.model: self.bus.set_images([]); return
+        idxs = set().union(*(self.model.hyperedges.get(n, set()) for n in names))
+        self.bus.set_images(sorted(idxs))
 
     def regroup(self):
-        if not self.model:
-            return
+        if not self.model: return
         thr = self.slider.value() / 100
         self.label.setText(f"Grouping threshold: {thr:.2f}")
 
-        self.groups = rename_groups_sequentially(
-            perform_hierarchical_grouping(self.model, thresh=thr)
-        )
+        self.groups = rename_groups_sequentially(perform_hierarchical_grouping(self.model, thresh=thr))
         rows = build_row_data(self.groups, self.model)
 
         headers = ["Name", "Images", "Status", "Similarity"]
         model = build_qmodel(rows, headers)
         model.itemChanged.connect(self._on_item_changed)
         self.tree.setModel(model)
-        # connect *after* the model is set so selectionModel exists
-        self.tree.selectionModel().selectionChanged.connect(
-            self.tree._send_bus_update)
+        self.tree.selectionModel().selectionChanged.connect(self.tree._send_bus_update)
         self.tree.expandAll()
 
-        if hasattr(self, 'matrix_dock'):
-            self.matrix_dock.update_matrix()
-
-
-
+        if hasattr(self, 'matrix_dock'): self.matrix_dock.update_matrix()
 
     def _update_group_similarity(self, group_item: QStandardItem):
-        """Recompute mean(similarity of children) and update group's cell."""
-        vals = [group_item.child(r, SIM_COL).data(Qt.UserRole)
-                for r in range(group_item.rowCount())]
-        vals = [v for v in vals if v is not None]
-        
-        parent = group_item.parent()
-        if parent is None:
-            parent = group_item.model().invisibleRootItem()
+        vals = [v for v in (group_item.child(r, SIM_COL).data(Qt.UserRole) for r in range(group_item.rowCount())) if v is not None]
+        parent = group_item.parent() or group_item.model().invisibleRootItem()
         sim_item = parent.child(group_item.row(), SIM_COL)
-
 
         if vals:
             mean_val = float(np.mean(vals))
-            sim_item.setData(mean_val, Qt.UserRole)
-            sim_item.setData(f"{mean_val:.{DECIMALS}f}", Qt.DisplayRole)
+            sim_item.setData(mean_val, Qt.UserRole); sim_item.setData(f"{mean_val:.{DECIMALS}f}", Qt.DisplayRole)
         else:
-            sim_item.setData(None, Qt.UserRole)
-            sim_item.setData("",   Qt.DisplayRole)
+            sim_item.setData(None, Qt.UserRole); sim_item.setData("", Qt.DisplayRole)
 
 # ---------- main -----------------------------------------------------------
 if __name__ == "__main__":

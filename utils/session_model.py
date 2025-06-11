@@ -1,3 +1,4 @@
+# session_model.py
 from __future__ import annotations           # for -> SessionModel typing
 import uuid, numpy as np, pandas as pd, h5py
 from pathlib import Path
@@ -86,6 +87,30 @@ class SessionModel(QObject):
         self.edgeRenamed.emit(old, new)
         self.similarityDirty.emit()
         return True
+
+    # ------------------ NEW METHOD --------------------------------------
+    def add_empty_hyperedge(self, name: str) -> None:
+        """Adds a new, empty hyperedge to the model."""
+        # This assumes 'name' has already been validated for uniqueness and is not empty.
+        # 1. Update hyperedges dictionary
+        self.hyperedges[name] = set()
+
+        # 2. Add a new column of zeros to the DataFrame
+        self.df_edges[name] = 0
+
+        # 3. Add to the category list
+        self.cat_list.append(name)
+
+        # 4. Create a zero-vector for the new edge's average features
+        n_features = self.features.shape[1]
+        self.hyperedge_avg_features[name] = np.zeros(n_features)
+
+        # 5. Add a status entry for the new edge
+        self.status_map[name] = {"uuid": str(uuid.uuid4()), "status": "New"}
+
+        # 6. Signal to the UI that the overall layout has changed
+        self.layoutChanged.emit()
+    # --------------------------------------------------------------------
 
     # convenience read-only properties -----------------------------------
     def vector_for(self, name: str) -> np.ndarray | None:
