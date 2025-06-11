@@ -34,7 +34,10 @@ from utils.image_grid import ImageGridDock
 from utils.hyperedge_matrix import HyperedgeMatrixDock
 # from utils.spatial_view import SpatialViewDock
 # from utils.spatial_view import SpatialViewDock
-from utils.spatial_viewQv2 import SpatialViewQDock
+
+# from utils.spatial_viewQv2 import SpatialViewQDock
+from utils.spatial_viewQv3 import SpatialViewQDock
+
 # from utils.scatter_widget import ScatterPlotWidget
 # from utils.hyperedge_list_utils import (
 #     calculate_similarity_matrix, perform_hierarchical_grouping, 
@@ -463,8 +466,8 @@ class MainWin(QMainWindow):
 # ---------- main -----------------------------------------------------------
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    # if SYSTEM_DARK_MODE:
-    #     apply_dark_palette(app)
+    if SYSTEM_DARK_MODE:
+        apply_dark_palette(app)
     win = MainWin()
     win.show()
     sys.exit(app.exec())
