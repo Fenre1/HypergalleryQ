@@ -6,9 +6,25 @@ from utils.similarity import SIM_METRIC
 from pathlib import Path
 
 from PyQt5.QtWidgets import (
-    QApplication, QTreeView, QMainWindow, QFileDialog, QVBoxLayout,
-    QWidget, QLabel, QSlider, QMessageBox, QPushButton, QDockWidget,
-    QStackedWidget, QAction, QInputDialog 
+    QApplication,
+    QTreeView,
+    QMainWindow,
+    QFileDialog,
+    QVBoxLayout,
+    QWidget,
+    QLabel,
+    QSlider,
+    QMessageBox,
+    QPushButton,
+    QDockWidget,
+    QStackedWidget,
+    QAction,
+    QInputDialog,
+    QDialog,
+    QListWidget,
+    QDialogButtonBox,
+    QAbstractItemView,
+    QLineEdit,
 )
 from PyQt5.QtGui import (
     QStandardItem,
@@ -58,6 +74,62 @@ SIM_COL = 3
 DECIMALS = 3
 UNGROUPED = "Ungrouped"
 
+class _MultiSelectDialog(QDialog):
+    """Simple dialog presenting a list for multi-selection."""
+
+    def __init__(self, items: list[str], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Hyperedges")
+        self.list = QListWidget()
+        self.list.addItems(items)
+        self.list.setSelectionMode(QAbstractItemView.MultiSelection)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        lay = QVBoxLayout(self)
+        lay.addWidget(self.list)
+        lay.addWidget(buttons)
+
+    def chosen(self) -> list[str]:
+        return [it.text() for it in self.list.selectedItems()]
+
+
+class HyperedgeSelectDialog(QDialog):
+    """Dialog allowing the user to pick a hyperedge from a list with filtering."""
+
+    def __init__(self, names: list[str], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Hyperedge")
+        layout = QVBoxLayout(self)
+
+        self.filter_edit = QLineEdit(self)
+        self.filter_edit.setPlaceholderText("Filter...")
+        layout.addWidget(self.filter_edit)
+
+        self.list_widget = QListWidget(self)
+        self.list_widget.addItems(names)
+        self.list_widget.setSelectionMode(QListWidget.SingleSelection)
+        layout.addWidget(self.list_widget)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.filter_edit.textChanged.connect(self._apply_filter)
+        self.list_widget.itemDoubleClicked.connect(lambda *_: self.accept())
+
+    def _apply_filter(self, text: str) -> None:
+        text = text.lower()
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            item.setHidden(text not in item.text().lower())
+
+    def selected_name(self) -> str | None:
+        items = self.list_widget.selectedItems()
+        return items[0].text() if items else None
 
 class HyperEdgeTree(QTreeView):
     """Navigator tree that lists meta-groups and individual hyper-edges."""
@@ -191,6 +263,7 @@ def build_row_data(groups, model):
     return rows
 
 
+
 class MainWin(QMainWindow):
     def _vector_for(self, name: str) -> np.ndarray | None:
         avg = self.model.hyperedge_avg_features
@@ -204,9 +277,11 @@ class MainWin(QMainWindow):
         return None
 
     def compute_similarity(self):
-        if not self.model: return
+        if not self.model: 
+            return
         sel = self.tree.selectionModel().selectedRows(0)
-        if not sel: return
+        if not sel: 
+            return
         ref_name = sel[0].data(Qt.DisplayRole)
 
         ref_vec = self._vector_for(ref_name)
@@ -271,11 +346,18 @@ class MainWin(QMainWindow):
         self.btn_add_hyperedge = QPushButton("Add Hyperedge")
         self.btn_add_hyperedge.clicked.connect(self.on_add_hyperedge)
         
-        self.btn_analyze = QPushButton("Run Analysis")
+        self.btn_add_img = QPushButton("Add image(s) to hyperedge")
+        self.btn_add_img.clicked.connect(self.add_selection_to_hyperedge)
+        
+        self.btn_del_img = QPushButton("Remove image(s) from hyperedge")
+        self.btn_del_img.clicked.connect(self.on_remove_images)
+
+
         self.btn_settings = QPushButton("Settings")
         toolbar_layout.addWidget(self.btn_sim)
         toolbar_layout.addWidget(self.btn_add_hyperedge)
-        toolbar_layout.addWidget(self.btn_analyze)
+        toolbar_layout.addWidget(self.btn_add_img)
+        toolbar_layout.addWidget(self.btn_del_img)
         toolbar_layout.addWidget(self.btn_settings)
         toolbar_layout.addStretch()
         self.toolbar_dock.setWidget(toolbar_container)
@@ -367,11 +449,73 @@ class MainWin(QMainWindow):
             # User clicked Cancel or entered nothing
             print("Add hyperedge cancelled.")
 
+    def on_remove_images(self):
+        if not self.model:
+            QMessageBox.warning(self, "No Session", "Please load a session first.")
+            return
 
+        if not self.image_grid.view.model():
+            QMessageBox.warning(self, "No Images", "No images are currently displayed.")
+            return
+
+        sel_indexes = self.image_grid.view.selectionModel().selectedIndexes()
+        if not sel_indexes:
+            QMessageBox.warning(self, "No Selection", "Select images to remove first.")
+            return
+
+        model = self.image_grid.view.model()
+        img_idxs = [model._indexes[i.row()] for i in sel_indexes]
+
+        possible_edges = sorted(
+            {e for idx in img_idxs for e in self.model.image_mapping.get(idx, set())}
+        )
+        if not possible_edges:
+            QMessageBox.information(
+                self,
+                "Not in Hyperedge",
+                "Selected images are not assigned to any hyperedge.",
+            )
+            return
+
+        dialog = _MultiSelectDialog(possible_edges, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        edges = dialog.chosen()
+        if not edges:
+            return
+
+        self.model.remove_images_from_edges(img_idxs, edges)
+        # refresh displayed images of current selection
+        self._update_bus_images(self.image_grid._selected_edges)
+
+    def add_selection_to_hyperedge(self):
+        """Add currently selected images in the grid to a chosen hyperedge."""
+        if not self.model:
+            QMessageBox.warning(self, "No Session", "Please load a session first.")
+            return
+
+        model = self.image_grid.view.model()
+        sel = self.image_grid.view.selectionModel().selectedRows() if model else []
+        if not sel:
+            QMessageBox.information(self, "No Selection", "Select images in the grid first.")
+            return
+
+        img_idxs = [model._indexes[i.row()] for i in sel]
+
+        dialog = HyperedgeSelectDialog(list(self.model.hyperedges), self)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        name = dialog.selected_name()
+        if not name:
+            QMessageBox.information(self, "No Hyperedge", "No hyperedge selected.")
+            return
+
+        self.model.add_images_to_hyperedge(name, img_idxs)
 
     def open_session(self):
         file, _ = QFileDialog.getOpenFileName(self, "Select .h5 session", DATA_DIRECTORY, "H5 files (*.h5)")
-        if file: self.load_session(Path(file))
+        if file: 
+            self.load_session(Path(file))
 
     def load_session(self, path: Path):
         try:
@@ -385,8 +529,7 @@ class MainWin(QMainWindow):
 
             self.model = SessionModel.load_h5(path)
 
-            # --- THIS IS THE NEWLY ADDED, CRUCIAL CONNECTION ---
-            # Connect the new model's signal to our UI refresh method.
+
             self.model.layoutChanged.connect(self.regroup)
 
         except Exception as e:

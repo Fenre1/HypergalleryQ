@@ -2,7 +2,7 @@
 from __future__ import annotations           # for -> SessionModel typing
 import uuid, numpy as np, pandas as pd, h5py
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Iterable
 # from PySide6.QtCore import QObject, Signal
 from PyQt5.QtCore import QObject, pyqtSignal as Signal
 from .similarity import SIM_METRIC
@@ -111,6 +111,59 @@ class SessionModel(QObject):
         # 6. Signal to the UI that the overall layout has changed
         self.layoutChanged.emit()
     # --------------------------------------------------------------------
+
+    def add_images_to_hyperedge(self, name: str, idxs: Iterable[int]) -> None:
+        """Add given image indices to an existing hyperedge."""
+        if name not in self.hyperedges:
+            return
+
+        changed = False
+        for idx in idxs:
+            if idx not in self.hyperedges[name]:
+                self.hyperedges[name].add(idx)
+                self.df_edges.at[idx, name] = 1
+                self.image_mapping.setdefault(idx, set()).add(name)
+                changed = True
+
+        if changed:
+            indices = list(self.hyperedges[name])
+            if indices:
+                self.hyperedge_avg_features[name] = self.features[indices].mean(axis=0)
+            else:
+                self.hyperedge_avg_features[name] = np.zeros(self.features.shape[1])
+            self.layoutChanged.emit()
+            self.similarityDirty.emit()
+
+
+    def remove_images_from_edges(self, img_idxs: List[int], edges: List[str]) -> None:
+            """Remove given image indices from the specified hyperedges."""
+            for edge in edges:
+                if edge not in self.hyperedges:
+                    continue
+                members = self.hyperedges[edge]
+                removed = [i for i in img_idxs if i in members]
+                if not removed:
+                    continue
+                for idx in removed:
+                    members.remove(idx)
+                    if idx in self.image_mapping:
+                        self.image_mapping[idx].discard(edge)
+                        if not self.image_mapping[idx]:
+                            del self.image_mapping[idx]
+                    if idx < len(self.df_edges.index):
+                        self.df_edges.at[idx, edge] = 0
+
+                if members:
+                    self.hyperedge_avg_features[edge] = self.features[list(members)].mean(
+                        axis=0
+                    )
+                else:
+                    self.hyperedge_avg_features[edge] = np.zeros(self.features.shape[1])
+
+            self.layoutChanged.emit()
+            self.similarityDirty.emit()
+
+
 
     # convenience read-only properties -----------------------------------
     def vector_for(self, name: str) -> np.ndarray | None:

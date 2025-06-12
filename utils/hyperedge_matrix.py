@@ -174,6 +174,8 @@ class HyperedgeMatrixDock(QDockWidget):
     # ------------------------------------------------------------------
     def update_matrix(self):
         # Clear previous state
+        self._load_thumb.cache_clear()
+        
         self._clear_layout(self.h_thumb_layout)
         self._clear_layout(self.v_thumb_layout)
         self.table.clear()
