@@ -172,7 +172,7 @@ class SpatialViewQDock(QDockWidget):
         self.view = LassoViewBox()
         self.view.sigLassoFinished.connect(self._on_lasso_select)
         self.plot = pg.PlotWidget(viewBox=self.view)
-        self.plot.setBackground('#555555')
+        self.plot.setBackground('#444444')
 
 
 
@@ -254,13 +254,14 @@ class SpatialViewQDock(QDockWidget):
         )
         self.plot.addItem(self.scatter)
 
-        # 4. Setup colors (your existing logic)
-        edges = list(session.hyperedges)
-        print(edges)
-        self.color_map = {
-            n: pg.mkColor(pg.intColor(i, hues=len(edges))).name()
-            for i, n in enumerate(edges)
-        }
+        # # 4. Setup colors (your existing logic)
+        # edges = list(session.hyperedges)
+        # print(edges)
+        # self.color_map = {
+        #     n: pg.mkColor(pg.intColor(i, hues=len(edges))).name()
+        #     for i, n in enumerate(edges)
+        # }
+        self.color_map = session.edge_colors.copy() 
 
         self.run_button.setEnabled(True)
         self.start_simulation() # Use the new method to start
@@ -344,11 +345,13 @@ class SpatialViewQDock(QDockWidget):
         selected_nodes = self.session.hyperedges.get(main_edge_name, set())
 
         # Find all overlapping hyperedges
-        overlapping_edges = set()
+        overlapping_edges = []
         if selected_nodes:
-            for idx in selected_nodes:
-                overlapping_edges.update(self.session.image_mapping.get(idx, set()))
-        overlapping_edges.discard(main_edge_name)
+            for edge in self.session.hyperedges:
+                if edge == main_edge_name:
+                    continue
+                if selected_nodes & self.session.hyperedges.get(edge, set()):
+                    overlapping_edges.append(edge)
 
         # Rule 3: Color "Neighboring" Nodes
         for ov_name in overlapping_edges:

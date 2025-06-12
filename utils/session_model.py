@@ -3,9 +3,9 @@ from __future__ import annotations           # for -> SessionModel typing
 import uuid, numpy as np, pandas as pd, h5py
 from pathlib import Path
 from typing import Dict, List, Set, Iterable
-# from PySide6.QtCore import QObject, Signal
 from PyQt5.QtCore import QObject, pyqtSignal as Signal
 from .similarity import SIM_METRIC
+import pyqtgraph as pg
 
 
 class SessionModel(QObject):
@@ -47,6 +47,11 @@ class SessionModel(QObject):
 
         self.status_map = {n: {"uuid": str(uuid.uuid4()), "status": "Original"}
                            for n in self.cat_list}
+        cmap_hues = max(len(self.cat_list), 16)
+        self.edge_colors = {
+            name: pg.mkColor(pg.intColor(i, hues=cmap_hues)).name()
+            for i, name in enumerate(self.cat_list)
+        }
         self.h5_path = h5_path
 
     # ─── internal helpers (static) ──────────────────────────────────────
@@ -77,7 +82,8 @@ class SessionModel(QObject):
         self.cat_list[self.cat_list.index(old)] = new
         self.hyperedge_avg_features[new] = self.hyperedge_avg_features.pop(old)
         self.status_map[new] = self.status_map.pop(old)
-
+        if old in self.edge_colors:
+            self.edge_colors[new] = self.edge_colors.pop(old)
         for imgs in self.image_mapping.values():
             if old in imgs:
                 imgs.remove(old)
@@ -107,6 +113,10 @@ class SessionModel(QObject):
 
         # 5. Add a status entry for the new edge
         self.status_map[name] = {"uuid": str(uuid.uuid4()), "status": "New"}
+
+        idx = len(self.edge_colors)
+        cmap_hues = max(idx + 1, 16)
+        self.edge_colors[name] = pg.mkColor(pg.intColor(idx, hues=cmap_hues)).name()
 
         # 6. Signal to the UI that the overall layout has changed
         self.layoutChanged.emit()

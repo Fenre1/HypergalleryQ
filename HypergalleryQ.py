@@ -31,6 +31,8 @@ from PyQt5.QtGui import (
     QStandardItemModel,
     QPalette,
     QColor,
+    QIcon,
+    QPixmap,
 )
 from PyQt5.QtCore import Qt, QSignalBlocker, QObject, pyqtSignal as Signal
 
@@ -188,8 +190,14 @@ def build_qmodel(rows, headers):
 def _append_leaf(parent_or_model, rowdict):
     """Add one leaf row under either a QStandardItem (group) or the model root."""
     container = parent_or_model
+    name_item = _make_item(rowdict["name"], rowdict["name"], editable=True)
+    color = rowdict.get("color")
+    if color:
+        pix = QPixmap(12, 12)
+        pix.fill(QColor(color))
+        name_item.setIcon(QIcon(pix))
     leaf = [
-        _make_item(rowdict["name"],           rowdict["name"], editable=True),
+        name_item,
         _make_item(str(rowdict["image_count"]), rowdict["image_count"]),
         _make_item(rowdict["status"]),
         _make_item("" if rowdict["similarity"] is None
@@ -198,7 +206,6 @@ def _append_leaf(parent_or_model, rowdict):
                    else float(rowdict["similarity"])),
     ]
     container.appendRow(leaf)
-
 
 def calculate_similarity_matrix(vecs):
     names = list(vecs)
@@ -258,6 +265,7 @@ def build_row_data(groups, model):
                     status=meta["status"],
                     similarity=None,
                     group_name=g,
+                    color=model.edge_colors.get(child, "#808080"),
                 )
             )
     return rows
