@@ -73,6 +73,7 @@ def apply_dark_palette(app: QApplication) -> None:
 
 THRESHOLD_DEFAULT = 0.8
 SIM_COL = 3
+INTER_COL = 4
 DECIMALS = 3
 UNGROUPED = "Ungrouped"
 
@@ -200,10 +201,15 @@ def _append_leaf(parent_or_model, rowdict):
         name_item,
         _make_item(str(rowdict["image_count"]), rowdict["image_count"]),
         _make_item(rowdict["status"]),
-        _make_item("" if rowdict["similarity"] is None
-                   else f"{rowdict['similarity']:.3f}",
-                   None if rowdict["similarity"] is None
-                   else float(rowdict["similarity"])),
+                _make_item(
+            "" if rowdict["similarity"] is None
+            else f"{rowdict['similarity']:.3f}",
+            None if rowdict["similarity"] is None else float(rowdict["similarity"]),
+        ),
+        _make_item(
+            "" if rowdict.get("intersection") is None else str(rowdict["intersection"]),
+            rowdict.get("intersection"),
+        ),
     ]
     container.appendRow(leaf)
 
@@ -264,6 +270,7 @@ def build_row_data(groups, model):
                     image_count=len(model.hyperedges[child]),
                     status=meta["status"],
                     similarity=None,
+                    intersection=None,
                     group_name=g,
                     color=model.edge_colors.get(child, "#808080"),
                 )
@@ -302,8 +309,15 @@ class MainWin(QMainWindow):
         sims = SIM_METRIC(ref_vec, vectors)[0]
         sim_map = dict(zip(names, sims))
 
+        ref_imgs = self.model.hyperedges.get(ref_name, set())
+        inter_map = {
+            name: len(ref_imgs & self.model.hyperedges.get(name, set()))
+            for name in names
+        }
+
         model = self.tree.model()
         self._update_similarity_items(model.invisibleRootItem(), sim_map)
+        self._update_intersection_items(model.invisibleRootItem(), inter_map)
         model.sort(SIM_COL, Qt.DescendingOrder)
 
     def _update_similarity_items(self, parent: QStandardItem, sim_map):
@@ -321,6 +335,26 @@ class MainWin(QMainWindow):
                 sim_item.setData(None, Qt.UserRole); sim_item.setData("", Qt.DisplayRole)
             else:
                 sim_item.setData(float(val), Qt.UserRole); sim_item.setData(f"{val:.{DECIMALS}f}", Qt.DisplayRole)
+
+
+    def _update_intersection_items(self, parent: QStandardItem, inter_map):
+        for r in range(parent.rowCount()):
+            name_item = parent.child(r, 0)
+            inter_item = parent.child(r, INTER_COL)
+
+            if name_item.hasChildren():
+                self._update_intersection_items(name_item, inter_map)
+                child_vals = [name_item.child(c, INTER_COL).data(Qt.UserRole) for c in range(name_item.rowCount())]
+                val = sum(v for v in child_vals if v is not None) if child_vals else None
+            else:
+                val = inter_map.get(name_item.text())
+
+            if val is None:
+                inter_item.setData(None, Qt.UserRole)
+                inter_item.setData("", Qt.DisplayRole)
+            else:
+                inter_item.setData(int(val), Qt.UserRole)
+                inter_item.setData(str(int(val)), Qt.DisplayRole)
 
     def __init__(self):
         super().__init__()
@@ -348,16 +382,16 @@ class MainWin(QMainWindow):
         toolbar_layout.setContentsMargins(10, 10, 10, 10)
         toolbar_layout.setSpacing(10)
 
-        self.btn_sim = QPushButton("Compute similarity")
+        self.btn_sim = QPushButton("Show similarity and intersection")
         self.btn_sim.clicked.connect(self.compute_similarity)
         
         self.btn_add_hyperedge = QPushButton("Add Hyperedge")
         self.btn_add_hyperedge.clicked.connect(self.on_add_hyperedge)
         
-        self.btn_add_img = QPushButton("Add image(s) to hyperedge")
+        self.btn_add_img = QPushButton("Add images to hyperedge")
         self.btn_add_img.clicked.connect(self.add_selection_to_hyperedge)
         
-        self.btn_del_img = QPushButton("Remove image(s) from hyperedge")
+        self.btn_del_img = QPushButton("Remove images from hyperedge")
         self.btn_del_img.clicked.connect(self.on_remove_images)
 
 
@@ -574,7 +608,7 @@ class MainWin(QMainWindow):
         self.groups = rename_groups_sequentially(perform_hierarchical_grouping(self.model, thresh=thr))
         rows = build_row_data(self.groups, self.model)
 
-        headers = ["Name", "Images", "Status", "Similarity"]
+        headers = ["Name", "Images", "Status", "Similarity", "Intersection"]
         model = build_qmodel(rows, headers)
         model.itemChanged.connect(self._on_item_changed)
         self.tree.setModel(model)

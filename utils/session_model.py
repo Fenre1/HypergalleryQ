@@ -3,6 +3,7 @@ from __future__ import annotations           # for -> SessionModel typing
 import uuid, numpy as np, pandas as pd, h5py
 from pathlib import Path
 from typing import Dict, List, Set, Iterable
+from PIL import Image, ExifTags
 from PyQt5.QtCore import QObject, pyqtSignal as Signal
 from .similarity import SIM_METRIC
 import pyqtgraph as pg
@@ -38,12 +39,13 @@ class SessionModel(QObject):
         self.im_list  = im_list                              # list[str]
         self.cat_list = list(df_edges.columns)               # list[str]
         self.df_edges = df_edges                             # DataFrame (images×edges)
-        self.hyperedges, self.image_mapping = \
-            self._prepare_hypergraph_structures(df_edges)
+        self.hyperedges, self.image_mapping = self._prepare_hypergraph_structures(df_edges)
 
         self.features = features                             # np.ndarray (N×D)
-        self.hyperedge_avg_features = \
-            self._calculate_hyperedge_avg_features(features)
+        self.hyperedge_avg_features = self._calculate_hyperedge_avg_features(features)
+
+                # Collect EXIF metadata for all images
+        self.metadata = self._extract_image_metadata(im_list)
 
         self.status_map = {n: {"uuid": str(uuid.uuid4()), "status": "Original"}
                            for n in self.cat_list}
@@ -68,6 +70,27 @@ class SessionModel(QObject):
         n_feat = features.shape[1]
         return {name: features[list(idx)].mean(axis=0) if idx else np.zeros(n_feat)
                 for name, idx in self.hyperedges.items()}
+
+
+    @staticmethod
+    def _extract_image_metadata(im_list: List[str]) -> pd.DataFrame:
+        """Return a DataFrame with EXIF metadata for each image."""
+        meta_rows = []
+        for path in im_list:
+            entry = {"image_path": path}
+            try:
+                with Image.open(path) as img:
+                    exif = img._getexif()
+                    if exif:
+                        for k, v in exif.items():
+                            tag = ExifTags.TAGS.get(k, k)
+                            entry[tag] = v
+            except Exception:
+                pass
+            meta_rows.append(entry)
+
+        return pd.DataFrame(meta_rows)
+
 
     # ─── public API used by the GUI today ───────────────────────────────
     def rename_edge(self, old: str, new: str) -> bool:
