@@ -84,3 +84,9 @@ class FeatureExtractor:
             all_features.append(features.cpu().numpy())
 
         return np.vstack(all_features)
+
+class Swinv2LargeFeatureExtractor(FeatureExtractor):
+    """Convenience wrapper for the SwinV2 large model."""
+
+    def __init__(self, batch_size: int = 32):
+        super().__init__("swinv2_large_window12to24_192to384", batch_size)
