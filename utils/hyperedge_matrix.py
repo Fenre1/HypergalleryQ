@@ -12,6 +12,7 @@ from PyQt5.QtCore import Qt, QSize,QObject
 from .selection_bus import SelectionBus
 from .session_model import SessionModel
 
+from .image_popup import show_image_metadata
       
 class ScrollBarSynchronizer:
     """
@@ -153,6 +154,9 @@ class HyperedgeMatrixDock(QDockWidget):
         )
 
         self.table.cellClicked.connect(self._on_cell_clicked)
+        # self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
+        self.table.horizontalHeader().sectionDoubleClicked.connect(self._on_header_double_clicked)
+        self.table.verticalHeader().sectionDoubleClicked.connect(self._on_header_double_clicked)
 
     # ------------------------------------------------------------------
     def set_model(self, session: SessionModel | None):
@@ -243,6 +247,19 @@ class HyperedgeMatrixDock(QDockWidget):
         self.bus.set_images(idxs)
 
     # ------------------------------------------------------------------
+
+    def _on_header_double_clicked(self, section: int):
+        if not self.session:
+            return
+        edges = list(self.session.hyperedges.keys())
+        if not (0 <= section < len(edges)):
+            return
+        name = edges[section]
+        idxs = sorted(self.session.hyperedges.get(name, []))
+        if idxs:
+            show_image_metadata(self.session, idxs[0], self)
+
+
     @lru_cache(maxsize=256)
     def _load_thumb(self, edge_name: str) -> QPixmap:
         idxs = sorted(self.session.hyperedges.get(edge_name, [])) if self.session else []

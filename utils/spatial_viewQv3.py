@@ -17,13 +17,12 @@ from PyQt5.QtGui import QPalette, QPixmap, QPen, QColor, QPainterPath
 from PyQt5.QtCore import Qt, QPointF, pyqtSignal as Signal, QTimer, QEvent
 
 from pyqtgraph.opengl import GLViewWidget, GLScatterPlotItem
-
+import umap
 from matplotlib.path import Path as MplPath
 from .selection_bus import SelectionBus
 from .session_model import SessionModel
-import umap
-
-      
+from .image_popup import show_image_metadata
+    
 from .fast_sim_engine   import SimulationEngine 
 
 # class SimulationEngine:
@@ -191,6 +190,7 @@ class SpatialViewQDock(QDockWidget):
 
         self.plot = pg.PlotWidget(viewBox=self.view)
         self.plot.setBackground('#444444')
+        self.plot.scene().sigMouseClicked.connect(self._on_scene_mouse_clicked)
 
         # --- Minimap Setup ---
         self.minimap_view = MiniMapViewBox(enableMenu=False)
@@ -328,7 +328,8 @@ class SpatialViewQDock(QDockWidget):
             symbol=self.scatter_symbols, # Use initial symbols
             pen=None,
             pxMode=True,
-            useOpenGL=True
+            useOpenGL=True,
+            data=list(range(self.engine.num_nodes))
         )
         self.plot.addItem(self.scatter)
 
@@ -369,6 +370,19 @@ class SpatialViewQDock(QDockWidget):
             pos = self.engine.positions[idx]
             item.setPos(pos[0], pos[1])
 
+    def _on_scene_mouse_clicked(self, ev):
+        if not (ev.double() and ev.button() == Qt.LeftButton):
+            return
+        if not self.scatter or not self.session:
+            return
+        pos = self.view.mapSceneToView(ev.scenePos())
+        pts = self.scatter.pointsAt(pos)
+        if pts:
+            idx = pts[0].data()
+            if idx is not None:
+                show_image_metadata(self.session, int(idx), self)
+
+
     def _refresh_scatter_plot(self):
         """
         Updates the scatter plot with the current state of positions, 
@@ -382,9 +396,10 @@ class SpatialViewQDock(QDockWidget):
         
         # The single, correct setData call
         self.scatter.setData(
-            pos=self.engine.positions, 
-            brush=brushes, 
-            symbol=self.scatter_symbols
+            pos=self.engine.positions,
+            brush=brushes,
+            symbol=self.scatter_symbols,
+            data=list(range(self.engine.num_nodes))
         )
         if self.minimap_scatter is None:
             self.minimap_scatter = pg.ScatterPlotItem(
@@ -525,6 +540,12 @@ class SpatialViewQDock(QDockWidget):
             item.setPos(self.engine.positions[idx, 0], self.engine.positions[idx, 1])
             item.setFlag(QGraphicsPixmapItem.ItemIgnoresTransformations)
             
+            item.setData(0, idx)
+            def _dclick(ev, i=idx, self=self):
+                if ev.button() == Qt.LeftButton:
+                    show_image_metadata(self.session, i, self)
+            item.mouseDoubleClickEvent = _dclick
+
             rect = QGraphicsRectItem(-pix.width()/2, -pix.height()/2, pix.width(), pix.height(), item) 
             # rect.setOffset(-pix.width()/2, -pix.height()/2)
             pen = QPen(QColor(color))

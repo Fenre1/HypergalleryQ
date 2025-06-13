@@ -1,17 +1,8 @@
 from __future__ import annotations
 
-# from PySide6.QtWidgets import (
-#     QListView, QDockWidget
-# )
-
 from PyQt5.QtWidgets import (
     QListView, QDockWidget
 )
-
-# from PySide6.QtGui import QPixmap, QIcon, QImage
-# from PySide6.QtCore import (
-#     Qt, QAbstractListModel, QModelIndex, QSize, QObject, QThread, Signal
-# )
 from PyQt5.QtGui import QPixmap, QIcon, QImage
 from PyQt5.QtCore import (
     Qt, QAbstractListModel, QModelIndex, QSize, QObject, QThread, pyqtSignal as Signal
@@ -20,7 +11,7 @@ from PyQt5.QtCore import (
 from .selection_bus import SelectionBus
 from .session_model import SessionModel
 from .similarity import SIM_METRIC
-
+from .image_popup import show_image_metadata
 
 class _ThumbWorker(QObject):
     """Worker object living in a QThread that loads thumbnails."""
@@ -132,6 +123,8 @@ class ImageGridDock(QDockWidget):
         self.view.setBatchSize(64)
         self.setWidget(self.view)
 
+        self.view.doubleClicked.connect(self._on_double_clicked)
+
         self.bus.imagesChanged.connect(self.update_images)
         self.bus.edgesChanged.connect(self._remember_edges)
 
@@ -159,3 +152,15 @@ class ImageGridDock(QDockWidget):
 
     def _remember_edges(self, names: list[str]):
         self._selected_edges = names
+
+    def _on_double_clicked(self, index: QModelIndex):
+        if not self.session:
+            return
+        model = self.view.model()
+        if not isinstance(model, ImageListModel):
+            return
+        row = index.row()
+        if not (0 <= row < len(model._indexes)):
+            return
+        img_idx = model._indexes[row]
+        show_image_metadata(self.session, img_idx, self)
