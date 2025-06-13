@@ -64,7 +64,6 @@ class SimulationEngine:
                 dist = np.linalg.norm(centroid_i - centroid_j)
                 all_dist.append(dist)
         t1 = np.max(all_dist)
-        print(t1)
         for i in range(self.num_hyperedges):
             for j in range(i + 1, self.num_hyperedges):
                 centroid_i = self.centroids[i]
@@ -73,7 +72,7 @@ class SimulationEngine:
                 # Simple distance-based similarity
                 dist = np.linalg.norm(centroid_i - centroid_j)
                 # Only attract if they are reasonably close
-                if dist < t1: 
+                if dist <= t1: 
                     # Force pulling centroid i towards j
                     force_vec = (centroid_j - centroid_i) * k_centroid_attraction
                     
