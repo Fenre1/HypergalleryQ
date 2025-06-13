@@ -394,6 +394,9 @@ class MainWin(QMainWindow):
         self.btn_del_img = QPushButton("Remove images from hyperedge")
         self.btn_del_img.clicked.connect(self.on_remove_images)
 
+        self.btn_rank = QPushButton("Rank images by selection")
+        self.btn_rank.clicked.connect(self.rank_selected_images)
+
 
         self.btn_settings = QPushButton("Settings")
         toolbar_layout.addWidget(self.btn_sim)
@@ -401,6 +404,7 @@ class MainWin(QMainWindow):
         toolbar_layout.addWidget(self.btn_add_img)
         toolbar_layout.addWidget(self.btn_del_img)
         toolbar_layout.addWidget(self.btn_settings)
+        toolbar_layout.addWidget(self.btn_rank)
         toolbar_layout.addStretch()
         self.toolbar_dock.setWidget(toolbar_container)
 
@@ -529,6 +533,29 @@ class MainWin(QMainWindow):
         self.model.remove_images_from_edges(img_idxs, edges)
         # refresh displayed images of current selection
         self._update_bus_images(self.image_grid._selected_edges)
+
+
+
+    def rank_selected_images(self):
+        """Rank all images by similarity to the currently selected images."""
+        if not self.model:
+            QMessageBox.warning(self, "No Session", "Please load a session first.")
+            return
+
+        model = self.image_grid.view.model()
+        sel = self.image_grid.view.selectionModel().selectedRows() if model else []
+        if not sel:
+            QMessageBox.information(self, "No Selection", "Select images in the grid first.")
+            return
+
+        sel_idxs = [model._indexes[i.row()] for i in sel]
+        feats = self.model.features
+        ref = feats[sel_idxs].mean(axis=0, keepdims=True)
+        sims = SIM_METRIC(ref, feats)[0]
+        ranked = np.argsort(sims)[::-1]
+        ranked = [i for i in ranked if i not in sel_idxs][:500]
+        final_idxs = sel_idxs + ranked
+        self.image_grid.update_images(final_idxs, highlight=sel_idxs, sort=False)
 
     def add_selection_to_hyperedge(self):
         """Add currently selected images in the grid to a chosen hyperedge."""

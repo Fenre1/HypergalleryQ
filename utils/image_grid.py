@@ -3,7 +3,7 @@ from __future__ import annotations
 from PyQt5.QtWidgets import (
     QListView, QDockWidget
 )
-from PyQt5.QtGui import QPixmap, QIcon, QImage
+from PyQt5.QtGui import QPixmap, QIcon, QImage, QPainter, QPen, QColor
 from PyQt5.QtCore import (
     Qt, QAbstractListModel, QModelIndex, QSize, QObject, QThread, pyqtSignal as Signal
 )
@@ -35,12 +35,14 @@ class ImageListModel(QAbstractListModel):
 
     requestThumb = Signal(int)              # idx → worker
 
-    def __init__(self, session: SessionModel, idxs: list[int], thumb_size: int = 128, parent=None):
+    def __init__(self, session: SessionModel, idxs: list[int], thumb_size: int = 128, parent=None, highlight: list[int] | None = None):
         super().__init__(parent)
         self._session = session
         self._indexes = idxs
         self._thumb = thumb_size
         self._preload = 64
+        self._highlight = set(highlight or [])
+
 
         self._pixmaps: dict[int, QPixmap] = {}
         self._index_map = {idx: row for row, idx in enumerate(self._indexes)}
@@ -75,6 +77,8 @@ class ImageListModel(QAbstractListModel):
             if pix is None:
                 self._request_range(index.row())
                 pix = self._placeholder
+            if idx in self._highlight:
+                pix = self._add_border(pix)
             return QIcon(pix)
         return None
 
@@ -91,6 +95,20 @@ class ImageListModel(QAbstractListModel):
         if row is not None:
             i = self.index(row)
             self.dataChanged.emit(i, i, [Qt.DecorationRole])
+
+    def _add_border(self, pix: QPixmap, color: QColor = QColor("red"), width: int = 4) -> QPixmap:
+        if pix.isNull():
+            return pix
+        bordered = QPixmap(pix.size())
+        bordered.fill(Qt.transparent)
+        painter = QPainter(bordered)
+        painter.drawPixmap(0, 0, pix)
+        pen = QPen(color)
+        pen.setWidth(width)
+        painter.setPen(pen)
+        painter.drawRect(width // 2, width // 2, pix.width() - width, pix.height() - width)
+        painter.end()
+        return bordered
 
     def _request_range(self, row: int):
         start = max(0, row - self._preload)
@@ -133,11 +151,11 @@ class ImageGridDock(QDockWidget):
         self.update_images([])
 
     # ------------------------------------------------------------------
-    def update_images(self, idxs: list[int]):
+    def update_images(self, idxs: list[int], highlight: list[int] | None = None, sort: bool = True):
         if self.session is None:
             self.view.setModel(None)
             return
-        if idxs and self._selected_edges:
+        if sort and idxs and self._selected_edges:
             vecs = [self.session.hyperedge_avg_features[e]
                     for e in self._selected_edges
                     if e in self.session.hyperedge_avg_features]
@@ -147,7 +165,7 @@ class ImageGridDock(QDockWidget):
                 sims = SIM_METRIC(ref.reshape(1, -1), feats)[0]
                 idxs = [i for _, i in sorted(zip(sims, idxs), reverse=True)]
 
-        model = ImageListModel(self.session, idxs, self.thumb_size, self)
+        model = ImageListModel(self.session, idxs, self.thumb_size, self, highlight=highlight)
         self.view.setModel(model)
 
     def _remember_edges(self, names: list[str]):
