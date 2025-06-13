@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
 )
 from PyQt5.QtGui import QPalette, QPixmap, QPen, QColor, QPainterPath
-from PyQt5.QtCore import Qt, QPointF, pyqtSignal as Signal, QTimer 
+from PyQt5.QtCore import Qt, QPointF, pyqtSignal as Signal, QTimer, QEvent
 
 from pyqtgraph.opengl import GLViewWidget, GLScatterPlotItem
 
@@ -143,6 +143,19 @@ class LassoViewBox(pg.ViewBox):
 
         super().mouseReleaseEvent(ev)
 
+class MiniMapViewBox(pg.ViewBox):
+    """ViewBox used for the minimap to handle click navigation."""
+
+    sigGoto = Signal(float, float)
+
+    def mouseClickEvent(self, ev):
+        if ev.button() == Qt.LeftButton:
+            pos = self.mapToView(ev.pos())
+            self.sigGoto.emit(pos.x(), pos.y())
+            ev.accept()
+        else:
+            super().mouseClickEvent(ev)
+
 
 class SpatialViewQDock(QDockWidget):
     """PyQtGraph-based spatial view with force-directed layout."""
@@ -174,9 +187,28 @@ class SpatialViewQDock(QDockWidget):
         # self.view = GLViewWidget()   # OpenGL 3D view, but we’ll just use x/y
         # self.plot = self.view        # keep attribute names for rest of class
         self.view.sigLassoFinished.connect(self._on_lasso_select)
+        self.view.sigRangeChanged.connect(self._update_minimap_view)
+
         self.plot = pg.PlotWidget(viewBox=self.view)
         self.plot.setBackground('#444444')
 
+        # --- Minimap Setup ---
+        self.minimap_view = MiniMapViewBox(enableMenu=False)
+        self.minimap_view.sigGoto.connect(self._goto_position)
+        self.minimap = pg.PlotWidget(viewBox=self.minimap_view, parent=self.plot)
+        self.minimap.setFixedSize(200, 200)
+        self.minimap.hideAxis('bottom')
+        self.minimap.hideAxis('left')
+        self.minimap.setBackground('#333333')
+        self.minimap.setMouseEnabled(False, False)
+        self.minimap_scatter = None
+        pen = pg.mkPen('r')
+        pen.setWidth(2)
+        pen.setCosmetic(True)
+        self.minimap_rect = pg.RectROI([0, 0], [1, 1], pen=pen, movable=True, resizable=False)
+        self.minimap_rect.sigRegionChanged.connect(self._on_minimap_rect_moved)
+        self.minimap_view.addItem(self.minimap_rect)
+        self.plot.installEventFilter(self)
 
 
         widget = QWidget()
@@ -184,13 +216,42 @@ class SpatialViewQDock(QDockWidget):
         layout.addWidget(self.run_button) # Add button at the top
         layout.addWidget(self.plot)
         self.setWidget(widget)
-
+        self._position_minimap()
         self.scatter = None
 
         self.scatter_colors: np.ndarray | None = None
         self.scatter_symbols: np.ndarray | None = None
 
         self.bus.edgesChanged.connect(self._on_edges_changed)
+
+    # ------------------------------------------------------------------
+    # Qt Event Handling
+    def eventFilter(self, obj, event):
+        if obj is self.plot and event.type() == QEvent.Resize:
+            self._position_minimap()
+        return super().eventFilter(obj, event)
+
+    def _position_minimap(self):
+        if not self.minimap:
+            return
+        pw = self.plot.size()
+        mm = self.minimap.size()
+        margin = 10
+        self.minimap.move(pw.width() - mm.width() - margin, margin)
+        self.minimap.raise_()
+
+    def _goto_position(self, x: float, y: float):
+        xr, yr = self.view.viewRange()
+        dx = (xr[1] - xr[0]) / 2
+        dy = (yr[1] - yr[0]) / 2
+        self.view.setRange(xRange=(x - dx, x + dx), yRange=(y - dy, y + dy), padding=0)
+
+    def _on_minimap_rect_moved(self):
+        r = self.minimap_rect.pos()
+        sz = self.minimap_rect.size()
+        self.view.setRange(xRange=(r.x(), r.x() + sz.x()), yRange=(r.y(), r.y() + sz.y()), padding=0)
+
+
 
     def start_simulation(self):
         """Starts or resumes the layout simulation."""
@@ -207,6 +268,8 @@ class SpatialViewQDock(QDockWidget):
             self.timer.stop()
             self.run_button.setText("Resume Layout")
             print("Layout simulation paused.")
+        self._update_minimap_view()
+
 
     def on_run_button_clicked(self):
         self.auto_stop_ms = 60000*5
@@ -223,7 +286,10 @@ class SpatialViewQDock(QDockWidget):
         self.timer.stop()
         self.plot.clear()
         self._clear_image_items() # Your existing clear method
-        
+        if self.minimap_scatter:
+            self.minimap.plotItem.removeItem(self.minimap_scatter)
+            self.minimap_scatter = None
+
         if not session:
             self.session = None
             self.embedding = None
@@ -265,6 +331,10 @@ class SpatialViewQDock(QDockWidget):
             useOpenGL=True
         )
         self.plot.addItem(self.scatter)
+
+        self.minimap_scatter = None
+        self._update_minimap_view()
+        self._position_minimap()
 
         # # 4. Setup colors (your existing logic)
         # edges = list(session.hyperedges)
@@ -316,11 +386,36 @@ class SpatialViewQDock(QDockWidget):
             brush=brushes, 
             symbol=self.scatter_symbols
         )
-        # self.scatter.setData(
-        #     pos=self.engine.positions,
-        #     color=[pg.glColor(c) for c in self.scatter_colors]
-        # )
-            
+        if self.minimap_scatter is None:
+            self.minimap_scatter = pg.ScatterPlotItem(
+                pos=self.engine.positions,
+                pen=None,
+                brush=pg.mkBrush('w'),
+                size=5,
+                pxMode=True,
+                useOpenGL=True,
+            )
+            self.minimap.plotItem.addItem(self.minimap_scatter)
+        else:
+            self.minimap_scatter.setData(pos=self.engine.positions)
+
+        self._update_minimap_view()
+
+    def _update_minimap_view(self):
+        if not self.engine:
+            return
+        positions = self.engine.positions
+        xmin, ymin = positions.min(axis=0)
+        xmax, ymax = positions.max(axis=0)
+        self.minimap.plotItem.setXRange(xmin, xmax, padding=0)
+        self.minimap.plotItem.setYRange(ymin, ymax, padding=0)
+
+        xr, yr = self.view.viewRange()
+        self.minimap_rect.setPos(xr[0], yr[0])
+        self.minimap_rect.setSize([xr[1]-xr[0], yr[1]-yr[0]])
+
+
+
     def _on_lasso_select(self, pts: list[QPointF]):
         # --- MODIFIED: Use engine positions for selection ---
         if self.engine is None:
