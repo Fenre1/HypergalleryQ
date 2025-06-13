@@ -397,6 +397,9 @@ class MainWin(QMainWindow):
         self.btn_rank = QPushButton("Rank images by selection")
         self.btn_rank.clicked.connect(self.rank_selected_images)
 
+        self.btn_rank_edge = QPushButton("Rank images by hyperedge")
+        self.btn_rank_edge.clicked.connect(self.rank_selected_hyperedge)
+
 
         self.btn_settings = QPushButton("Settings")
         toolbar_layout.addWidget(self.btn_sim)
@@ -405,6 +408,8 @@ class MainWin(QMainWindow):
         toolbar_layout.addWidget(self.btn_del_img)
         toolbar_layout.addWidget(self.btn_settings)
         toolbar_layout.addWidget(self.btn_rank)
+        toolbar_layout.addWidget(self.btn_rank_edge)
+
         toolbar_layout.addStretch()
         self.toolbar_dock.setWidget(toolbar_container)
 
@@ -556,6 +561,36 @@ class MainWin(QMainWindow):
         ranked = [i for i in ranked if i not in sel_idxs][:500]
         final_idxs = sel_idxs + ranked
         self.image_grid.update_images(final_idxs, highlight=sel_idxs, sort=False)
+
+    def rank_selected_hyperedge(self):
+        """Rank all images by similarity to the selected hyperedge."""
+        if not self.model:
+            QMessageBox.warning(self, "No Session", "Please load a session first.")
+            return
+
+        model = self.tree.model()
+        sel = self.tree.selectionModel().selectedRows(0) if model else []
+        if not sel:
+            QMessageBox.information(self, "No Selection", "Select a hyperedge in the tree first.")
+            return
+
+        item = model.itemFromIndex(sel[0])
+        if item.hasChildren():
+            QMessageBox.information(self, "Invalid Selection", "Please select a single hyperedge, not a group.")
+            return
+
+        name = item.text()
+        if name not in self.model.hyperedges:
+            QMessageBox.information(self, "Unknown Hyperedge", "Selected item is not a hyperedge.")
+            return
+
+        ref = self.model.hyperedge_avg_features.get(name)
+        feats = self.model.features
+        sims = SIM_METRIC(ref.reshape(1, -1), feats)[0]
+        ranked = np.argsort(sims)[::-1]
+        exclude = self.model.hyperedges[name]
+        ranked = [i for i in ranked if i not in exclude][:500]
+        self.image_grid.update_images(ranked, sort=False)
 
     def add_selection_to_hyperedge(self):
         """Add currently selected images in the grid to a chosen hyperedge."""
