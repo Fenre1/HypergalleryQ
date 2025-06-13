@@ -23,7 +23,7 @@ from .selection_bus import SelectionBus
 from .session_model import SessionModel
 from .image_popup import show_image_metadata
     
-from .fast_sim_engine   import SimulationEngine 
+from .fast_sim_engine_c import SimulationEngine 
 
 # class SimulationEngine:
 #     def __init__(self, initial_positions, hyperedges):

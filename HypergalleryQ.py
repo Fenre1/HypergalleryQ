@@ -4,6 +4,9 @@ import pandas as pd
 import numpy as np
 from utils.similarity import SIM_METRIC
 from pathlib import Path
+import io
+import torch
+from PIL import Image, ImageGrab
 
 from PyQt5.QtWidgets import (
     QApplication,
@@ -44,7 +47,7 @@ from utils.session_model import SessionModel
 from utils.image_grid import ImageGridDock
 from utils.hyperedge_matrix import HyperedgeMatrixDock
 from utils.spatial_viewQv3 import SpatialViewQDock
-
+from utils.feature_extraction import Swinv2LargeFeatureExtractor
 
 try:
     import darkdetect
@@ -363,6 +366,8 @@ class MainWin(QMainWindow):
         self.resize(1200, 800)
 
         self.model = None
+        self._clip_extractor = None
+
         self.bus = SelectionBus()
         self.bus.edgesChanged.connect(self._update_bus_images)
         self.bus.edgesChanged.connect(print)
@@ -400,6 +405,11 @@ class MainWin(QMainWindow):
         self.btn_rank_edge = QPushButton("Rank images by hyperedge")
         self.btn_rank_edge.clicked.connect(self.rank_selected_hyperedge)
 
+        self.btn_rank_file = QPushButton("Rank external image")
+        self.btn_rank_file.clicked.connect(self.rank_image_file)
+
+        self.btn_rank_clip = QPushButton("Rank clipboard image")
+        self.btn_rank_clip.clicked.connect(self.rank_clipboard_image)
 
         self.btn_settings = QPushButton("Settings")
         toolbar_layout.addWidget(self.btn_sim)
@@ -407,8 +417,10 @@ class MainWin(QMainWindow):
         toolbar_layout.addWidget(self.btn_add_img)
         toolbar_layout.addWidget(self.btn_del_img)
         toolbar_layout.addWidget(self.btn_settings)
-        toolbar_layout.addWidget(self.btn_rank)
+        toolbar_layout.addWidget(self.btn_rank)        
         toolbar_layout.addWidget(self.btn_rank_edge)
+        toolbar_layout.addWidget(self.btn_rank_file)
+        toolbar_layout.addWidget(self.btn_rank_clip)
 
         toolbar_layout.addStretch()
         self.toolbar_dock.setWidget(toolbar_container)
@@ -590,6 +602,72 @@ class MainWin(QMainWindow):
         ranked = np.argsort(sims)[::-1]
         exclude = self.model.hyperedges[name]
         ranked = [i for i in ranked if i not in exclude][:500]
+        self.image_grid.update_images(ranked, sort=False)
+
+
+    def rank_image_file(self):
+        """Rank all session images against a user chosen image file."""
+        if not self.model:
+            QMessageBox.warning(self, "No Session", "Please load a session first.")
+            return
+
+        file, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select image file",
+            str(DATA_DIRECTORY),
+            "Images (*.png *.jpg *.jpeg *.bmp *.gif *.tiff);;All Files (*)",
+        )
+        if not file:
+            return
+
+        try:
+            if not hasattr(self, "_ext_feature_extractor"):
+                self._ext_feature_extractor = Swinv2LargeFeatureExtractor(batch_size=1)
+            vec = self._ext_feature_extractor.extract_features([file])[0]
+        except Exception as e:
+            QMessageBox.critical(self, "Feature Error", str(e))
+            return
+
+        feats = self.model.features
+        sims = SIM_METRIC(vec.reshape(1, -1), feats)[0]
+        ranked = np.argsort(sims)[::-1][:500]
+        self.image_grid.update_images(list(ranked), sort=False)
+
+    def rank_clipboard_image(self):
+        """Rank images by similarity to the image currently in the clipboard."""
+        if not self.model:
+            QMessageBox.warning(self, "No Session", "Please load a session first.")
+            return
+        try:
+            clip_img = ImageGrab.grabclipboard()
+        except Exception as e:
+            QMessageBox.critical(self, "Clipboard Error", str(e))
+            return
+
+        if clip_img is None:
+            QMessageBox.information(self, "No Image", "No image in clipboard.")
+            return
+
+        if isinstance(clip_img, list):
+            try:
+                clip_img = Image.open(clip_img[0])
+            except Exception:
+                QMessageBox.information(self, "No Image", "Clipboard does not contain an image.")
+                return
+
+        if clip_img.mode == "RGBA":
+            clip_img = clip_img.convert("RGB")
+
+        if self._clip_extractor is None:
+            self._clip_extractor = Swinv2LargeFeatureExtractor(batch_size=1)
+
+        tensor = self._clip_extractor.transform(clip_img).unsqueeze(0).to(self._clip_extractor.device)
+        with torch.no_grad():
+            feat = self._clip_extractor.model(tensor).cpu().numpy()[0]
+
+        feats = self.model.features
+        sims = SIM_METRIC(feat.reshape(1, -1), feats)[0]
+        ranked = np.argsort(sims)[::-1][:500]
         self.image_grid.update_images(ranked, sort=False)
 
     def add_selection_to_hyperedge(self):

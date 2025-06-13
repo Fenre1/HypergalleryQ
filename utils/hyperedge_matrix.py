@@ -56,7 +56,7 @@ class ScrollBarSynchronizer:
 class HyperedgeMatrixDock(QDockWidget):
     """Dock widget showing overlap between hyperedges using a grid layout."""
 
-    def __init__(self, bus: SelectionBus, parent=None, thumb_size: int = 256):
+    def __init__(self, bus: SelectionBus, parent=None, thumb_size: int = 64):
         super().__init__("Hyperedge Overlap", parent)
         self.bus = bus
         self.thumb_size = thumb_size

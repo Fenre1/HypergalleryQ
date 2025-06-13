@@ -29,7 +29,7 @@ class SimulationEngine:
 
         # Constant factors
         self.hyper_cardinality = np.bincount(self.mem_hedges)[:, None].astype(np.float32)
-
+        self.node_degrees = np.array([len(he_list) for he_list in self.node_to_hyperedges], dtype=np.float32)
 
 
     def simulation_step(self, dt=0.02, k_attraction=0.2,
@@ -51,16 +51,54 @@ class SimulationEngine:
                 self.positions[self.mem_nodes]) * k_attraction
         np.add.at(forces, self.mem_nodes, diff)
 
-        # --- 3. sampled repulsion ---
+        # --- 2.5. Inter-Centroid Attraction (NEW SECTION) ---
+        # Warning: This is computationally expensive (O(num_hyperedges^2))
+        k_centroid_attraction = 0.01 # A new parameter to tune
+        all_dist = []
+        for i in range(self.num_hyperedges):
+            for j in range(i + 1, self.num_hyperedges):
+                centroid_i = self.centroids[i]
+                centroid_j = self.centroids[j]
+                
+                # Simple distance-based similarity
+                dist = np.linalg.norm(centroid_i - centroid_j)
+                all_dist.append(dist)
+        t1 = np.max(all_dist)
+        print(t1)
+        for i in range(self.num_hyperedges):
+            for j in range(i + 1, self.num_hyperedges):
+                centroid_i = self.centroids[i]
+                centroid_j = self.centroids[j]
+                
+                # Simple distance-based similarity
+                dist = np.linalg.norm(centroid_i - centroid_j)
+                # Only attract if they are reasonably close
+                if dist < t1: 
+                    # Force pulling centroid i towards j
+                    force_vec = (centroid_j - centroid_i) * k_centroid_attraction
+                    
+                    # Apply this force to all members of hyperedge i
+                    nodes_in_i = self.hyperedges[i]
+                    forces[nodes_in_i] += force_vec
+
+                    # Apply the opposite force to all members of hyperedge j
+                    nodes_in_j = self.hyperedges[j]
+                    forces[nodes_in_j] -= force_vec
+
+
+        # --- 3. sampled repulsion (MODIFIED LOGIC) ---
         samples = np.random.randint(0, self.num_nodes,
                                     size=(self.num_nodes, num_samples),
                                     dtype=np.int32)
         delta   = self.positions[samples] - self.positions[:, None, :]
         dist2   = (delta**2).sum(-1, keepdims=True)
         dist2[dist2 == 0.0] = 1e-6
-        forces -= (k_repulsion * delta / dist2).mean(axis=1)
 
-        # --- 4. integrate ---
-        self.velocities = (self.velocities + forces * dt) * damping
-        self.positions  += self.velocities * dt
+        # Make repulsion strength dependent on node degree
+        # We reshape node_degrees to (num_nodes, 1, 1) to broadcast correctly
+        per_node_k_repulsion = k_repulsion * self.node_degrees[:, None, None]
+
+        forces -= (per_node_k_repulsion * delta / dist2).mean(axis=1)
+
+    
 
