@@ -339,6 +339,49 @@ class MainWin(QMainWindow):
             else:
                 sim_item.setData(float(val), Qt.UserRole); sim_item.setData(f"{val:.{DECIMALS}f}", Qt.DisplayRole)
 
+    def _compute_overview_triplets(self) -> dict[str, tuple[int | None, ...]]:
+        """Return up to six image indexes for an overview of each hyperedge."""
+        res: dict[str, tuple[int | None, ...]] = {}
+        for name, idxs in self.model.hyperedges.items():
+            if not idxs:
+                continue
+            idxs = list(idxs)
+            feats = self.model.features[idxs]
+            avg = self.model.hyperedge_avg_features[name].reshape(1, -1)
+
+            sims = SIM_METRIC(avg, feats)[0]
+            top_order = np.argsort(sims)[::-1]
+            top = [idxs[i] for i in top_order[:3]]
+
+            extremes: list[int] = []
+            if len(idxs) >= 2:
+                sim_mat = SIM_METRIC(feats, feats)
+                np.fill_diagonal(sim_mat, 1.0)
+                i, j = divmod(np.argmin(sim_mat), sim_mat.shape[1])
+                extremes = [idxs[i], idxs[j]]
+
+            far_order = np.argsort(sims)  # ascending
+            farthest: int | None = None
+            for i in far_order:
+                cand = idxs[i]
+                if cand not in top and cand not in extremes:
+                    farthest = cand
+                    break
+
+            final: list[int | None] = []
+            for idx in top + extremes:
+                if idx not in final:
+                    final.append(idx)
+            if farthest is not None and farthest not in final:
+                final.append(farthest)
+
+            while len(final) < 6:
+                final.append(None)
+
+            res[name] = tuple(final[:6])
+
+        return res
+
 
     def _update_intersection_items(self, parent: QStandardItem, inter_map):
         for r in range(parent.rowCount()):
@@ -367,6 +410,7 @@ class MainWin(QMainWindow):
 
         self.model = None
         self._clip_extractor = None
+        self._overview_triplets = None
 
         self.bus = SelectionBus()
         self.bus.edgesChanged.connect(self._update_bus_images)
@@ -411,16 +455,18 @@ class MainWin(QMainWindow):
         self.btn_rank_clip = QPushButton("Rank clipboard image")
         self.btn_rank_clip.clicked.connect(self.rank_clipboard_image)
 
-        self.btn_settings = QPushButton("Settings")
+        self.btn_overview = QPushButton("Overview")
+        self.btn_overview.clicked.connect(self.show_overview)
+
         toolbar_layout.addWidget(self.btn_sim)
         toolbar_layout.addWidget(self.btn_add_hyperedge)
         toolbar_layout.addWidget(self.btn_add_img)
         toolbar_layout.addWidget(self.btn_del_img)
-        toolbar_layout.addWidget(self.btn_settings)
         toolbar_layout.addWidget(self.btn_rank)        
         toolbar_layout.addWidget(self.btn_rank_edge)
         toolbar_layout.addWidget(self.btn_rank_file)
         toolbar_layout.addWidget(self.btn_rank_clip)
+        toolbar_layout.addWidget(self.btn_overview)
 
         toolbar_layout.addStretch()
         self.toolbar_dock.setWidget(toolbar_container)
@@ -428,7 +474,7 @@ class MainWin(QMainWindow):
         # --- Image Grid ---
         self.image_grid = ImageGridDock(self.bus, self)
         self.image_grid.setObjectName("ImageGridDock") # Use object name for clarity
-
+        self.image_grid.labelDoubleClicked.connect(lambda name: self.bus.set_edges([name]))
         # --- Spatial View ---
         self.spatial_dock = SpatialViewQDock(self.bus, self)
         self.spatial_dock.setObjectName("SpatialViewDock")
@@ -670,6 +716,15 @@ class MainWin(QMainWindow):
         ranked = np.argsort(sims)[::-1][:500]
         self.image_grid.update_images(ranked, sort=False)
 
+    def show_overview(self):
+        """Display triplet overview on the image grid."""
+        if not self.model:
+            QMessageBox.warning(self, "No Session", "Please load a session first.")
+            return
+        if self._overview_triplets is None:
+            self._overview_triplets = self._compute_overview_triplets()
+        self.image_grid.show_overview(self._overview_triplets, self.model)
+
     def add_selection_to_hyperedge(self):
         """Add currently selected images in the grid to a chosen hyperedge."""
         if not self.model:
@@ -714,6 +769,8 @@ class MainWin(QMainWindow):
 
             self.model.layoutChanged.connect(self.regroup)
 
+            self._overview_triplets = None
+            self.model.layoutChanged.connect(self._on_layout_changed)
         except Exception as e:
             QMessageBox.critical(self, "Load error", str(e))
             return
@@ -721,6 +778,10 @@ class MainWin(QMainWindow):
         self.image_grid.set_model(self.model)
         self.matrix_dock.set_model(self.model)
         self.spatial_dock.set_model(self.model)
+        self.regroup()
+
+    def _on_layout_changed(self):
+        self._overview_triplets = None
         self.regroup()
 
     def _on_item_changed(self, item: QStandardItem):

@@ -1,17 +1,27 @@
 from __future__ import annotations
 
 from PyQt5.QtWidgets import (
-    QListView, QDockWidget
+    QListView, QDockWidget, QWidget, QLabel, QGridLayout, QHBoxLayout,
+    QVBoxLayout, QFrame
 )
 from PyQt5.QtGui import QPixmap, QIcon, QImage, QPainter, QPen, QColor
 from PyQt5.QtCore import (
-    Qt, QAbstractListModel, QModelIndex, QSize, QObject, QThread, pyqtSignal as Signal
+    Qt, QAbstractListModel, QModelIndex, QSize, QObject, QThread,
+    pyqtSignal as Signal, QEvent
 )
 
 from .selection_bus import SelectionBus
 from .session_model import SessionModel
 from .similarity import SIM_METRIC
 from .image_popup import show_image_metadata
+
+
+
+class _ClickableLabel(QLabel):
+    """Label used for emitting a signal on double click."""
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(text, parent)
 
 class _ThumbWorker(QObject):
     """Worker object living in a QThread that loads thumbnails."""
@@ -121,8 +131,9 @@ class ImageListModel(QAbstractListModel):
 
 
 class ImageGridDock(QDockWidget):
-    """Dock widget that displays selected images using a QListView."""
+    """Dock widget that displays selected images or an overview of triplets."""
 
+    labelDoubleClicked = Signal(str)  # hyperedge name
     def __init__(self, bus: SelectionBus, parent=None, thumb_size: int = 128):
         super().__init__("Images", parent)
         self.bus = bus
@@ -139,6 +150,10 @@ class ImageGridDock(QDockWidget):
         self.view.setUniformItemSizes(True)
         self.view.setLayoutMode(QListView.Batched)
         self.view.setBatchSize(64)
+
+        self._overview_widget: QWidget | None = None
+        self._mode = "grid"  # or "overview"
+
         self.setWidget(self.view)
 
         self.view.doubleClicked.connect(self._on_double_clicked)
@@ -155,6 +170,10 @@ class ImageGridDock(QDockWidget):
         if self.session is None:
             self.view.setModel(None)
             return
+        if self._mode == "overview":
+            # switching back to normal grid mode
+            self.show_grid()
+
         if sort and idxs and self._selected_edges:
             vecs = [self.session.hyperedge_avg_features[e]
                     for e in self._selected_edges
@@ -182,3 +201,63 @@ class ImageGridDock(QDockWidget):
             return
         img_idx = model._indexes[row]
         show_image_metadata(self.session, img_idx, self)
+
+            # ------------------------------------------------------------------
+    def show_overview(self, triplets: dict[str, tuple[int | None, ...]], session: SessionModel):
+        """Display an overview of 6-image sets for each hyperedge."""
+        self.session = session
+        self._mode = "overview"
+
+        widget = QWidget()
+        layout = QGridLayout(widget)
+        layout.setSpacing(10)
+
+        col = row = 0
+        max_cols = 3
+        for name, imgs in triplets.items():
+            frame = QFrame()
+            frame.setFrameShape(QFrame.Box)
+            frame.setLineWidth(2)
+            v = QVBoxLayout(frame)
+            lbl = _ClickableLabel(name)
+            lbl.setAlignment(Qt.AlignCenter)
+            v.addWidget(lbl)
+            top = QHBoxLayout()
+            bottom = QHBoxLayout()
+            for pos, idx in enumerate(imgs[:6]):
+                container = top if pos < 3 else bottom
+                lbl_img = QLabel()
+                if idx is not None:
+                    pix = QPixmap(session.im_list[idx])
+                    if not pix.isNull():
+                        pix = pix.scaled(self.thumb_size, self.thumb_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    lbl_img.setPixmap(pix)
+                container.addWidget(lbl_img)
+            v.addLayout(top)
+            v.addLayout(bottom)
+            layout.addWidget(frame, row, col)
+            col += 1
+            if col >= max_cols:
+                col = 0
+                row += 1
+
+            lbl.installEventFilter(self)
+
+        layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self._overview_widget = widget
+        self.setWidget(widget)
+
+    def show_grid(self):
+        if self._mode != "grid":
+            self._mode = "grid"
+            self.setWidget(self.view)
+            if self._overview_widget is not None:
+                self._overview_widget.deleteLater()
+                self._overview_widget = None
+
+    # --------------------------------------------------------------
+    def eventFilter(self, obj, event):
+        if isinstance(obj, _ClickableLabel) and event.type() == QEvent.MouseButtonDblClick:
+            self.labelDoubleClicked.emit(obj.text())
+            return True
+        return super().eventFilter(obj, event)
