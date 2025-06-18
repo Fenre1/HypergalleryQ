@@ -49,10 +49,6 @@ from utils.hyperedge_matrix import HyperedgeMatrixDock
 from utils.spatial_viewQv3 import SpatialViewQDock
 from utils.feature_extraction import Swinv2LargeFeatureExtractor
 
-from utils.temi_clustering_v1 import TEMIClusterer as TEMIClustererV1
-from utils.temi_clustering_v2 import TEMIClusterer as TEMIClustererV2
-from utils.temi_clustering_v3 import TEMIHypergraphClusterer as TEMIClustererV3
-from utils.temi_clustering_v4 import TemiClustering as TEMIClustererV4
 
 try:
     import darkdetect
@@ -464,25 +460,6 @@ class MainWin(QMainWindow):
         self.btn_overview.clicked.connect(self.show_overview)
 
 
-        self.btn_cluster_v1 = QPushButton("cluster v1")
-        self.btn_cluster_v1.clicked.connect(self.cluster_v1)
-        self.btn_cluster_v2 = QPushButton("cluster v2")
-        self.btn_cluster_v2.clicked.connect(self.cluster_v2)
-        self.btn_cluster_v3 = QPushButton("cluster v3")
-        self.btn_cluster_v3.clicked.connect(self.cluster_v3)
-        self.btn_cluster_v4 = QPushButton("cluster v4")
-        self.btn_cluster_v4.clicked.connect(self.cluster_v4)
-
-        self.btn_show_v1 = QPushButton("show v1")
-        self.btn_show_v1.clicked.connect(lambda: self.show_cluster_result("v1"))
-        self.btn_show_v2 = QPushButton("show v2")
-        self.btn_show_v2.clicked.connect(lambda: self.show_cluster_result("v2"))
-        self.btn_show_v3 = QPushButton("show v3")
-        self.btn_show_v3.clicked.connect(lambda: self.show_cluster_result("v3"))
-        self.btn_show_v4 = QPushButton("show v4")
-        self.btn_show_v4.clicked.connect(lambda: self.show_cluster_result("v4"))
-
-
 
 
         toolbar_layout.addWidget(self.btn_sim)
@@ -494,17 +471,6 @@ class MainWin(QMainWindow):
         toolbar_layout.addWidget(self.btn_rank_file)
         toolbar_layout.addWidget(self.btn_rank_clip)
         toolbar_layout.addWidget(self.btn_overview)
-
-        toolbar_layout.addWidget(self.btn_cluster_v1)
-        toolbar_layout.addWidget(self.btn_cluster_v2)
-        toolbar_layout.addWidget(self.btn_cluster_v3)
-        toolbar_layout.addWidget(self.btn_cluster_v4)
-        toolbar_layout.addWidget(self.btn_show_v1)
-        toolbar_layout.addWidget(self.btn_show_v2)
-        toolbar_layout.addWidget(self.btn_show_v3)
-        toolbar_layout.addWidget(self.btn_show_v4)
-
-
 
         toolbar_layout.addStretch()
         self.toolbar_dock.setWidget(toolbar_container)
@@ -769,51 +735,6 @@ class MainWin(QMainWindow):
 
 
     # ------------------------------------------------------------------
-    def _run_clusterer(self, clusterer) -> np.ndarray | None:
-        if not self.model:
-            QMessageBox.warning(self, "No Session", "Please load a session first.")
-            return None
-        feats = self.model.features
-        try:
-            if hasattr(clusterer, "fit_predict"):
-                result = clusterer.fit_predict(feats)
-            else:
-                clusterer.fit(feats)
-                result = clusterer.hyperedges(feats)
-            if hasattr(result, "cpu"):
-                result = result.cpu().numpy()
-        except Exception as e:
-            QMessageBox.critical(self, "Clustering Error", str(e))
-            return None
-        return result
-
-    def cluster_v1(self):
-        res = self._run_clusterer(TEMIClustererV1(k=3, epochs=10))
-        if res is not None:
-            self.temi_results["v1"] = np.array(res)
-
-    def cluster_v2(self):
-        res = self._run_clusterer(TEMIClustererV2(3, epochs=10))
-        if res is not None:
-            self.temi_results["v2"] = np.array(res)
-
-    def cluster_v3(self):
-        res = self._run_clusterer(TEMIClustererV3(3, epochs=10))
-        if res is not None:
-            self.temi_results["v3"] = np.array(res)
-
-    def cluster_v4(self):
-        res = self._run_clusterer(TEMIClustererV4(3, epochs=10))
-        if res is not None:
-            self.temi_results["v4"] = np.array(res)
-
-    def show_cluster_result(self, key: str):
-        matrix = self.temi_results.get(key)
-        if matrix is None:
-            QMessageBox.information(self, "No Result", f"No clustering result for {key}.")
-            return
-        self.model.apply_clustering_matrix(matrix, prefix=f"v{key}")
-
 
 
     def add_selection_to_hyperedge(self):
