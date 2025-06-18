@@ -43,9 +43,9 @@ def beta_mi(p1: torch.Tensor, p2: torch.Tensor, pk: torch.Tensor,
 class TEMILoss(nn.Module):
     """Single-head TEMI objective."""
 
-    def __init__(self, out_dim: int, batchsize: int, epochs: int,
+    def __init__(self, out_dim: int, batchsize: int = 256, epochs: int = 100,
                  beta: float = 0.6, student_temp: float = 0.1,
-                 teacher_temp: float = 0.04, probs_momentum: float = 0.9):
+                 teacher_temp: float = 0.04, probs_momentum: float = 0.996):
         super().__init__()
         self.out_dim = out_dim
         self.batchsize = batchsize
@@ -140,8 +140,8 @@ class EmbeddingDataset(Dataset):
 
 class TEMIClusterer:
     def __init__(self, n_clusters: int, epochs: int = 100,
-                 k_nn: int = 25, threshold: float | None = None,
-                 batch_size: int = 256, lr: float = 1e-3):
+                 k_nn: int = 50, threshold: float | None = None,
+                 batch_size: int = 256, lr: float = 1e-4):
         self.n_clusters = n_clusters
         self.epochs = epochs
         self.k_nn = k_nn
@@ -152,18 +152,19 @@ class TEMIClusterer:
         self.loss_fn: TEMILoss | None = None
 
     def fit(self, features: np.ndarray | torch.Tensor) -> None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         feats = torch.as_tensor(features, dtype=torch.float32)
         neighbors = compute_neighbors(feats, self.k_nn)
         dataset = EmbeddingDataset(feats, neighbors)
         loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
-        self.model = StudentTeacher(feats.shape[1], self.n_clusters).cuda()
-        self.loss_fn = TEMILoss(self.n_clusters, self.batch_size, self.epochs)
+        self.model = StudentTeacher(feats.shape[1], self.n_clusters).to(device)
+        self.loss_fn = TEMILoss(self.n_clusters, self.batch_size, self.epochs).to(device)
         optimizer = torch.optim.Adam(self.model.student.parameters(), lr=self.lr)
         momentum = 0.996
         for epoch in range(self.epochs):
             for x1, x2 in loader:
-                v1 = x1.cuda()
-                v2 = x2.cuda()
+                v1 = x1.to(device)
+                v2 = x2.to(device)
                 student_out, teacher_out = self.model([v1, v2])
                 loss = self.loss_fn(student_out, teacher_out, epoch)
                 optimizer.zero_grad()

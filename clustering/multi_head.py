@@ -10,8 +10,8 @@ except ImportError:
 import torch
 import torch.nn as nn
 
-from utils import backbone_dtype
-from utils import trunc_normal_
+from clustering.utils import backbone_dtype
+from clustering.utils import trunc_normal_
 
 
 class DINOHead(nn.Module):

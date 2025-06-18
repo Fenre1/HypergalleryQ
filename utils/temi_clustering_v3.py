@@ -41,7 +41,7 @@ class SimpleHead(nn.Module):
 class TEMILoss(nn.Module):
     """Simplified TEMI loss for two views."""
 
-    def __init__(self, out_dim: int, beta: float = 0.6, momentum: float = 0.9,
+    def __init__(self, out_dim: int, beta: float = 0.6, momentum: float = 0.996,
                  student_temp: float = 0.1, teacher_temp: float = 0.04):
         super().__init__()
         self.beta = beta
@@ -82,7 +82,7 @@ class TEMIHypergraphClusterer:
     """Cluster features using a small TEMI model."""
 
     def __init__(self, n_clusters: int, *, epochs: int = 100, batch_size: int = 256,
-                 lr: float = 1e-3, knn: int = 50, threshold: float = 0.5,
+                 lr: float = 1e-4, knn: int = 50, threshold: float = 0.5,
                  device: Optional[torch.device] = None):
         self.n_clusters = n_clusters
         self.epochs = epochs

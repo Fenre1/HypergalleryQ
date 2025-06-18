@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 
 import torch
 
-from losses.mi import StudentTeacherLoss
+from clustering.mi import StudentTeacherLoss
 
 __all__ = [
     'MultiHeadWMI',
@@ -10,7 +10,7 @@ __all__ = [
     "TEMI",
 ]
 
-from losses import sim_weight, beta_mi
+from clustering.loss_utils import sim_weight, beta_mi
 
 
 def multihead_loss(cls):

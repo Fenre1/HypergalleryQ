@@ -13,9 +13,8 @@ __all__ = [
     "SCAN",
 ]
 
-import utils
-from losses.loss_utils import sim_weight, beta_mi
-
+import clustering.utils as utils
+from .loss_utils import sim_weight, beta_mi
 
 class StudentTeacherLoss(nn.Module, ABC):
 

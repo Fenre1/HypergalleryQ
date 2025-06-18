@@ -29,7 +29,7 @@ class TEMIClusterer:
     """
 
     def __init__(self, k: int, threshold: float = 0.5, *, epochs: int = 100,
-                 batch_size: int = 256, lr: float = 1e-3, momentum: float = 0.99,
+                 batch_size: int = 256, lr: float = 1e-4, momentum: float = 0.996,
                  device: Optional[str] = None) -> None:
         self.k = k
         self.threshold = threshold

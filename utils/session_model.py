@@ -210,3 +210,31 @@ class SessionModel(QObject):
         mat   = np.stack([self.hyperedge_avg_features[n] for n in names])
         sims  = SIM_METRIC(ref.reshape(1, -1), mat)[0]
         return dict(zip(names, sims))
+    
+
+
+        # ------------------------------------------------------------------
+    def apply_clustering_matrix(self, matrix: np.ndarray, *, prefix: str = "edge") -> None:
+        """Replace current hyperedges with clustering results."""
+        if matrix.ndim != 2:
+            raise ValueError("clustering matrix must be 2D")
+
+        df_edges = pd.DataFrame(matrix.astype(int),
+                                columns=[f"{prefix}_{i}" for i in range(matrix.shape[1])])
+        self.df_edges = df_edges
+        self.cat_list = list(df_edges.columns)
+
+        self.hyperedges, self.image_mapping = self._prepare_hypergraph_structures(df_edges)
+        self.hyperedge_avg_features = self._calculate_hyperedge_avg_features(self.features)
+        self.status_map = {
+            name: {"uuid": str(uuid.uuid4()), "status": "Cluster"}
+            for name in self.cat_list
+        }
+        cmap_hues = max(len(self.cat_list), 16)
+        self.edge_colors = {
+            name: pg.mkColor(pg.intColor(i, hues=cmap_hues)).name()
+            for i, name in enumerate(self.cat_list)
+        }
+
+        self.layoutChanged.emit()
+        self.similarityDirty.emit()
