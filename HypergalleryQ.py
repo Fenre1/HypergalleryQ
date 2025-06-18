@@ -48,7 +48,8 @@ from utils.image_grid import ImageGridDock
 from utils.hyperedge_matrix import HyperedgeMatrixDock
 from utils.spatial_viewQv3 import SpatialViewQDock
 from utils.feature_extraction import Swinv2LargeFeatureExtractor
-
+from utils.file_utils import get_image_files
+from clustering.temi_clustering import temi_cluster
 
 try:
     import darkdetect
@@ -137,6 +138,46 @@ class HyperedgeSelectDialog(QDialog):
     def selected_name(self) -> str | None:
         items = self.list_widget.selectedItems()
         return items[0].text() if items else None
+
+
+class NewSessionDialog(QDialog):
+    """Dialog to set parameters for a new session."""
+
+    def __init__(self, image_count: int, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("New Session")
+
+        layout = QVBoxLayout(self)
+        info = QLabel(
+            f"Found {image_count} images.\n\n"
+            "Feature extraction and clustering will be performed to generate "
+            "the hypergraph. This may take a couple of minutes."
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        layout.addWidget(QLabel("Number of hyperedges (20-200 recommended):"))
+        self.edge_edit = QLineEdit("50")
+        layout.addWidget(self.edge_edit)
+
+        layout.addWidget(QLabel("Threshold for hypergraph generation:"))
+        self.thr_edit = QLineEdit("0.5")
+        layout.addWidget(self.thr_edit)
+        thr_info = QLabel(
+            "You can change this threshold later. Adjusting it is fast."
+        )
+        thr_info.setWordWrap(True)
+        layout.addWidget(thr_info)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Start generating hypergraph")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def parameters(self) -> tuple[int, float]:
+        return int(self.edge_edit.text()), float(self.thr_edit.text())
+
 
 class HyperEdgeTree(QTreeView):
     """Navigator tree that lists meta-groups and individual hyper-edges."""
@@ -523,6 +564,10 @@ class MainWin(QMainWindow):
 
         # ----------------- MENU AND STATE ------------------------------------
         open_act = QAction("&Open Session…", self, triggered=self.open_session)
+        new_act = QAction("&New Session…", self, triggered=self.new_session)
+        file_menu = self.menuBar().addMenu("&File")
+        file_menu.addAction(open_act)
+        file_menu.addAction(new_act)
         self.menuBar().addMenu("&File").addAction(open_act)
 
         self.model = None
@@ -760,6 +805,73 @@ class MainWin(QMainWindow):
             return
 
         self.model.add_images_to_hyperedge(name, img_idxs)
+
+
+    def new_session(self):
+        directory = QFileDialog.getExistingDirectory(
+            self, "Select image folder", str(DATA_DIRECTORY)
+        )
+        if not directory:
+            return
+
+        files = get_image_files(directory)
+        if not files:
+            QMessageBox.information(
+                self, "No Images", "No supported image files found."
+            )
+            return
+
+        dlg = NewSessionDialog(len(files), self)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+        try:
+            n_edges, thr = dlg.parameters()
+        except Exception:
+            QMessageBox.warning(self, "Invalid Input", "Enter valid numbers.")
+            return
+
+        app = QApplication.instance()
+        if app:
+            app.setOverrideCursor(Qt.WaitCursor)
+        try:
+            extractor = Swinv2LargeFeatureExtractor()
+            features = extractor.extract_features(files)
+            matrix, _ = temi_cluster(features, out_dim=n_edges, threshold=thr)
+
+            empty_cols = np.where(matrix.sum(axis=0) == 0)[0]
+            if len(empty_cols) > 0:
+                matrix = np.delete(matrix, empty_cols, axis=1)
+                QMessageBox.information(
+                    self,
+                    "Empty Hyperedges Removed",
+                    f"{len(empty_cols)} empty hyperedges were removed after clustering."
+                )
+        except Exception as e:
+            if app:
+                app.restoreOverrideCursor()
+            QMessageBox.critical(self, "Generation Error", str(e))
+            return
+        if app:
+            app.restoreOverrideCursor()
+
+        df = pd.DataFrame(matrix.astype(int), columns=[f"edge_{i}" for i in range(matrix.shape[1])])
+
+        if self.model:
+            try:
+                self.model.layoutChanged.disconnect(self.regroup)
+            except TypeError:
+                pass
+
+        self.model = SessionModel(files, df, features, Path(directory))
+        self.model.layoutChanged.connect(self.regroup)
+        self._overview_triplets = None
+        self.model.layoutChanged.connect(self._on_layout_changed)
+
+        self.image_grid.set_model(self.model)
+        self.matrix_dock.set_model(self.model)
+        self.spatial_dock.set_model(self.model)
+        self.regroup()
+
 
     def open_session(self):
         file, _ = QFileDialog.getOpenFileName(self, "Select .h5 session", DATA_DIRECTORY, "H5 files (*.h5)")

@@ -39,33 +39,26 @@ class EmbedNN(Dataset):
         self.knn = knn
         self.transform = transform
         self.k = k
-
         if self.knn is None:
             raise ValueError("knn must be provided")
-
         if k < 0:
             self.k = self.knn.size(1)
         else:
             self.k = min(k, self.knn.size(1))
-
     def __len__(self):
         return len(self.features)
-
     def __getitem__(self, idx):
         neighbor_indices = self.knn[idx][:self.k]
         neighbor_idx = random.choice(neighbor_indices.tolist())
-
         anchor = self.features[idx]
         neighbor = self.features[neighbor_idx]
         label = self.labels[idx]
-
         if self.transform:
             return self.transform(anchor, neighbor), label
         else:
             return (anchor, neighbor), label
 
 class TeacherStudentCombo(nn.Module):
-
     def __init__(self, student, teacher, args):
         super().__init__()
         # synchronize batch norms (if any)
@@ -84,37 +77,30 @@ class TeacherStudentCombo(nn.Module):
         for p in teacher.parameters():
             p.requires_grad = False
         print(f"Student and Teacher are built: they are both {args.arch} network.")
-
         self.args = args
         self.student = student
         self.teacher = teacher
-
     def forward(self, images):
         if self.args.train_backbone:
             return self.teacher(images), self.student(images)
         embed = self.teacher.backbone_embed(images)
         return self.teacher.apply_head(embed), self.student.apply_head(embed)
-
     @property
     def module(self):
         return self
-
     def student_dict(self):
         if self.args.train_backbone:
             return self.student.state_dict()
         return OrderedDict([(k, v) for k, v in self.student.state_dict().items() if "backbone" not in k])
-
     @property
     def trainable_student(self):
         if self.args.train_backbone:
             return self.student
         return self.student.head
-
     def teacher_dict(self):
         if self.args.train_backbone:
             return self.teacher.state_dict()
         return OrderedDict([(k, v) for k, v in self.teacher.state_dict().items() if "backbone" not in k])
-
     @property
     def trainable_teacher(self):
         if self.args.train_backbone:
@@ -127,25 +113,19 @@ def load_model(config, head=True, split_preprocess=False):
     Minimal load_model for precomputed embeddings.
     Returns a MultiHeadClassifier if head=True, else just the placeholder backbone name.
     """
-
     if not config.precomputed:
         raise ValueError("This version of load_model only supports precomputed=True")
-
     backbone = config.arch  # Typically 'custom' or a placeholder
     print("Using precomputed embeddings from", config.arch)
-
     if head:
         if getattr(config, "embed_dim", None) is None:
             raise ValueError("embed_dim must be set for head construction")
-
         mmc_params = inspect.signature(MultiHeadClassifier).parameters
         mmc_args = {k: v for k, v in config.__dict__.items() if k in mmc_params}
         model = MultiHeadClassifier(backbone, **mmc_args)
-
         print("Head loaded.")
     else:
         model = backbone
-
     if split_preprocess:
         return model, None, None
     return model, None
@@ -316,10 +296,10 @@ def train_one_epoch(student_teacher_model, dino_loss, data_loader,
 
 
 def train_dino(args, features, knn):
-    args.batch_size_per_gpu = 512
+    # args.batch_size_per_gpu = 512
     fix_random_seeds(args.seed)
     cudnn.benchmark = True
-    student, _, normalize = load_model(args, split_preprocess=True)
+    student, _, normalize = load_model(args, head=True, split_preprocess=True)
     teacher, _ = load_model(args)
     if not args.precomputed:
         aug = IMAGE_AUGMENTATIONS[args.image_aug](num_augs=args.num_augs, **args.aug_args)
@@ -335,6 +315,10 @@ def train_dino(args, features, knn):
         transform = AugWrapper(global_augs=aug)
     dataset = EmbedNN(features, None, knn, transform=transform, k=args.knn)
     sampler = None
+    if len(dataset) < 10*args.batch_size_per_gpu: 
+        check_drop = False
+    else:
+        check_drop = True
     data_loader = torch.utils.data.DataLoader(
         dataset,
         shuffle=(sampler is None),
@@ -342,15 +326,13 @@ def train_dino(args, features, knn):
         batch_size=args.batch_size_per_gpu,
         num_workers=0,
         pin_memory=True,
-        drop_last=True,
+        drop_last=check_drop,
     )
     print(f"In-distribution Data loaded: there are {len(dataset)} images.")
     print("len dataloader", len(data_loader))
     student_teacher_model = TeacherStudentCombo(teacher=teacher, student=student, args=args)
     student_teacher_model = student_teacher_model.cuda()
     loss_class = getattr(losses, args.loss)
-    
-
     dino_loss_args = dict(
         out_dim=args.out_dim,
         batchsize=args.batch_size_per_gpu,
@@ -359,7 +341,8 @@ def train_dino(args, features, knn):
         warmup_teacher_temp_epochs=args.warmup_teacher_temp_epochs,
         nepochs=args.epochs,
         num_heads=16,
-        **args.loss_args)
+        **args.loss_args
+    )
     if losses.is_multihead(loss_class):
         dino_loss = loss_class(**dino_loss_args).cuda()
     elif args.num_heads == 1:
@@ -451,6 +434,10 @@ def train_model(features: Union[np.ndarray, torch.Tensor], out_dim: int) -> nn.M
     """
     features = torch.tensor(features, dtype=torch.float32) if not torch.is_tensor(features) else features
     args = get_args(out_dim)
+
+    if args.batch_size_per_gpu > len(features):
+        args.batch_size_per_gpu = len(features)//2
+
     _, knn = compute_neighbors(features, args.knn)
     return train_dino(args, features, knn)
 

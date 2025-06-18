@@ -172,7 +172,7 @@ class SpatialViewQDock(QDockWidget):
         self.timer.setInterval(16)  # Target ~60 FPS
         self.timer.timeout.connect(self._update_frame)
 
-        self.auto_stop_ms = 5000  # Stop after 5 seconds of running
+        self.auto_stop_ms = 100  # Stop after 5 seconds of running
         self.run_button = QPushButton("Pause Layout")
         self.run_button.clicked.connect(self.on_run_button_clicked)
         self.run_button.setEnabled(False) # Disabled until model is loaded
