@@ -47,7 +47,7 @@ from utils.session_model import SessionModel
 from utils.image_grid import ImageGridDock
 from utils.hyperedge_matrix import HyperedgeMatrixDock
 from utils.spatial_viewQv3 import SpatialViewQDock
-from utils.feature_extraction import Swinv2LargeFeatureExtractor
+from utils.feature_extraction import Swinv2LargeFeatureExtractor, OpenClipFeatureExtractor
 from utils.file_utils import get_image_files
 from clustering.temi_clustering import temi_cluster
 
@@ -840,6 +840,8 @@ class MainWin(QMainWindow):
         try:
             extractor = Swinv2LargeFeatureExtractor()
             features = extractor.extract_features(files)
+            oc_extractor = OpenClipFeatureExtractor()
+            oc_features = oc_extractor.extract_features(files)
             matrix, _ = temi_cluster(features, out_dim=n_edges, threshold=thr)
 
             empty_cols = np.where(matrix.sum(axis=0) == 0)[0]
@@ -866,7 +868,7 @@ class MainWin(QMainWindow):
             except TypeError:
                 pass
 
-        self.model = SessionModel(files, df, features, Path(directory))
+        self.model = SessionModel(files, df, features, Path(directory), openclip_features=oc_features)
         self.model.layoutChanged.connect(self.regroup)
         self._overview_triplets = None
         self.model.layoutChanged.connect(self._on_layout_changed)
@@ -893,7 +895,9 @@ class MainWin(QMainWindow):
                     pass
 
             self.model = SessionModel.load_h5(path)
-
+            if self.model.openclip_features is None:
+                oc_extractor = OpenClipFeatureExtractor()
+                self.model.openclip_features = oc_extractor.extract_features(self.model.im_list)
 
             self.model.layoutChanged.connect(self.regroup)
 

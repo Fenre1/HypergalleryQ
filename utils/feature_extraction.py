@@ -4,6 +4,7 @@ import timm
 from PIL import Image
 import timm.data
 from torch.utils.data import Dataset, DataLoader
+import open_clip
 #'swinv2_large_window12to24_192to384'
 class ImageFileDataset(Dataset):
     """
@@ -56,6 +57,9 @@ class FeatureExtractor:
             input_size=self.model.default_cfg['input_size']
         )
 
+
+
+
     def extract_features(self, file_list: list) -> np.ndarray:
         """
         Extract features for the given list of image file paths.
@@ -74,6 +78,8 @@ class FeatureExtractor:
             shuffle=False,
             num_workers=0  # Adjust num_workers based on your system
         )
+ 
+
 
         all_features = []
         for images in loader:
@@ -90,3 +96,28 @@ class Swinv2LargeFeatureExtractor(FeatureExtractor):
 
     def __init__(self, batch_size: int = 32):
         super().__init__("swinv2_large_window12to24_192to384", batch_size)
+
+class OpenClipFeatureExtractor:
+    """Extract features using an OpenCLIP model."""
+
+    def __init__(self, model_name: str = "ViT-B-32", *, pretrained: str = "laion2b_s34b_b79k", batch_size: int = 32):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.batch_size = batch_size
+        self.model, _, self.preprocess = open_clip.create_model_and_transforms(model_name, pretrained=pretrained)
+        self.model.to(self.device)
+        self.model.eval()
+
+    @property
+    def transform(self):
+        return self.preprocess
+
+    def extract_features(self, file_list: list) -> np.ndarray:
+        dataset = ImageFileDataset(file_list, self.preprocess)
+        loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=False, num_workers=0)
+        all_features = []
+        for images in loader:
+            images = images.to(self.device)
+            with torch.no_grad():
+                feats = self.model.encode_image(images)
+            all_features.append(feats.cpu().numpy())
+        return np.vstack(all_features)

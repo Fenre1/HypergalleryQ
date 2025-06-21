@@ -28,9 +28,10 @@ class SessionModel(QObject):
             df_edges = pd.DataFrame(matrix, columns=cat_list)
             features = hdf["features"][()]
             umap_emb = hdf["umap_embedding"][()] if "umap_embedding" in hdf else None
+            openclip_feats = hdf["openclip_features"][()] if "openclip_features" in hdf else None
 
-        return cls(im_list, df_edges, features, path, umap_embedding=umap_emb)
-
+        return cls(im_list, df_edges, features, path,
+            openclip_features=openclip_feats, umap_embedding=umap_emb)
 
     def save_h5(self, path: Path | None = None) -> None:
         """Write current session state to an HDF5 file."""
@@ -52,6 +53,8 @@ class SessionModel(QObject):
                 "catList", data=np.array(self.cat_list, dtype=object), dtype=dt
             )
             hdf.create_dataset("features", data=self.features, dtype="f4")
+            if self.openclip_features is not None:
+                hdf.create_dataset("openclip_features", data=self.openclip_features, dtype="f4")
             if self.umap_embedding is not None:
                 hdf.create_dataset("umap_embedding", data=self.umap_embedding, dtype="f4")
 
@@ -64,6 +67,7 @@ class SessionModel(QObject):
                  features: np.ndarray,
                  h5_path: Path,
                  *,
+                 openclip_features: np.ndarray | None = None,
                  umap_embedding: np.ndarray | None = None):
         super().__init__()
         self.im_list  = im_list                              # list[str]
@@ -72,6 +76,7 @@ class SessionModel(QObject):
         self.hyperedges, self.image_mapping = self._prepare_hypergraph_structures(df_edges)
 
         self.features = features                             # np.ndarray (N×D)
+        self.openclip_features = openclip_features           
         self.hyperedge_avg_features = self._calculate_hyperedge_avg_features(features)
 
                 # Collect EXIF metadata for all images
