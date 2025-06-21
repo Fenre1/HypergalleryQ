@@ -565,9 +565,13 @@ class MainWin(QMainWindow):
         # ----------------- MENU AND STATE ------------------------------------
         open_act = QAction("&Open Session…", self, triggered=self.open_session)
         new_act = QAction("&New Session…", self, triggered=self.new_session)
+        save_act = QAction("&Save", self, triggered=self.save_session)
+        save_as_act = QAction("Save &As…", self, triggered=self.save_session_as)
         file_menu = self.menuBar().addMenu("&File")
         file_menu.addAction(open_act)
         file_menu.addAction(new_act)
+        file_menu.addAction(save_act)
+        file_menu.addAction(save_as_act)
         self.menuBar().addMenu("&File").addAction(open_act)
 
         self.model = None
@@ -903,6 +907,37 @@ class MainWin(QMainWindow):
         self.matrix_dock.set_model(self.model)
         self.spatial_dock.set_model(self.model)
         self.regroup()
+
+
+    def save_session(self):
+        if not self.model:
+            QMessageBox.warning(self, "No Session", "Please load or create a session first.")
+            return
+        path = self.model.h5_path
+        if not path or path.suffix.lower() != ".h5":
+            return self.save_session_as()
+
+        try:
+            self.model.save_h5()
+        except Exception as e:
+            QMessageBox.critical(self, "Save Error", str(e))
+
+    def save_session_as(self):
+        if not self.model:
+            QMessageBox.warning(self, "No Session", "Please load or create a session first.")
+            return
+        base = self.model.h5_path
+        if base and base.suffix:
+            default_dir = str(base)
+        else:
+            default_dir = str(base if base else DATA_DIRECTORY)
+        file, _ = QFileDialog.getSaveFileName(self, "Save Session As", default_dir, "H5 files (*.h5)")
+        if not file:
+            return
+        try:
+            self.model.save_h5(Path(file))
+        except Exception as e:
+            QMessageBox.critical(self, "Save Error", str(e))
 
     def _on_layout_changed(self):
         self._overview_triplets = None

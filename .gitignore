@@ -4,3 +4,4 @@ utils/__pycache__/
 hypergallery.py
 utils/old/
 clustering/old/
+spatialOptimizer/

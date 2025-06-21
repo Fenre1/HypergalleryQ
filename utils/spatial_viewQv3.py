@@ -301,9 +301,15 @@ class SpatialViewQDock(QDockWidget):
 
         self.session = session
         
-        # 1. Calculate the INITIAL embedding (great starting point!)
-        print("Calculating initial UMAP embedding...")
-        self.embedding = umap.UMAP(n_components=2).fit_transform(session.features)
+
+        
+        # 1. Calculate the INITIAL embedding 
+        if session.umap_embedding is not None:
+            self.embedding = session.umap_embedding
+        else:
+            print("Calculating initial UMAP embedding...")
+            self.embedding = umap.UMAP(n_components=2).fit_transform(session.features)
+            session.umap_embedding = self.embedding
         
         # 2. Initialize the simulation engine with this layout
         print("Initializing simulation engine...")

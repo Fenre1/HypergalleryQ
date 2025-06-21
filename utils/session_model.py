@@ -27,14 +27,44 @@ class SessionModel(QObject):
             cat_list = [x.decode() if isinstance(x, bytes) else x for x in cat_raw]
             df_edges = pd.DataFrame(matrix, columns=cat_list)
             features = hdf["features"][()]
+            umap_emb = hdf["umap_embedding"][()] if "umap_embedding" in hdf else None
 
-        return cls(im_list, df_edges, features, path)
+        return cls(im_list, df_edges, features, path, umap_embedding=umap_emb)
+
+
+    def save_h5(self, path: Path | None = None) -> None:
+        """Write current session state to an HDF5 file."""
+        target = Path(path) if path else self.h5_path
+        if not target.suffix:
+            target = target.with_suffix(".h5")
+
+        with h5py.File(target, "w") as hdf:
+            dt = h5py.string_dtype(encoding="utf-8")
+            hdf.create_dataset(
+                "file_list", data=np.array(self.im_list, dtype=object), dtype=dt
+            )
+            hdf.create_dataset(
+                "clustering_results",
+                data=self.df_edges.values.astype("i8"),
+                dtype="i8",
+            )
+            hdf.create_dataset(
+                "catList", data=np.array(self.cat_list, dtype=object), dtype=dt
+            )
+            hdf.create_dataset("features", data=self.features, dtype="f4")
+            if self.umap_embedding is not None:
+                hdf.create_dataset("umap_embedding", data=self.umap_embedding, dtype="f4")
+
+        self.h5_path = target
+
 
     def __init__(self,
                  im_list: List[str],
                  df_edges: pd.DataFrame,
                  features: np.ndarray,
-                 h5_path: Path):
+                 h5_path: Path,
+                 *,
+                 umap_embedding: np.ndarray | None = None):
         super().__init__()
         self.im_list  = im_list                              # list[str]
         self.cat_list = list(df_edges.columns)               # list[str]
@@ -54,6 +84,7 @@ class SessionModel(QObject):
             name: pg.mkColor(pg.intColor(i, hues=cmap_hues)).name()
             for i, name in enumerate(self.cat_list)
         }
+        self.umap_embedding = umap_embedding
         self.h5_path = h5_path
 
     # ─── internal helpers (static) ──────────────────────────────────────
