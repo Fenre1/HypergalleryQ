@@ -452,6 +452,7 @@ class MainWin(QMainWindow):
 
         self.model = None
         self._clip_extractor = None
+        self._openclip_extractor = None
         self._overview_triplets = None
         self.temi_results = {}
         self.bus = SelectionBus()
@@ -500,7 +501,12 @@ class MainWin(QMainWindow):
         self.btn_overview = QPushButton("Overview")
         self.btn_overview.clicked.connect(self.show_overview)
 
+        self.text_query = QLineEdit()
+        self.text_query.setPlaceholderText("Text query…")
+        self.text_query.returnPressed.connect(self.rank_text_query)
 
+        self.btn_rank_text = QPushButton("Rank by text")
+        self.btn_rank_text.clicked.connect(self.rank_text_query)
 
 
         toolbar_layout.addWidget(self.btn_sim)
@@ -512,6 +518,8 @@ class MainWin(QMainWindow):
         toolbar_layout.addWidget(self.btn_rank_file)
         toolbar_layout.addWidget(self.btn_rank_clip)
         toolbar_layout.addWidget(self.btn_overview)
+        toolbar_layout.addWidget(self.text_query)
+        toolbar_layout.addWidget(self.btn_rank_text)
 
         toolbar_layout.addStretch()
         self.toolbar_dock.setWidget(toolbar_container)
@@ -772,6 +780,27 @@ class MainWin(QMainWindow):
         sims = SIM_METRIC(feat.reshape(1, -1), feats)[0]
         ranked = np.argsort(sims)[::-1][:500]
         self.image_grid.update_images(ranked, sort=False)
+
+
+    def rank_text_query(self):
+        """Rank images by similarity to a text query using OpenCLIP."""
+        if not self.model:
+            QMessageBox.warning(self, "No Session", "Please load a session first.")
+            return
+        text = self.text_query.text().strip()
+        if not text:
+            QMessageBox.information(self, "No Text", "Enter a text query first.")
+            return
+        if self.model.openclip_features is None:
+            QMessageBox.warning(self, "No Features", "Session lacks OpenCLIP features.")
+            return
+        if self._openclip_extractor is None:
+            self._openclip_extractor = OpenClipFeatureExtractor(batch_size=1)
+        vec = self._openclip_extractor.encode_text([text])[0]
+        feats = self.model.openclip_features
+        sims = SIM_METRIC(vec.reshape(1, -1), feats)[0]
+        ranked = np.argsort(sims)[::-1][:500]
+        self.image_grid.update_images(list(ranked), sort=False)
 
     def show_overview(self):
         """Display triplet overview on the image grid."""

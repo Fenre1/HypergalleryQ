@@ -121,3 +121,10 @@ class OpenClipFeatureExtractor:
                 feats = self.model.encode_image(images)
             all_features.append(feats.cpu().numpy())
         return np.vstack(all_features)
+    
+    def encode_text(self, texts: list[str]) -> np.ndarray:
+        """Return OpenCLIP embeddings for the given text strings."""
+        tokens = open_clip.tokenize(texts).to(self.device)
+        with torch.no_grad():
+            feats = self.model.encode_text(tokens)
+        return feats.cpu().numpy()
