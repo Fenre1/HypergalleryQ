@@ -1,6 +1,6 @@
 numpy
 pandas
 scikit-learn
-h5py
-PySide6
-pyqtgraph
+h5py 
+open_clip_torch
+pyforceatlas2

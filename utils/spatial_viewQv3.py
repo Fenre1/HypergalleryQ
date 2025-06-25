@@ -22,70 +22,10 @@ from matplotlib.path import Path as MplPath
 from .selection_bus import SelectionBus
 from .session_model import SessionModel
 from .image_popup import show_image_metadata
-    
+from .fa2_layout import HyperedgeForceAtlas2
 from .fast_sim_engine import SimulationEngine 
 
-# class SimulationEngine:
-#     def __init__(self, initial_positions, hyperedges):
-#         self.num_nodes = len(initial_positions)
-#         self.positions = np.copy(initial_positions).astype(np.float32)
-#         self.velocities = np.zeros((self.num_nodes, 2), dtype=np.float32)
 
-#         # Build efficient lookups for hyperedge membership
-#         self.hyperedges = [list(he) for he in hyperedges] # Ensure lists for indexing
-#         self.num_hyperedges = len(self.hyperedges)
-        
-#         self.node_to_hyperedges = [[] for _ in range(self.num_nodes)]
-#         for he_idx, he in enumerate(self.hyperedges):
-#             for node_idx in he:
-#                 self.node_to_hyperedges[node_idx].append(he_idx)
-                
-#         self.centroids = np.zeros((self.num_hyperedges, 2), dtype=np.float32)
-
-#     def simulation_step(self, dt=0.02, k_attraction=0.05, k_repulsion=50.0, damping=0.95):
-#         """Performs one step of the physics simulation."""
-#         if self.num_nodes == 0:
-#             return
-
-#         forces = np.zeros((self.num_nodes, 2), dtype=np.float32)
-
-#         # 1. Calculate Geometric Centroids (Dynamic)
-#         for i, he in enumerate(self.hyperedges):
-#             if he:
-#                 member_positions = self.positions[he]
-#                 self.centroids[i] = np.mean(member_positions, axis=0)
-
-#         # 2. Calculate Node-Centroid Attraction Forces
-#         for i in range(self.num_nodes):
-#             for he_idx in self.node_to_hyperedges[i]:
-#                 force_vec = self.centroids[he_idx] - self.positions[i]
-#                 forces[i] += force_vec # k_attraction is applied later
-
-#         forces *= k_attraction
-
-#         # 3. Calculate Node-Node Repulsion (Approximated for performance)
-#         # A full N^2 is too slow. We use a random sample.
-#         # For a more robust solution, a Quadtree is needed.
-#         num_samples = 100 # Tune this for balance of performance/quality
-#         for i in range(self.num_nodes):
-#             # Select random samples, excluding self
-#             samples_idx = np.random.choice(self.num_nodes, num_samples, replace=False)
-            
-#             delta = self.positions[samples_idx] - self.positions[i]
-#             distance_sq = np.sum(delta**2, axis=1)
-#             distance_sq[distance_sq == 0] = 1e-6 # Avoid division by zero
-            
-#             # Simplified force calculation
-#             force_magnitude = k_repulsion / distance_sq
-#             repulsion_force = np.sum(delta * force_magnitude[:, np.newaxis], axis=0)
-#             forces[i] -= repulsion_force / num_samples # Average the force
-
-#         # 4. Update Physics (Euler Integration)
-#         self.velocities += forces * dt
-#         self.velocities *= damping
-#         self.positions += self.velocities * dt
-
-    
 
 class LassoViewBox(pg.ViewBox):
     """ViewBox that emits a polygon drawn with Shift + left mouse."""
@@ -108,7 +48,8 @@ class LassoViewBox(pg.ViewBox):
             pen = QPen(pg.mkColor("y"))
             pen.setWidth(2)
             pen.setCosmetic(True)
-            self._item = pg.QtWidgets.QGraphicsPathItem()
+            # Use pg.QtWidgets for compatibility
+            self._item = pg.QtWidgets.QGraphicsPathItem() 
             self._item.setPen(pen)
             self.addItem(self._item)
             ev.accept()
@@ -125,12 +66,10 @@ class LassoViewBox(pg.ViewBox):
 
         super().mouseMoveEvent(ev)
 
-
     def mouseReleaseEvent(self, ev):
         if self._drawing and ev.button() == Qt.LeftButton:
             self._drawing = False
             self.removeItem(self._item)
-            pts = [self.mapToView(ev.pos())]
             path = []
             for i in range(self._path.elementCount()):
                 el = self._path.elementAt(i)
@@ -156,43 +95,37 @@ class MiniMapViewBox(pg.ViewBox):
             super().mouseClickEvent(ev)
 
 
+
+
+
 class SpatialViewQDock(QDockWidget):
-    """PyQtGraph-based spatial view with force-directed layout."""
+    """PyQtGraph-based spatial view that visualizes hyperedges with a ForceAtlas2 layout."""
     
     def __init__(self, bus: SelectionBus, parent=None):
-        super().__init__("Spatial View", parent)
+        super().__init__("Hyperedge View", parent)
         self.bus = bus
         self.session: SessionModel | None = None
-        self.embedding: np.ndarray | None = None # Will now be the *initial* embedding
         self.color_map: dict[str, str] = {}
         
-        # --- NEW: Engine and Timer for dynamic layout ---
-        self.engine: SimulationEngine | None = None
+        self.fa2_layout: HyperedgeForceAtlas2 | None = None
         self.timer = QTimer(self)
-        self.timer.setInterval(16)  # Target ~60 FPS
+        self.timer.setInterval(16)
         self.timer.timeout.connect(self._update_frame)
 
-        self.auto_stop_ms = 100  # Stop after 5 seconds of running
+        self.auto_stop_ms = 10000
         self.run_button = QPushButton("Pause Layout")
         self.run_button.clicked.connect(self.on_run_button_clicked)
-        self.run_button.setEnabled(False) # Disabled until model is loaded
+        self.run_button.setEnabled(False)
 
-
-        # --- NEW: Track sample images for dynamic updates ---
-        self.sample_image_items: dict[int, QGraphicsPixmapItem] = {} # Maps node_idx to item
-
-        # --- Your existing setup (mostly unchanged) ---
+        # MODIFIED: Use LassoViewBox and connect its signal
         self.view = LassoViewBox()
-        # self.view = GLViewWidget()   # OpenGL 3D view, but we’ll just use x/y
-        # self.plot = self.view        # keep attribute names for rest of class
-        self.view.sigLassoFinished.connect(self._on_lasso_select)
         self.view.sigRangeChanged.connect(self._update_minimap_view)
-
+        self.view.sigLassoFinished.connect(self._on_lasso_select)
+        
         self.plot = pg.PlotWidget(viewBox=self.view)
         self.plot.setBackground('#444444')
         self.plot.scene().sigMouseClicked.connect(self._on_scene_mouse_clicked)
 
-        # --- Minimap Setup ---
         self.minimap_view = MiniMapViewBox(enableMenu=False)
         self.minimap_view.sigGoto.connect(self._goto_position)
         self.minimap = pg.PlotWidget(viewBox=self.minimap_view, parent=self.plot)
@@ -202,378 +135,180 @@ class SpatialViewQDock(QDockWidget):
         self.minimap.setBackground('#333333')
         self.minimap.setMouseEnabled(False, False)
         self.minimap_scatter = None
-        pen = pg.mkPen('r')
-        pen.setWidth(2)
-        pen.setCosmetic(True)
+        pen = pg.mkPen('r', width=2, cosmetic=True)
         self.minimap_rect = pg.RectROI([0, 0], [1, 1], pen=pen, movable=True, resizable=False)
-        self.minimap_rect.sigRegionChanged.connect(self._on_minimap_rect_moved)
         self.minimap_view.addItem(self.minimap_rect)
         self.plot.installEventFilter(self)
 
-
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.addWidget(self.run_button) # Add button at the top
+        layout.addWidget(self.run_button)
         layout.addWidget(self.plot)
         self.setWidget(widget)
         self._position_minimap()
-        self.scatter = None
-
+        
+        self.scatter: pg.ScatterPlotItem | None = None
         self.scatter_colors: np.ndarray | None = None
-        self.scatter_symbols: np.ndarray | None = None
-
+        
         self.bus.edgesChanged.connect(self._on_edges_changed)
 
-    # ------------------------------------------------------------------
-    # Qt Event Handling
     def eventFilter(self, obj, event):
         if obj is self.plot and event.type() == QEvent.Resize:
             self._position_minimap()
         return super().eventFilter(obj, event)
 
     def _position_minimap(self):
-        if not self.minimap:
-            return
-        pw = self.plot.size()
-        mm = self.minimap.size()
-        margin = 10
-        self.minimap.move(pw.width() - mm.width() - margin, margin)
+        if not self.minimap: return
+        pw, mm = self.plot.size(), self.minimap.size()
+        self.minimap.move(pw.width() - mm.width() - 10, 10)
         self.minimap.raise_()
 
     def _goto_position(self, x: float, y: float):
         xr, yr = self.view.viewRange()
-        dx = (xr[1] - xr[0]) / 2
-        dy = (yr[1] - yr[0]) / 2
+        dx, dy = (xr[1] - xr[0]) / 2, (yr[1] - yr[0]) / 2
         self.view.setRange(xRange=(x - dx, x + dx), yRange=(y - dy, y + dy), padding=0)
 
     def _on_minimap_rect_moved(self):
-        r = self.minimap_rect.pos()
-        sz = self.minimap_rect.size()
+        r, sz = self.minimap_rect.pos(), self.minimap_rect.size()
         self.view.setRange(xRange=(r.x(), r.x() + sz.x()), yRange=(r.y(), r.y() + sz.y()), padding=0)
-
-
-
+        
     def start_simulation(self):
-        """Starts or resumes the layout simulation."""
-        if not self.timer.isActive():
+        if self.fa2_layout and not self.timer.isActive():
             self.timer.start()
             self.run_button.setText("Pause Layout")
             print("Layout simulation started.")
-            # Set a timer to automatically stop it
             QTimer.singleShot(self.auto_stop_ms, self.stop_simulation)
 
     def stop_simulation(self):
-        """Pauses the layout simulation."""
         if self.timer.isActive():
             self.timer.stop()
             self.run_button.setText("Resume Layout")
             print("Layout simulation paused.")
         self._update_minimap_view()
 
-
     def on_run_button_clicked(self):
-        self.auto_stop_ms = 60000*5
-        """Toggles the simulation state when the user clicks the button."""
+        self.auto_stop_ms = 60000 * 5
         if self.timer.isActive():
             self.stop_simulation()
         else:
             self.start_simulation()
-            
-
 
     def set_model(self, session: SessionModel | None):
-        # --- MODIFIED: This now initializes the simulation ---
-        self.timer.stop()
+        self.stop_simulation()
         self.plot.clear()
-        self._clear_image_items() # Your existing clear method
         if self.minimap_scatter:
             self.minimap.plotItem.removeItem(self.minimap_scatter)
-            self.minimap_scatter = None
-
+        self.session, self.fa2_layout, self.scatter, self.scatter_colors, self.minimap_scatter = None, None, None, None, None
         if not session:
-            self.session = None
-            self.embedding = None
-            self.scatter = None
-            self.engine = None
-            self.scatter_colors = None # Clear state
-            self.scatter_symbols = None
+            self.run_button.setEnabled(False)
             return
-
         self.session = session
-        
-
-        
-        # 1. Calculate the INITIAL embedding 
-        if session.umap_embedding is not None:
-            self.embedding = session.umap_embedding
-        else:
-            print("Calculating initial UMAP embedding...")
-            self.embedding = umap.UMAP(n_components=2).fit_transform(session.features)
-            session.umap_embedding = self.embedding
-        
-        # 2. Initialize the simulation engine with this layout
-        print("Initializing simulation engine...")
-        # We need the hyperedges as a list of lists of node indices
-        hyperedge_list = [list(he) for he in session.hyperedges.values()]
-        self.engine = SimulationEngine(self.embedding, hyperedge_list)
-        
-        self.scatter_colors = np.array(['#808080'] * self.engine.num_nodes)
-        self.scatter_symbols = np.array(['o'] * self.engine.num_nodes, dtype=object)
-
-        # 3. Create the scatter plot item
-
-        # self.scatter = GLScatterPlotItem(
-        #     pos=self.engine.positions, size=7.0,
-        #     color=pg.glColor('#808080'), pxMode=False)
-
-
+        print("Initializing ForceAtlas2 layout for hyperedges...")
+        edges = list(session.hyperedges)
+        overlap_data = { rk: {ck: len(session.hyperedges[rk] & session.hyperedges[ck]) for ck in edges} for rk in edges }
+        self.fa2_layout = HyperedgeForceAtlas2(overlap_data, session)
+        num_hyperedges = len(self.fa2_layout.names)
+        self.scatter_colors = np.array(['#808080'] * num_hyperedges, dtype=object)
+        initial_pos = np.array([self.fa2_layout.positions[name] for name in self.fa2_layout.names])
         self.scatter = pg.ScatterPlotItem(
-            pos=self.engine.positions,
-            size=9,
-            brush=[pg.mkBrush(c) for c in self.scatter_colors], # Use initial colors
-            symbol=self.scatter_symbols, # Use initial symbols
+            pos=initial_pos,
+            size=self.fa2_layout.node_sizes,
+            brush=[pg.mkBrush(c) for c in self.scatter_colors],
             pen=None,
             pxMode=True,
             useOpenGL=True,
-            data=list(range(self.engine.num_nodes))
+            data=self.fa2_layout.names 
         )
         self.plot.addItem(self.scatter)
-
-        self.minimap_scatter = None
         self._update_minimap_view()
         self._position_minimap()
-
-        # # 4. Setup colors (your existing logic)
-        # edges = list(session.hyperedges)
-        # print(edges)
-        # self.color_map = {
-        #     n: pg.mkColor(pg.intColor(i, hues=len(edges))).name()
-        #     for i, n in enumerate(edges)
-        # }
         self.color_map = session.edge_colors.copy() 
-
         self.run_button.setEnabled(True)
-        self.start_simulation() # Use the new method to start
+        self.start_simulation()
 
-        # 5. Start the simulation!
-        # print("Starting simulation.")
-        # self.timer.start()
-
-          
     def _update_frame(self):
-        """The core animation loop."""
-        if not self.engine or not self.scatter:
+        if not self.fa2_layout or not self.scatter:
             return
-                
-        # 1. Advance the simulation
-        self.engine.simulation_step()
-        
-        # 2. Redraw the scatter plot with updated positions and current styles
+        self.fa2_layout.step(iterations=1)
         self._refresh_scatter_plot()
         
-        # 3. Update the positions of any sample images
-        for idx, item in self.sample_image_items.items():
-            pos = self.engine.positions[idx]
-            item.setPos(pos[0], pos[1])
+    def _refresh_scatter_plot(self):
+        """Updates the scatter plot using the current state of the fa2_layout."""
+        if not self.fa2_layout or not self.scatter or self.scatter_colors is None:
+            return
+        
+        # Get the current positions in the correct order
+        current_pos = np.array([self.fa2_layout.positions[name] for name in self.fa2_layout.names])
+        brushes = [pg.mkBrush(c) for c in self.scatter_colors]
+        
+        self.scatter.setData(
+            pos=current_pos,
+            brush=brushes,
+            size=self.fa2_layout.node_sizes  # <--- THE FIX: Add this line back in
+        )
+            # Update minimap
+        if self.minimap_scatter is None:
+            self.minimap_scatter = pg.ScatterPlotItem(
+                pen=None, brush=pg.mkBrush('w'), size=3, pxMode=True, useOpenGL=True,
+            )
+            self.minimap.plotItem.addItem(self.minimap_scatter)
+        self.minimap_scatter.setData(pos=current_pos)
+
+        self._update_minimap_view()
+
+    def _update_minimap_view(self):
+        if not self.fa2_layout:
+            return
+        positions = np.array(list(self.fa2_layout.positions.values()))
+        if positions.size == 0: return
+        xmin, ymin = positions.min(axis=0)
+        xmax, ymax = positions.max(axis=0)
+        self.minimap.plotItem.setXRange(xmin, xmax, padding=0.1)
+        self.minimap.plotItem.setYRange(ymin, ymax, padding=0.1)
+        xr, yr = self.view.viewRange()
+        self.minimap_rect.setPos(xr[0], yr[0])
+        self.minimap_rect.setSize([xr[1]-xr[0], yr[1]-yr[0]])
+
+    def _on_lasso_select(self, pts: list[QPointF]):
+        """Handles a finished lasso selection to select hyperedges."""
+        if not self.fa2_layout:
+            return
+        ordered_names = self.fa2_layout.names
+        current_pos = np.array([self.fa2_layout.positions[name] for name in ordered_names])
+        poly = [(p.x(), p.y()) for p in pts]
+        path = MplPath(poly)
+        contained_indices = np.nonzero(path.contains_points(current_pos))[0]
+        selected_names = [ordered_names[i] for i in contained_indices]
+        if selected_names:
+            print(f"Lasso selected {len(selected_names)} hyperedges.")
+            self.bus.set_edges(selected_names)
 
     def _on_scene_mouse_clicked(self, ev):
-        if not (ev.double() and ev.button() == Qt.LeftButton):
+        if not ev.button() == Qt.LeftButton:
             return
         if not self.scatter or not self.session:
             return
         pos = self.view.mapSceneToView(ev.scenePos())
         pts = self.scatter.pointsAt(pos)
         if pts:
-            idx = pts[0].data()
-            if idx is not None:
-                show_image_metadata(self.session, int(idx), self)
-
-
-    def _refresh_scatter_plot(self):
-        """
-        Updates the scatter plot with the current state of positions, 
-        colors, and symbols. This is the single point of truth for drawing.
-        """
-        if not all([self.engine, self.scatter, self.scatter_colors is not None, self.scatter_symbols is not None]):
-            return
-            
-        # Convert color strings to QBrush objects for pyqtgraph
-        brushes = [pg.mkBrush(c) for c in self.scatter_colors]
-        
-        # The single, correct setData call
-        self.scatter.setData(
-            pos=self.engine.positions,
-            brush=brushes,
-            symbol=self.scatter_symbols,
-            data=list(range(self.engine.num_nodes))
-        )
-        if self.minimap_scatter is None:
-            self.minimap_scatter = pg.ScatterPlotItem(
-                pos=self.engine.positions,
-                pen=None,
-                brush=pg.mkBrush('w'),
-                size=5,
-                pxMode=True,
-                useOpenGL=True,
-            )
-            self.minimap.plotItem.addItem(self.minimap_scatter)
-        else:
-            self.minimap_scatter.setData(pos=self.engine.positions)
-
-        self._update_minimap_view()
-
-    def _update_minimap_view(self):
-        if not self.engine:
-            return
-        positions = self.engine.positions
-        xmin, ymin = positions.min(axis=0)
-        xmax, ymax = positions.max(axis=0)
-        self.minimap.plotItem.setXRange(xmin, xmax, padding=0)
-        self.minimap.plotItem.setYRange(ymin, ymax, padding=0)
-
-        xr, yr = self.view.viewRange()
-        self.minimap_rect.setPos(xr[0], yr[0])
-        self.minimap_rect.setSize([xr[1]-xr[0], yr[1]-yr[0]])
-
-
-
-    def _on_lasso_select(self, pts: list[QPointF]):
-        # --- MODIFIED: Use engine positions for selection ---
-        if self.engine is None:
-            return
-        poly = [(p.x(), p.y()) for p in pts]
-        path = MplPath(poly)
-        # Use the CURRENT positions from the engine, not the static embedding
-        idxs = np.nonzero(path.contains_points(self.engine.positions))[0]
-        self.bus.set_images(list(map(int, idxs)))
+            hyperedge_name = pts[0].data()
+            if hyperedge_name:
+                print(f"Clicked on hyperedge: {hyperedge_name}")
+                self.bus.set_edges([hyperedge_name])
+                ev.accept()
 
     def _on_edges_changed(self, names: list[str]):
-        """
-        Updates the desired appearance of the scatter plot by modifying the
-        class's state variables (self.scatter_colors and self.scatter_symbols).
-        It does NOT call setData directly; it calls _refresh_scatter_plot at the end.
-        """
-        # 1. --- GUARD CLAUSES ---
-        # Ensure everything is initialized before proceeding.
-        if not all([self.session, self.engine, self.scatter_colors is not None, self.scatter_symbols is not None]):
+        if not self.fa2_layout or self.scatter_colors is None:
             return
-
-        # 2. --- CLEAR PREVIOUS STATE ---
-        self._clear_image_items()
-        # Reset colors and symbols to their default state.
-        # We use [:] to modify the array in-place.
         self.scatter_colors[:] = '#808080'
-        self.scatter_symbols[:] = 'o'
-
-        # 3. --- HANDLE "NO SELECTION" ---
-        # If the selection is cleared, we're done. Just refresh the view.
-        if not names:
-            self._refresh_scatter_plot()
-            return
-
-        # 4. --- CALCULATE NEW STATE BASED ON SELECTION ---
-        main_edge_name = names[0]
-        selected_nodes = self.session.hyperedges.get(main_edge_name, set())
-
-        # Find all overlapping hyperedges
-        overlapping_edges = []
-        if selected_nodes:
-            for edge in self.session.hyperedges:
-                if edge == main_edge_name:
-                    continue
-                if selected_nodes & self.session.hyperedges.get(edge, set()):
-                    overlapping_edges.append(edge)
-
-        # Rule 3: Color "Neighboring" Nodes
-        for ov_name in overlapping_edges:
-            ov_nodes = list(self.session.hyperedges.get(ov_name, set()))
-            ov_color = self.color_map.get(ov_name, 'blue')
-            # Modify the class-level state array
-            self.scatter_colors[ov_nodes] = ov_color
-
-        # Rules 1 & 2: Process nodes within the main selection
-        nodes_to_show_pure = []
-        nodes_to_show_intersect = {}
-        if selected_nodes:
-            main_color = self.color_map.get(main_edge_name, 'red')
-            for node_idx in selected_nodes:
-                member_of_edges = self.session.image_mapping.get(node_idx, set())
-                
-                if len(member_of_edges) == 1:
-                    # Rule 1: Node is "Pure"
-                    self.scatter_colors[node_idx] = main_color
-                    self.scatter_symbols[node_idx] = 'o' # Circle
-                    if len(nodes_to_show_pure) < 3:
-                        nodes_to_show_pure.append(node_idx)
-                else:
-                    # Rule 2: Node is "Intersecting"
-                    self.scatter_symbols[node_idx] = '+'  # Star shape
-
-                    other_edges = member_of_edges - {main_edge_name}
-                    if other_edges:
-                        other_edge_name = other_edges.pop()
-                        intersect_color = self.color_map.get(other_edge_name, 'magenta')
-                        self.scatter_colors[node_idx] = intersect_color
-                        if len(nodes_to_show_intersect) < 3:
-                            nodes_to_show_intersect[node_idx] = intersect_color
-                    else:
-                        self.scatter_colors[node_idx] = 'white' # Fallback
-        
-        # 5. --- UPDATE SAMPLE IMAGES ---
-        self._add_sample_images(nodes_to_show_pure, self.color_map.get(main_edge_name, 'yellow'))
-        for idx, color in nodes_to_show_intersect.items():
-            self._add_sample_images([idx], color)
-
-        # 6. --- TRIGGER A REDRAW ---
-        # Now that the state arrays are updated, tell the renderer to draw them.
-        # This ensures the view updates even if the simulation is paused.
+        name_to_index = {name: i for i, name in enumerate(self.fa2_layout.names)}
+        for name in names:
+            if name in name_to_index:
+                idx = name_to_index[name]
+                color = self.color_map.get(name, 'yellow')
+                self.scatter_colors[idx] = color
         self._refresh_scatter_plot()
 
-    def _add_sample_images(self, idxs: list[int], color: str):
-        # --- MODIFIED: To store items in our new dictionary ---
-        for idx in idxs:
-            if idx in self.sample_image_items: # Don't add duplicates
-                continue
-            # ... (your existing pixmap loading code) ...
-            path = self.session.im_list[idx]
-            pix = QPixmap(path)
-            if pix.isNull(): continue
-            pix = pix.scaled(128, 128, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-
-            item = QGraphicsPixmapItem(pix)
-            item.setOffset(-pix.width()/2, -pix.height()/2)
-            # Set initial position from the engine
-            item.setPos(self.engine.positions[idx, 0], self.engine.positions[idx, 1])
-            item.setFlag(QGraphicsPixmapItem.ItemIgnoresTransformations)
-            
-            item.setData(0, idx)
-            def _dclick(ev, i=idx, self=self):
-                if ev.button() == Qt.LeftButton:
-                    show_image_metadata(self.session, i, self)
-            item.mouseDoubleClickEvent = _dclick
-
-            rect = QGraphicsRectItem(-pix.width()/2, -pix.height()/2, pix.width(), pix.height(), item) 
-            # rect.setOffset(-pix.width()/2, -pix.height()/2)
-            pen = QPen(QColor(color))
-            pen.setWidth(2) # Make it thicker
-            pen.setCosmetic(True)
-            rect.setPen(pen)
-            
-            self.plot.addItem(item)
-            self.sample_image_items[idx] = item # Store by index
-
-    def _clear_image_items(self):
-        # --- MODIFIED: To work with the dictionary ---
-        for item in self.sample_image_items.values():
-            if item.scene():
-                self.plot.removeItem(item)
-        self.sample_image_items.clear()
-        
-    # def closeEvent(self, event):
-    #     # --- NEW: Ensure the timer is stopped on close ---
-    #     self.timer.stop()
-    #     super().closeEvent(event)
-
     def closeEvent(self, event):
-        self.stop_simulation() # Use the new method
+        self.stop_simulation()
         super().closeEvent(event)
