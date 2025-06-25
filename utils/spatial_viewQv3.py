@@ -12,10 +12,13 @@ from PyQt5.QtWidgets import (
     QGraphicsRectItem,
     QApplication,
     QPushButton,
+    QGraphicsEllipseItem, 
+    QGraphicsItem,
+    QGraphicsLineItem,
 )
-from PyQt5.QtGui import QPalette, QPixmap, QPen, QColor, QPainterPath
-from PyQt5.QtCore import Qt, QPointF, pyqtSignal as Signal, QTimer, QEvent
 
+from PyQt5.QtGui import QPalette, QPixmap, QPen, QColor, QPainterPath
+from PyQt5.QtCore import Qt, QPointF, pyqtSignal as Signal, QTimer, QEvent, QLineF
 from pyqtgraph.opengl import GLViewWidget, GLScatterPlotItem
 import umap
 from matplotlib.path import Path as MplPath
@@ -102,11 +105,13 @@ class SpatialViewQDock(QDockWidget):
         super().__init__("Hyperedge View", parent)
         self.bus = bus
         self._radial_layout_cache: tuple[dict, list] | None = None
+        self.hyperedgeItems: dict[str, QGraphicsEllipseItem] = {}
+        self.imageItems: dict[tuple[str,int], QGraphicsPixmapItem] = {}
         self.session: SessionModel | None = None
         self.color_map: dict[str, str] = {}
 
-        self.MIN_HYPEREDGE_DIAMETER = 30.0 
-        self.NODE_SIZE_SCALER = 2.5
+        self.MIN_HYPEREDGE_DIAMETER = 0.5
+        self.NODE_SIZE_SCALER = 0.1
         self.fa2_layout: HyperedgeForceAtlas2 | None = None
         self.timer = QTimer(self)
         self.timer.setInterval(16)
@@ -121,6 +126,7 @@ class SpatialViewQDock(QDockWidget):
         self.view.sigRangeChanged.connect(self._update_minimap_view)
         ## NOTE: Connect view changes to update the image layer
         self.view.sigRangeChanged.connect(self._update_image_layer)
+        self.view.sigRangeChanged.connect(self._refresh_scatter_plot) 
         self.view.sigLassoFinished.connect(self._on_lasso_select)
 
         self.plot = pg.PlotWidget(viewBox=self.view)
@@ -147,18 +153,9 @@ class SpatialViewQDock(QDockWidget):
         layout.addWidget(self.plot)
         self.setWidget(widget)
         self._position_minimap()
-
-        self.scatter: pg.ScatterPlotItem | None = None
-        self.scatter_colors: np.ndarray | None = None
-
-        ## NOTE: Image nodes should be small and fixed-size, so pxMode=True is correct here.
-        self.image_scatter = pg.ScatterPlotItem(pen=None, brush=pg.mkBrush('w'), size=8, pxMode=True)
-        self.plot.addItem(self.image_scatter)
         self.image_links: list[pg.PlotCurveItem] = []
         
-        ## FIX: Set a reasonable zoom threshold in data coordinates.
-        ## This value will depend on the scale of your FA2 layout. You may need to adjust it.
-        self.zoom_threshold = 200.0
+        self.zoom_threshold = 70
         
         ## NOTE: This factor is to place nodes on the circumference (1.0) or slightly outside (>1.0)
         self.radial_placement_factor = 1.1
@@ -180,178 +177,217 @@ class SpatialViewQDock(QDockWidget):
     def _edge_index(self, name: str) -> int:
         return self.fa2_layout.names.index(name)
 
-    def _clear_image_layer(self):
-        self.image_scatter.setData(pos=np.empty((0, 2)))
-        for ln in self.image_links:
-            self.plot.removeItem(ln)
-        self.image_links.clear()
-
       
     def _compute_radial_layout(self, sel_name: str):
-        relative_layout: dict[tuple[str, int], np.ndarray] = {}
-        links_by_ref: list[tuple[tuple[str, int], tuple[str, int]]] = []
+        """Return a radial layout for image nodes around hyperedges.
+
+        The function places images of the selected hyperedge evenly along its
+        perimeter based on similarity to the hyperedge centroid. For every other
+        hyperedge that shares images with the selected one, shared images are
+        used as angular anchors and the remaining images are distributed between
+        them according to similarity.
+        """
+
+        offsets: dict[tuple[str, int], np.ndarray] = {}
+        links: list[tuple[tuple[str, int], tuple[str, int]]] = []
 
         if not self.session or not self.fa2_layout:
-            return relative_layout, links_by_ref
+            return offsets, links
 
         features = self.session.features
 
-        # We still need the centers for the direction calculation, but we won't store them.
-        sel_center = self.fa2_layout.positions[sel_name]
-        sel_diameter = self.fa2_layout.node_sizes[self._edge_index(sel_name)]
-        sel_r = (sel_diameter / 2.0) * self.radial_placement_factor
+        # ---- Selected hyperedge placement ---------------------------------
         sel_indices = list(self.session.hyperedges.get(sel_name, []))
         if not sel_indices:
-            return relative_layout, links_by_ref
+            return offsets, links
 
-        # ... (rest of the similarity calculation is identical) ...
+        sel_center = self.fa2_layout.positions[sel_name]
+        sel_radius = (
+            self.fa2_layout.node_sizes[self._edge_index(sel_name)] / 2.0
+        ) * self.radial_placement_factor
+
         centroid = self.session.hyperedge_avg_features[sel_name]
         sims = SIM_METRIC(features[sel_indices], centroid.reshape(1, -1)).flatten()
         order = np.argsort(-sims)
 
-        for rank, idx in enumerate(np.array(sel_indices)[order]):
-            ang = pi/2 - 2 * pi * rank / len(order)
-            # Store the OFFSET vector, not the absolute position
-            offset = np.array([cos(ang), sin(ang)]) * sel_r
-            relative_layout[(sel_name, idx)] = offset
+        for rank, img_idx in enumerate(np.array(sel_indices)[order]):
+            ang = pi / 2 - 2 * pi * rank / len(order)
+            offsets[(sel_name, img_idx)] = np.array([cos(ang), sin(ang)]) * sel_radius
 
-        # ... (The logic for linked hyperedges also now stores offsets) ...
+        # ---- Linked hyperedge placement -----------------------------------
         for tgt in self.session.hyperedges:
-            if tgt == sel_name: continue
+            if tgt == sel_name:
+                continue
             tgt_indices = list(self.session.hyperedges.get(tgt, []))
-            shared_ids = [i for i in tgt_indices if i in sel_indices]
-            if not shared_ids: continue
+            shared = [i for i in tgt_indices if i in sel_indices]
+            if not shared:
+                continue
 
-            center_t = self.fa2_layout.positions[tgt]
-            tgt_diameter = self.fa2_layout.node_sizes[self._edge_index(tgt)]
-            r_t = (tgt_diameter / 2.0) * self.radial_placement_factor
+            tgt_center = self.fa2_layout.positions[tgt]
+            tgt_radius = (
+                self.fa2_layout.node_sizes[self._edge_index(tgt)] / 2.0
+            ) * self.radial_placement_factor
 
             anchors = []
-            for img_idx in shared_ids:
-                # Reconstruct absolute position of source node to get the direction
-                pos_on_selected = sel_center + relative_layout[(sel_name, img_idx)]
-                direction_vec = pos_on_selected - center_t
-                if np.linalg.norm(direction_vec) < 1e-6: direction_vec = np.array([1.0, 0.0])
-                
-                norm_direction = direction_vec / np.linalg.norm(direction_vec)
-                # Store the OFFSET for the target node
-                offset_on_target = norm_direction * r_t
-                relative_layout[(tgt, img_idx)] = offset_on_target
-                
-                # Store links by REFERENCE ((parent, id), (parent, id))
-                links_by_ref.append( ((sel_name, img_idx), (tgt, img_idx)) )
-                
-                angle = np.arctan2(norm_direction[1], norm_direction[0])
-                anchors.append({'id': img_idx, 'angle': angle, 'feat': features[img_idx]})
+            for idx in shared:
+                pos_on_sel = sel_center + offsets[(sel_name, idx)]
+                vec = pos_on_sel - tgt_center
+                if np.linalg.norm(vec) < 1e-6:
+                    vec = np.array([1.0, 0.0])
+                unit = vec / np.linalg.norm(vec)
+                offsets[(tgt, idx)] = unit * tgt_radius
+                links.append(((sel_name, idx), (tgt, idx)))
+                angle = np.arctan2(unit[1], unit[0])
+                anchors.append({"id": idx, "angle": angle, "feat": features[idx]})
 
-            # Sort anchors by their angle to define the arcs between them
-            anchors.sort(key=lambda a: a['angle'])
+            anchors.sort(key=lambda a: a["angle"])
             n_anchors = len(anchors)
-            
-            # --- Distribute Remaining Nodes into Arcs ---
-            remaining_ids = [i for i in tgt_indices if i not in shared_ids]
-            if remaining_ids:
-                # Handle single-anchor case separately
-                if n_anchors == 1:
-                    anchor = anchors[0]
-                    rem_feats = features[remaining_ids]
-                    rem_sims = SIM_METRIC(rem_feats, anchor['feat'].reshape(1,-1)).flatten()
-                    order = np.argsort(-rem_sims)
-                    
-                    # Fill a 270-degree arc opposite the anchor
-                    start_angle = anchor['angle'] + pi/4
-                    arc_span = 1.5 * pi # 270 degrees
-                    for k, idx in enumerate(np.array(remaining_ids)[order]):
-                        frac = (k + 1) / (len(order) + 1)
-                        ang = start_angle + frac * arc_span
-                        pos = center_t + np.array([cos(ang), sin(ang)]) * r_t
-                        # layout[(tgt, idx)] = pos
-                        offset = np.array([cos(ang), sin(ang)]) * r_t
-                        relative_layout[(tgt, idx)] = offset
+            remaining = [i for i in tgt_indices if i not in shared]
+            if not remaining:
+                continue
 
-
-                else: # General case with 2+ anchors
-                    seg_lists: dict[int, list[tuple[int, float]]] = {j: [] for j in range(n_anchors)}
-                    rem_feats = features[remaining_ids]
-                    
-                    for idx, vec in zip(remaining_ids, rem_feats):
-                        best_seg, best_score = -1, -1.0
-                        for j in range(n_anchors):
-                            a1 = anchors[j]
-                            a2 = anchors[(j + 1) % n_anchors]
-                            s1 = SIM_METRIC(vec.reshape(1,-1), a1['feat'].reshape(1,-1))[0,0]
-                            s2 = SIM_METRIC(vec.reshape(1,-1), a2['feat'].reshape(1,-1))[0,0]
-                            score = max(s1, s2)
-                            if score > best_score:
-                                best_score, best_seg = score, j
-                        seg_lists[best_seg].append((idx, best_score))
-
+            if n_anchors == 1:
+                anchor = anchors[0]
+                rem_feats = features[remaining]
+                rem_sims = SIM_METRIC(rem_feats, anchor["feat"].reshape(1, -1)).flatten()
+                order = np.argsort(-rem_sims)
+                start_angle = anchor["angle"] + pi / 4
+                arc_span = 1.5 * pi
+                for k, idx in enumerate(np.array(remaining)[order]):
+                    frac = (k + 1) / (len(order) + 1)
+                    ang = start_angle + frac * arc_span
+                    offsets[(tgt, idx)] = np.array([cos(ang), sin(ang)]) * tgt_radius
+            else:
+                seg_lists: dict[int, list[tuple[int, float]]] = {j: [] for j in range(n_anchors)}
+                rem_feats = features[remaining]
+                for idx, vec in zip(remaining, rem_feats):
+                    best_seg, best_score = 0, -1.0
                     for j in range(n_anchors):
-                        items_in_segment = seg_lists.get(j, [])
-                        if not items_in_segment: continue
-                        
-                        items_in_segment.sort(key=lambda x: x[1], reverse=True)
-                        
-                        start_anchor = anchors[j]
-                        end_anchor = anchors[(j + 1) % n_anchors]
-                        
-                        # Calculate angular distance, handling wrapping around -pi/pi
-                        angular_dist = (end_anchor['angle'] - start_anchor['angle'] + 2*pi) % (2*pi)
+                        a1 = anchors[j]
+                        a2 = anchors[(j + 1) % n_anchors]
+                        s1 = SIM_METRIC(vec.reshape(1, -1), a1["feat"].reshape(1, -1))[0, 0]
+                        s2 = SIM_METRIC(vec.reshape(1, -1), a2["feat"].reshape(1, -1))[0, 0]
+                        score = max(s1, s2)
+                        if score > best_score:
+                            best_score, best_seg = score, j
+                    seg_lists[best_seg].append((idx, best_score))
 
-                        for k, (idx, _) in enumerate(items_in_segment):
-                            # Interpolate angle within the arc segment
-                            frac = (k + 1) / (len(items_in_segment) + 1)
-                            ang = start_anchor['angle'] + frac * angular_dist
-                            pos = center_t + np.array([cos(ang), sin(ang)]) * r_t
-                            # layout[(tgt, idx)] = pos
-                            offset = np.array([cos(ang), sin(ang)]) * r_t
-                            relative_layout[(tgt, idx)] = offset
+                for j in range(n_anchors):
+                    items = seg_lists.get(j, [])
+                    if not items:
+                        continue
+                    items.sort(key=lambda x: x[1], reverse=True)
+                    start_a = anchors[j]
+                    end_a = anchors[(j + 1) % n_anchors]
+                    angular_dist = (end_a["angle"] - start_a["angle"] + 2 * pi) % (2 * pi)
+                    for k, (idx, _) in enumerate(items):
+                        frac = (k + 1) / (len(items) + 1)
+                        ang = start_a["angle"] + frac * angular_dist
+                        offsets[(tgt, idx)] = np.array([cos(ang), sin(ang)]) * tgt_radius
 
-        return relative_layout, links_by_ref
+        return offsets, links
 
 
     
 
-          
+            
     def _update_image_layer(self):
-        # This function is now responsible for using the cache to build final positions
+        # 1) Nothing to do if no layout or no selection
         if self._radial_layout_cache is None:
-            self._clear_image_layer()
+            # Clear any existing items if the cache was just invalidated
+            for circ in self.imageItems.values():
+                if circ.scene(): circ.scene().removeItem(circ)
+            self.imageItems.clear()
+            for ln in self.image_links:
+                if ln.scene(): ln.scene().removeItem(ln)
+            self.image_links.clear()
             return
 
+        # 2) Zoom-out cutoff: clear everything
         xr, _ = self.view.viewRange()
-        view_width = xr[1] - xr[0]
-        if view_width > self.zoom_threshold:
-            self._clear_image_layer()
+        print('zoom',(xr[1] - xr[0]))
+        if (xr[1] - xr[0]) > self.zoom_threshold:
+            for circ in self.imageItems.values():
+                if circ.scene(): circ.scene().removeItem(circ)
+            self.imageItems.clear()
+            for ln in self.image_links:
+                if ln.scene(): ln.scene().removeItem(ln)
+            self.image_links.clear()
             return
-        
-        relative_layout, links_by_ref = self._radial_layout_cache
-        if not relative_layout:
-            self._clear_image_layer()
-            return
 
-        # FIX 2: Reconstruct absolute positions every frame. This is very fast.
-        final_positions = {}
-        for (parent_name, img_idx), offset in relative_layout.items():
-            parent_center = self.fa2_layout.positions[parent_name]
-            final_positions[(parent_name, img_idx)] = parent_center + offset
+        # 3) Unpack your cached offsets & cross-links
+        relative_layout, links = self._radial_layout_cache
+        alive = set()
 
-        # Draw the nodes
-        pos_array = np.array(list(final_positions.values()))
-        self._clear_image_layer()
-        self.image_scatter.setData(pos=pos_array)
-        
-        # Draw the links using the reconstructed positions
-        link_pen = pg.mkPen(color=(255, 255, 255, 150), width=1)
-        for ref1, ref2 in links_by_ref:
-            p1 = final_positions[ref1]
-            p2 = final_positions[ref2]
-            ln = pg.PlotCurveItem(x=[p1[0], p2[0]], y=[p1[1], p2[1]], pen=link_pen)
-            self.plot.addItem(ln)
-            self.image_links.append(ln)
+        # 4) Create OR MOVE each small circle
+        xyz = 0
+        for (edge_name, img_idx), offset in relative_layout.items():
+            key = (edge_name, img_idx)
+            alive.add(key)
 
-    
+            if key not in self.imageItems:
+                # create a fixed-pixel circle
+                r = 4  # radius in px
+                circ = QGraphicsEllipseItem(-r, -r, 2 * r, 2 * r)
+                circ.setPen(pg.mkPen('k'))                # black border
+                circ.setBrush(pg.mkBrush('w'))            # white fill
+                circ.setFlag(QGraphicsItem.ItemIgnoresTransformations)
+                self.imageItems[key] = circ
+                self.view.scene().addItem(circ) # Add the circle directly to the scene
 
+            # THIS IS THE CORE FIX: This logic must be INSIDE the loop.
+            # It calculates and sets the position for the CURRENT item in the loop.
+            # 1. Get the parent hyperedge's data position.
+            parent_data_pos = self.fa2_layout.positions[edge_name]
+            # 2. Calculate the absolute data position of the small circle.
+            abs_data_pos = parent_data_pos + offset
+            # 3. Map this absolute data position to a scene (pixel) position.
+            scene_pos = self.view.mapViewToScene(QPointF(*abs_data_pos))
+            # 4. Set the circle's position in the scene.
+            self.imageItems[key].setPos(scene_pos)
+            if xyz == 0:
+                print('sp',scene_pos)
+                xyz+=1
+
+        # 5) Remove any stale circles
+        for key in list(self.imageItems):
+            if key not in alive:
+                item = self.imageItems.pop(key)
+                if item.scene():
+                    item.scene().removeItem(item)
+
+        # 6) Clear old link-items
+        for ln in self.image_links:
+            if ln.scene():
+                ln.scene().removeItem(ln)
+        self.image_links.clear()
+
+        # 7) Draw new links as scene-space lines (This part was already correct)
+        pen = pg.mkPen(color=(255, 255, 255, 150), width=1) # Reduced width for clarity
+        zyc = 0
+        for (e1, i1), (e2, i2) in links:
+            # compute data-space endpoints
+            # Ensure we don't try to access a key that might not be in the layout (edge case)
+            if (e1, i1) not in relative_layout or (e2, i2) not in relative_layout:
+                continue
+                
+            d1 = self.fa2_layout.positions[e1] + relative_layout[(e1, i1)]
+            d2 = self.fa2_layout.positions[e2] + relative_layout[(e2, i2)]
+            
+            # map once into scene coords
+            p1 = self.view.mapViewToScene(QPointF(*d1))
+            p2 = self.view.mapViewToScene(QPointF(*d2))
+            if zyc == 0:
+                print('d',d1,d2)
+                print('p',p1,p2)
+                zyc+=1
+            # create a line in scene
+            line = QGraphicsLineItem(QLineF(p1, p2))
+            line.setPen(pen)
+            line.setFlag(QGraphicsItem.ItemIgnoresTransformations)
+            self.view.scene().addItem(line)
+            self.image_links.append(line)
+            
     def _goto_position(self, x: float, y: float):
         xr, yr = self.view.viewRange()
         dx, dy = (xr[1] - xr[0]) / 2, (yr[1] - yr[0]) / 2
@@ -380,55 +416,91 @@ class SpatialViewQDock(QDockWidget):
 
     def set_model(self, session: SessionModel | None):
         self.stop_simulation()
-        self.plot.clear()
-        self.plot.addItem(self.image_scatter)
-        
+        # remove old hyperedges
+        for item in self.hyperedgeItems.values():
+            item.scene().removeItem(item)
+        self.hyperedgeItems.clear()
+        # remove old images
+        for pix in self.imageItems.values():
+            pix.scene().removeItem(pix)
+        self.imageItems.clear()
+        # remove old links
+        for ln in self.image_links:
+            self.plot.removeItem(ln)
+        self.image_links.clear()        
         if self.minimap_scatter:
             self.minimap.plotItem.removeItem(self.minimap_scatter)
-        self.session, self.fa2_layout, self.scatter, self.scatter_colors, self.minimap_scatter = None, None, None, None, None
-        
+
+        # Reset state
+        self.session = None
+        self.fa2_layout = None
+        self.hyperedgeItems = {}
+        self.imageItems = {}
+        self.minimap_scatter = None
+
         if not session:
             self.run_button.setEnabled(False)
             return
-        
+
         self.session = session
-        print("Initializing ForceAtlas2 layout for hyperedges...")
+        self.color_map = session.edge_colors.copy()
+
+        # Initialize FA2 layout
         edges = list(session.hyperedges)
-        overlap_data = { rk: {ck: len(session.hyperedges[rk] & session.hyperedges[ck]) for ck in edges} for rk in edges }
+        overlap_data = {
+            rk: {ck: len(session.hyperedges[rk] & session.hyperedges[ck]) for ck in edges}
+            for rk in edges
+        }
         self.fa2_layout = HyperedgeForceAtlas2(overlap_data, session)
-        num_hyperedges = len(self.fa2_layout.names)
-        self.scatter_colors = np.array(['#808080'] * num_hyperedges, dtype=object)
-        initial_pos = np.array([self.fa2_layout.positions[name] for name in self.fa2_layout.names])
 
-        ## ------------------------------------------------------------------
-        ## FIX 1: Correctly calculate and apply scalable node sizes
-        ## ------------------------------------------------------------------
-        # Using sqrt to prevent giant hyperedges from becoming too dominant
-        content_based_sizes = np.array([np.sqrt(len(session.hyperedges[name])) for name in self.fa2_layout.names])
-        scaled_sizes = content_based_sizes * self.NODE_SIZE_SCALER
-        final_node_sizes = np.maximum(scaled_sizes, self.MIN_HYPEREDGE_DIAMETER)
-        self.fa2_layout.node_sizes = final_node_sizes
-        ## ------------------------------------------------------------------
+        # Compute initial positions and node sizes
+        names = self.fa2_layout.names
+        initial_pos = np.array([self.fa2_layout.positions[name] for name in names])
+        counts = np.array([np.sqrt(len(session.hyperedges[name])) for name in names])
+        sizes = np.maximum(counts * self.NODE_SIZE_SCALER, self.MIN_HYPEREDGE_DIAMETER)
+        self.fa2_layout.node_sizes = sizes
 
-        # Create the scatter plot with pxMode=False
-        self.scatter = pg.ScatterPlotItem(
-            pos=initial_pos,
-            size=self.fa2_layout.node_sizes,  # Use the correctly calculated sizes
-            brush=[pg.mkBrush(c) for c in self.scatter_colors],
-            pen=None,
-            pxMode=True,  # <-- CRITICAL: Set to False for scalable nodes
-            useOpenGL=True,
-            data=self.fa2_layout.names
-        )
-        self.plot.addItem(self.scatter)
+        for name, (x,y), diameter in zip(names, initial_pos, sizes):
+            r = diameter / 2.0
+            # Create an ellipse centered at (0,0) with a given radius in DATA coordinates
+            ellipse = QGraphicsEllipseItem(-r, -r, diameter, diameter) 
+            ellipse.setPen(pg.mkPen(self.color_map[name]))
+            ellipse.setBrush(pg.mkBrush(self.color_map[name]))
+            
+            # Set its position in DATA coordinates
+            ellipse.setPos(x, y)
+            
+            # REMOVE the ItemIgnoresTransformations flag
+            # ellipse.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
+            
+            # ADD the ellipse to the VIEWBOX, not the scene.
+            self.view.addItem(ellipse) 
+            self.hyperedgeItems[name] = ellipse
+
+
+        # for name, (x,y), diameter in zip(names, initial_pos, sizes):
+        #     r = diameter/2
+        #     ellipse = QGraphicsEllipseItem(-r,-r, diameter, diameter)
+        #     ellipse.setPen(pg.mkPen(self.color_map[name]))
+        #     ellipse.setBrush(pg.mkBrush(self.color_map[name]))
+        #     ellipse.setPos(x, y)
+        #     print('nodexy',x,y)
+        #     # hyperedges should scale/pan with the view:
+        #     ellipse.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)            
+        #     self.view.scene().addItem(ellipse)
+        #     self.hyperedgeItems[name] = ellipse
+
+
+
+        # Set up minimap and start
         self._update_minimap_view()
         self._position_minimap()
-        self.color_map = session.edge_colors.copy()
         self.run_button.setEnabled(True)
         self.start_simulation()
 
+
     def _update_frame(self):
-        if not self.fa2_layout or not self.scatter:
+        if not self.fa2_layout:
             return
         self.fa2_layout.step(iterations=1)
         self._refresh_scatter_plot()
@@ -438,27 +510,30 @@ class SpatialViewQDock(QDockWidget):
 
 
     def _refresh_scatter_plot(self):
-        if not self.fa2_layout or not self.scatter or self.scatter_colors is None:
+        if not self.fa2_layout:
             return
-        
-        current_pos = np.array([self.fa2_layout.positions[name] for name in self.fa2_layout.names])
-        brushes = [pg.mkBrush(c) for c in self.scatter_colors]
-        
-        self.scatter.setData(
-            pos=current_pos,
-            brush=brushes,
-            size=self.fa2_layout.node_sizes # This is now world size
-        )
-        
+        # 1) Re‐position each hyperedge
+        for name, ellipse in self.hyperedgeItems.items():
+            x, y = self.fa2_layout.positions[name]
+            # Just set the data position. PyQtGraph handles the transform.
+            ellipse.setPos(x, y) 
+
+
+        # for name, ellipse in self.hyperedgeItems.items():
+        #     x, y = self.fa2_layout.positions[name]
+        #     # map the data‐space point into the SCENE (pixel) coordinates
+        #     scene_pt = self.view.mapViewToScene(QPointF(x, y))
+        #     ellipse.setPos(scene_pt)
+        # 2) And update the minimap as before…
+        positions = np.array([self.fa2_layout.positions[n] for n in self.fa2_layout.names])
         if self.minimap_scatter is None:
             self.minimap_scatter = pg.ScatterPlotItem(
-                pen=None, brush=pg.mkBrush('w'), size=3, pxMode=True, useOpenGL=True,
+                pen=None, brush=pg.mkBrush('w'), size=3, pxMode=True, useOpenGL=True
             )
             self.minimap.plotItem.addItem(self.minimap_scatter)
-        self.minimap_scatter.setData(pos=current_pos)
-
+        self.minimap_scatter.setData(pos=positions)
         self._update_minimap_view()
-        
+            
         ## FIX: The image layer update is now triggered by the animation frame or by selection/view changes.
         ## We removed the call from here to avoid redundancy and put it in _update_frame.
         # self._update_image_layer() # This call is moved to _update_frame
@@ -492,43 +567,62 @@ class SpatialViewQDock(QDockWidget):
     def _on_scene_mouse_clicked(self, ev):
         if not ev.button() == Qt.LeftButton:
             return
-        if not self.scatter or not self.session:
-            return
-        pos = self.view.mapSceneToView(ev.scenePos())
-        pts = self.scatter.pointsAt(pos)
-        if pts:
-            hyperedge_name = pts[0].data()
-            if hyperedge_name:
-                print(f"Clicked on hyperedge: {hyperedge_name}")
-                self.bus.set_edges([hyperedge_name])
-                ev.accept()
+        
+        # Find items at the click position in the scene
+        items = self.plot.scene().items(ev.scenePos())
+        
+        clicked_edge_name = None
+        for item in items:
+            # Check if the clicked item is one of our hyperedge ellipses
+            for name, ellipse in self.hyperedgeItems.items():
+                if item is ellipse:
+                    clicked_edge_name = name
+                    break
+            if clicked_edge_name:
+                break
+        
+        if clicked_edge_name:
+            print(f"Clicked on hyperedge: {clicked_edge_name}")
+            self.bus.set_edges([clicked_edge_name])
+            ev.accept()
         else:
-            # If click is not on a node, maybe clear selection
-            self.bus.set_edges([])
+            # If click is not on a node, clear selection
+            if not (QApplication.keyboardModifiers() & Qt.ShiftModifier):
+                self.bus.set_edges([])
 
 
           
     def _on_edges_changed(self, names: list[str]):
-        if not self.fa2_layout or self.scatter_colors is None:
+        if not self.fa2_layout:
             return
-            
-        self._selected_edges = names
-        self.scatter_colors[:] = '#808080'
-        name_to_index = {name: i for i, name in enumerate(self.fa2_layout.names)}
+
+        # 1) Reset all hyperedge colors to gray
+        for name, ellipse in self.hyperedgeItems.items():
+            pen = pg.mkPen('#808080')
+            brush = pg.mkBrush('#808080')
+            ellipse.setPen(pen)
+            ellipse.setBrush(brush)
+
+        # 2) Highlight selected edges
         for name in names:
-            if name in name_to_index:
-                idx = name_to_index[name]
+            ellipse = self.hyperedgeItems.get(name)
+            if ellipse:
                 color = self.color_map.get(name, 'yellow')
-                self.scatter_colors[idx] = color
-        
-        ## FIX: Re-compute and cache the layout ONLY when the selection changes.
+                pen = pg.mkPen(color)
+                brush = pg.mkBrush(color)
+                ellipse.setPen(pen)
+                ellipse.setBrush(brush)
+
+        # 3) Recompute and draw image layout
         if len(names) == 1:
             self._radial_layout_cache = self._compute_radial_layout(names[0])
         else:
             self._radial_layout_cache = None
 
-        self._refresh_scatter_plot() # Redraw hyperedges with new colors
-        self._update_image_layer() # Trigger an initial draw of the new layout
+        # Refresh positions and images/links
+        self._refresh_scatter_plot()
+        self._update_image_layer()
+
 
     
 
