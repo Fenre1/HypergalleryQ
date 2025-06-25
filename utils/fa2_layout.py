@@ -5,10 +5,7 @@ from typing import Dict, List
 import numpy as np
 import networkx as nx
 
-try:
-    from pyforceatlas2 import ForceAtlas2
-except Exception as exc:  # pragma: no cover - library might not be installed
-    ForceAtlas2 = None
+from pyforceatlas2 import ForceAtlas2
 
 from .session_model import SessionModel
 
