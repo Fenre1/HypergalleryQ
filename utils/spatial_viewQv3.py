@@ -394,13 +394,48 @@ class SpatialViewQDock(QDockWidget):
         if not (QApplication.keyboardModifiers() & Qt.ShiftModifier):
             self.bus.set_edges([])
 
-    def _on_lasso(self,pts):
-        if not self.fa2_layout: return
-        names=self.fa2_layout.names
-        pos=np.array([self.fa2_layout.positions[n] for n in names])
-        poly=MplPath([(p.x(),p.y()) for p in pts])
-        sel=[names[i] for i in np.nonzero(poly.contains_points(pos))[0]]
-        self.bus.set_edges(sel)
+    def _on_lasso(self, pts: list[QPointF]):
+        """
+        If the lasso encloses ≥1 hyperedge node → select edges.
+        Otherwise, if it encloses ≥1 image‑node → select those images
+        while *keeping* the current edge selection so the radial layout
+        stays visible.
+        """
+        if not self.fa2_layout:
+            return
+
+        poly      = [(p.x(), p.y()) for p in pts]
+        mpl_path  = MplPath(poly)
+
+        # --- 1. hyperedge test ------------------------------------------- #
+        names     = self.fa2_layout.names
+        pos_edges = np.array([self.fa2_layout.positions[n] for n in names])
+        mask_edges = mpl_path.contains_points(pos_edges)
+        sel_edges  = [names[i] for i in np.nonzero(mask_edges)[0]]
+
+        if sel_edges:
+            self.bus.set_edges(sel_edges)         # normal behaviour
+            return
+
+        # --- 2. thumbnail test ------------------------------------------- #
+        if self._radial_layout_cache is None:
+            return
+        rel, _links = self._radial_layout_cache
+        if not rel:
+            return
+
+        keys      = list(rel.keys())              # (edge, img_idx)
+        centres   = np.array([self.fa2_layout.positions[e] for e, _ in keys])
+        offsets   = np.array(list(rel.values()))
+        abs_pos   = centres + offsets
+        mask_imgs = mpl_path.contains_points(abs_pos)
+        sel_imgs  = [idx for (_e, idx), inside in zip(keys, mask_imgs) if inside]
+
+        if sel_imgs:
+            # keep current edge selection → thumbnails stay visible
+            self.bus.set_images(sel_imgs)
+
+
 
     def _goto(self,x,y):
         xr,yr=self.view.viewRange()
