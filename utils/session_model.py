@@ -1,9 +1,13 @@
 # session_model.py
-from __future__ import annotations           # for -> SessionModel typing
-import uuid, numpy as np, pandas as pd, h5py
+from __future__ import annotations  # for -> SessionModel typing
+import uuid
+import numpy as np
+import pandas as pd
+import h5py
 from pathlib import Path
-from typing import Dict, List, Set, Iterable
+from typing import Dict, List, Set, Iterable, Optional
 from PIL import Image, ExifTags
+import io
 from PyQt5.QtCore import QObject, pyqtSignal as Signal
 from .similarity import SIM_METRIC
 import pyqtgraph as pg
@@ -21,23 +25,43 @@ class SessionModel(QObject):
         with h5py.File(path, "r") as hdf:
             im_list = [x.decode() if isinstance(x, bytes) else x
                        for x in hdf["file_list"][()]]
-            matrix  = hdf["clustering_results"][()]
-            cat_raw = (hdf["catList"][()] if "catList" in hdf
-                       else [f"edge_{i}" for i in range(matrix.shape[1])])
+            matrix = hdf["clustering_results"][()]
+            cat_raw = (
+                hdf["catList"][()] if "catList" in hdf else [f"edge_{i}" for i in range(matrix.shape[1])]
+            )
             cat_list = [x.decode() if isinstance(x, bytes) else x for x in cat_raw]
             df_edges = pd.DataFrame(matrix, columns=cat_list)
             features = hdf["features"][()]
             umap_emb = hdf["umap_embedding"][()] if "umap_embedding" in hdf else None
             openclip_feats = hdf["openclip_features"][()] if "openclip_features" in hdf else None
 
-        return cls(im_list, df_edges, features, path,
-            openclip_features=openclip_feats, umap_embedding=umap_emb)
+            thumbnails_embedded = hdf.attrs.get("thumbnails_are_embedded", True)
+            thumbnail_data: Optional[List[bytes] | List[str]] = None
+            if thumbnails_embedded and "thumbnail_data_embedded" in hdf:
+                thumbnail_data = [arr.tobytes() for arr in hdf["thumbnail_data_embedded"][:]]
+            elif not thumbnails_embedded and "thumbnail_relative_paths" in hdf:
+                thumbnail_data = [p.decode("utf-8") if isinstance(p, bytes) else str(p)
+                                  for p in hdf["thumbnail_relative_paths"][:]]
+
+        return cls(
+            im_list,
+            df_edges,
+            features,
+            path,
+            openclip_features=openclip_feats,
+            umap_embedding=umap_emb,
+            thumbnail_data=thumbnail_data,
+            thumbnails_are_embedded=thumbnails_embedded,
+        )
 
     def save_h5(self, path: Path | None = None) -> None:
         """Write current session state to an HDF5 file."""
         target = Path(path) if path else self.h5_path
         if not target.suffix:
             target = target.with_suffix(".h5")
+
+        if self.thumbnail_data is None:
+            self.generate_thumbnails()
 
         with h5py.File(target, "w") as hdf:
             dt = h5py.string_dtype(encoding="utf-8")
@@ -58,6 +82,20 @@ class SessionModel(QObject):
             if self.umap_embedding is not None:
                 hdf.create_dataset("umap_embedding", data=self.umap_embedding, dtype="f4")
 
+            hdf.attrs["thumbnails_are_embedded"] = self.thumbnails_are_embedded
+
+            if self.thumbnail_data:
+                if self.thumbnails_are_embedded:
+                    dt_vlen = h5py.vlen_dtype(np.uint8)
+                    arrs = [np.frombuffer(b, dtype=np.uint8) for b in self.thumbnail_data]
+                    hdf.create_dataset("thumbnail_data_embedded", data=arrs, dtype=dt_vlen)
+                else:
+                    hdf.create_dataset(
+                        "thumbnail_relative_paths",
+                        data=np.array(self.thumbnail_data, dtype=object),
+                        dtype=dt,
+                    )
+
         self.h5_path = target
 
 
@@ -68,7 +106,9 @@ class SessionModel(QObject):
                  h5_path: Path,
                  *,
                  openclip_features: np.ndarray | None = None,
-                 umap_embedding: np.ndarray | None = None):
+                 umap_embedding: np.ndarray | None = None,
+                 thumbnail_data: Optional[List[bytes] | List[str]] = None,
+                 thumbnails_are_embedded: bool = True):
         super().__init__()
         self.im_list  = im_list                              # list[str]
         self.cat_list = list(df_edges.columns)               # list[str]
@@ -91,6 +131,9 @@ class SessionModel(QObject):
         }
         self.umap_embedding = umap_embedding
         self.h5_path = h5_path
+        
+        self.thumbnail_data: Optional[List[bytes] | List[str]] = thumbnail_data
+        self.thumbnails_are_embedded: bool = thumbnails_are_embedded
 
     # ─── internal helpers (static) ──────────────────────────────────────
     @staticmethod
@@ -127,6 +170,27 @@ class SessionModel(QObject):
 
         return pd.DataFrame(meta_rows)
 
+
+    def generate_thumbnails(self, size: tuple[int, int] = (100, 100)) -> None:
+        """Generate thumbnail JPEG bytes for all images."""
+        thumbs: List[bytes] = []
+        for p in self.im_list:
+            try:
+                img = Image.open(p).convert("RGB")
+                img.thumbnail(size, Image.Resampling.LANCZOS)
+                canvas = Image.new("RGB", size, "black")
+                off_x = (size[0] - img.width) // 2
+                off_y = (size[1] - img.height) // 2
+                canvas.paste(img, (off_x, off_y))
+                buf = io.BytesIO()
+                canvas.save(buf, format="JPEG", quality=90)
+                thumbs.append(buf.getvalue())
+            except Exception as e:
+                print(f"Thumbnail generation failed for {p}: {e}")
+                thumbs.append(b"")
+
+        self.thumbnail_data = thumbs
+        self.thumbnails_are_embedded = True
 
     # ─── public API used by the GUI today ───────────────────────────────
     def rename_edge(self, old: str, new: str) -> bool:

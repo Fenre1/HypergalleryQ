@@ -575,12 +575,17 @@ class MainWin(QMainWindow):
         new_act = QAction("&New Session…", self, triggered=self.new_session)
         save_act = QAction("&Save", self, triggered=self.save_session)
         save_as_act = QAction("Save &As…", self, triggered=self.save_session_as)
+        
+        self.thumb_toggle_act = QAction("Use Full Images", self, checkable=True)
+        self.thumb_toggle_act.toggled.connect(self.toggle_full_images)
+
         file_menu = self.menuBar().addMenu("&File")
         file_menu.addAction(open_act)
         file_menu.addAction(new_act)
         file_menu.addAction(save_act)
         file_menu.addAction(save_as_act)
-        self.menuBar().addMenu("&File").addAction(open_act)
+        file_menu.addAction(self.thumb_toggle_act)
+        # self.menuBar().addMenu("&File").addAction(open_act)
 
         self.model = None
 
@@ -903,6 +908,8 @@ class MainWin(QMainWindow):
         self.model.layoutChanged.connect(self._on_layout_changed)
 
         self.image_grid.set_model(self.model)
+        self.image_grid.set_use_full_images(True)
+        self.thumb_toggle_act.setChecked(True)
         self.matrix_dock.set_model(self.model)
         self.spatial_dock.set_model(self.model)
         self.regroup()
@@ -937,6 +944,12 @@ class MainWin(QMainWindow):
             return
 
         self.image_grid.set_model(self.model)
+        if self.model.thumbnail_data:
+            self.image_grid.set_use_full_images(False)
+            self.thumb_toggle_act.setChecked(False)
+        else:
+            self.image_grid.set_use_full_images(True)
+            self.thumb_toggle_act.setChecked(True)
         self.matrix_dock.set_model(self.model)
         self.spatial_dock.set_model(self.model)
         self.regroup()
@@ -975,6 +988,9 @@ class MainWin(QMainWindow):
     def _on_layout_changed(self):
         self._overview_triplets = None
         self.regroup()
+
+    def toggle_full_images(self, flag: bool) -> None:
+        self.image_grid.set_use_full_images(flag)
 
     def _on_item_changed(self, item: QStandardItem):
         if item.column() != 0 or item.hasChildren(): return

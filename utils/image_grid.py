@@ -9,6 +9,7 @@ from PyQt5.QtCore import (
     Qt, QAbstractListModel, QModelIndex, QSize, QObject, QThread,
     pyqtSignal as Signal, QEvent
 )
+from pathlib import Path
 
 from .selection_bus import SelectionBus
 from .session_model import SessionModel
@@ -24,20 +25,39 @@ class _ClickableLabel(QLabel):
         super().__init__(text, parent)
 
 class _ThumbWorker(QObject):
-    """Worker object living in a QThread that loads thumbnails."""
+    """Worker object living in a QThread that loads thumbnails or full images."""
 
-    thumbReady = Signal(int, QImage)        # idx, QImage
+    thumbReady = Signal(int, QImage)  # idx, QImage
 
-    def __init__(self, im_list: list[str], thumb: int):
+    def __init__(self, session: SessionModel, thumb: int, use_full_images: bool):
         super().__init__()
-        self._im_list = im_list
+        self._session = session
         self._thumb = thumb
+        self._use_full = use_full_images
+
+    def set_mode(self, use_full: bool) -> None:
+        self._use_full = use_full
+
     def load(self, idx: int):
-        img = QImage(self._im_list[idx])
+        if not self._use_full and self._session.thumbnail_data:
+            if self._session.thumbnails_are_embedded:
+                data = self._session.thumbnail_data[idx]
+                img = QImage.fromData(data)
+            else:
+                path = Path(self._session.h5_path).parent / self._session.thumbnail_data[idx]
+                img = QImage(str(path))
+        else:
+            img = QImage(self._session.im_list[idx])
+
         if not img.isNull():
-            img = img.scaled(self._thumb, self._thumb,
-                             Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            img = img.scaled(
+                self._thumb,
+                self._thumb,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
         self.thumbReady.emit(idx, img)
+
 
 
 class ImageListModel(QAbstractListModel):
@@ -45,14 +65,14 @@ class ImageListModel(QAbstractListModel):
 
     requestThumb = Signal(int)              # idx → worker
 
-    def __init__(self, session: SessionModel, idxs: list[int], thumb_size: int = 128, parent=None, highlight: list[int] | None = None):
+    def __init__(self, session: SessionModel, idxs: list[int], thumb_size: int = 128, parent=None, highlight: list[int] | None = None, use_full_images: bool = False):
         super().__init__(parent)
         self._session = session
         self._indexes = idxs
         self._thumb = thumb_size
         self._preload = 64
         self._highlight = set(highlight or [])
-
+        self._use_full = use_full_images
 
         self._pixmaps: dict[int, QPixmap] = {}
         self._index_map = {idx: row for row, idx in enumerate(self._indexes)}
@@ -62,7 +82,7 @@ class ImageListModel(QAbstractListModel):
 
         # background worker for loading thumbnails
         self._thread = QThread(self)
-        self._worker = _ThumbWorker(self._session.im_list, self._thumb)
+        self._worker = _ThumbWorker(self._session, self._thumb, self._use_full)
         self._worker.moveToThread(self._thread)
         self.requestThumb.connect(self._worker.load)
         self._worker.thumbReady.connect(self._on_thumb_ready)
@@ -140,6 +160,8 @@ class ImageGridDock(QDockWidget):
         self.thumb_size = thumb_size
         self.session: SessionModel | None = None
         self._selected_edges: list[str] = []
+        self.use_full_images: bool = False
+        self._current_indices: list[int] = []
 
         self.view = QListView()
         self.view.setViewMode(QListView.IconMode)
@@ -160,6 +182,16 @@ class ImageGridDock(QDockWidget):
 
         self.bus.imagesChanged.connect(self.update_images)
         self.bus.edgesChanged.connect(self._remember_edges)
+
+
+    def set_use_full_images(self, flag: bool) -> None:
+        self.use_full_images = flag
+        model = self.view.model()
+        if isinstance(model, ImageListModel):
+            model._worker.set_mode(flag)
+        if self._current_indices:
+            self.update_images(self._current_indices, sort=False)
+
 
     def set_model(self, model: SessionModel):
         self.session = model
@@ -184,7 +216,15 @@ class ImageGridDock(QDockWidget):
                 sims = SIM_METRIC(ref.reshape(1, -1), feats)[0]
                 idxs = [i for _, i in sorted(zip(sims, idxs), reverse=True)]
 
-        model = ImageListModel(self.session, idxs, self.thumb_size, self, highlight=highlight)
+        self._current_indices = list(idxs)
+        model = ImageListModel(
+            self.session,
+            idxs,
+            self.thumb_size,
+            self,
+            highlight=highlight,
+            use_full_images=self.use_full_images,
+        )
         self.view.setModel(model)
 
     def _remember_edges(self, names: list[str]):
