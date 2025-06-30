@@ -135,6 +135,10 @@ class SessionModel(QObject):
         self.thumbnail_data: Optional[List[bytes] | List[str]] = thumbnail_data
         self.thumbnails_are_embedded: bool = thumbnails_are_embedded
 
+        # overview triplets cache -------------------------------------------------
+        self.overview_triplets: Dict[str, tuple[int | None, ...]] | None = None
+        self.compute_overview_triplets()
+
     # ─── internal helpers (static) ──────────────────────────────────────
     @staticmethod
     def _prepare_hypergraph_structures(df):
@@ -213,8 +217,10 @@ class SessionModel(QObject):
                 imgs.add(new)
 
         # tell views -----------------------------------------------------
+        self.overview_triplets = None
         self.edgeRenamed.emit(old, new)
         self.similarityDirty.emit()
+        
         return True
 
     # ------------------ NEW METHOD --------------------------------------
@@ -242,6 +248,7 @@ class SessionModel(QObject):
         self.edge_colors[name] = pg.mkColor(pg.intColor(idx, hues=cmap_hues)).name()
 
         # 6. Signal to the UI that the overall layout has changed
+        self.overview_triplets = None
         self.layoutChanged.emit()
     # --------------------------------------------------------------------
 
@@ -264,6 +271,7 @@ class SessionModel(QObject):
                 self.hyperedge_avg_features[name] = self.features[indices].mean(axis=0)
             else:
                 self.hyperedge_avg_features[name] = np.zeros(self.features.shape[1])
+            self.overview_triplets = None
             self.layoutChanged.emit()
             self.similarityDirty.emit()
 
@@ -286,12 +294,13 @@ class SessionModel(QObject):
                     if idx < len(self.df_edges.index):
                         self.df_edges.at[idx, edge] = 0
 
-                if members:
-                    self.hyperedge_avg_features[edge] = self.features[list(members)].mean(
-                        axis=0
+            if members:
+                self.hyperedge_avg_features[edge] = self.features[list(members)].mean(
+                    axis=0
                     )
-                else:
-                    self.hyperedge_avg_features[edge] = np.zeros(self.features.shape[1])
+            else:
+                self.hyperedge_avg_features[edge] = np.zeros(self.features.shape[1])
+            self.overview_triplets = None
 
             self.layoutChanged.emit()
             self.similarityDirty.emit()
@@ -321,7 +330,51 @@ class SessionModel(QObject):
         sims = SIM_METRIC(avg, feats)[0]
         return float(np.std(sims))
 
-        # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    def compute_overview_triplets(self) -> Dict[str, tuple[int | None, ...]]:
+        """Return and cache up to six representative image indices per edge."""
+        if self.overview_triplets is not None:
+            return self.overview_triplets
+
+        res: Dict[str, tuple[int | None, ...]] = {}
+        for name, idxs in self.hyperedges.items():
+            if not idxs:
+                continue
+            idx_list = list(idxs)
+            feats = self.features[idx_list]
+            avg = self.hyperedge_avg_features[name].reshape(1, -1)
+            sims = SIM_METRIC(avg, feats)[0]
+            top_order = np.argsort(sims)[::-1]
+            top = [idx_list[i] for i in top_order[:3]]
+
+            extremes: list[int] = []
+            if len(idx_list) >= 2:
+                sim_mat = SIM_METRIC(feats, feats)
+                np.fill_diagonal(sim_mat, 1.0)
+                i, j = divmod(np.argmin(sim_mat), sim_mat.shape[1])
+                extremes = [idx_list[i], idx_list[j]]
+
+            far_order = np.argsort(sims)
+            farthest: int | None = None
+            for i in far_order:
+                cand = idx_list[i]
+                if cand not in top and cand not in extremes:
+                    farthest = cand
+                    break
+
+            final: list[int | None] = []
+            for idx in top + extremes:
+                if idx not in final:
+                    final.append(idx)
+            if farthest is not None and farthest not in final:
+                final.append(farthest)
+            while len(final) < 6:
+                final.append(None)
+            res[name] = tuple(final[:6])
+
+        self.overview_triplets = res
+        return res
+
     def apply_clustering_matrix(self, matrix: np.ndarray, *, prefix: str = "edge") -> None:
         """Replace current hyperedges with clustering results."""
         if matrix.ndim != 2:
@@ -343,6 +396,6 @@ class SessionModel(QObject):
             name: pg.mkColor(pg.intColor(i, hues=cmap_hues)).name()
             for i, name in enumerate(self.cat_list)
         }
-
+        self.overview_triplets = None
         self.layoutChanged.emit()
         self.similarityDirty.emit()

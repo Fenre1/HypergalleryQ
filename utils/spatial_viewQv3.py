@@ -13,11 +13,11 @@ from time import perf_counter
 
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtGui
-from PyQt5.QtCore import Qt, QPointF, QTimer, QEvent, pyqtSignal as Signal
+from PyQt5.QtCore import Qt, QPointF, QTimer, QEvent, pyqtSignal as Signal, QUrl, QPoint
 from PyQt5.QtGui import QPainterPath, QPen, QColor
 from PyQt5.QtWidgets import (
     QDockWidget, QWidget, QVBoxLayout, QApplication,
-    QPushButton, QGraphicsEllipseItem,
+    QPushButton, QGraphicsEllipseItem, QToolTip, QLabel, QGraphicsSceneHoverEvent
 )
 from matplotlib.path import Path as MplPath
 
@@ -26,10 +26,42 @@ from .session_model import SessionModel
 from .fa2_layout import HyperedgeForceAtlas2
 from .similarity import SIM_METRIC       # kept for non‑cosine fallback
 
+THUMB_SIZE = 128
+
+class TooltipManager:
+    """Manages a custom QLabel widget to provide persistent tooltips."""
+    def __init__(self, parent_widget: QWidget):
+        self.tooltip = QLabel(parent_widget)
+        # Use the ToolTip window flag to make it frameless and stay on top
+        self.tooltip.setWindowFlags(Qt.ToolTip)
+        # Style it to look like a standard tooltip
+        self.tooltip.setStyleSheet(
+            "QLabel { background-color: #FFFFE0; color: black; "
+            "border: 1px solid black; padding: 2px; }"
+        )
+        self.tooltip.hide()
+
+    def show(self, screen_pos: QPoint, html_content: str):
+        """Shows the tooltip with the given content at the specified screen position."""
+        self.tooltip.setText(html_content)
+        self.tooltip.adjustSize()  # Resize to fit content
+        # Offset slightly from the cursor
+        self.tooltip.move(screen_pos + QPoint(15, 10))
+        self.tooltip.show()
+
+    def hide(self):
+        """Hides the tooltip."""
+        self.tooltip.hide()
+
+    def update_position(self, screen_pos: QPoint):
+        """Updates the position of the tooltip if it's visible."""
+        if self.tooltip.isVisible():
+            self.tooltip.move(screen_pos + QPoint(15, 10))
 
 # ---------------------------------------------------------------------------- #
 # Helper view‑boxes                                                            #
 # ---------------------------------------------------------------------------- #
+
 class LassoViewBox(pg.ViewBox):
     sigLassoFinished = Signal(list)
 
@@ -75,13 +107,43 @@ class MiniMapViewBox(pg.ViewBox):
 
 
 # ---------------------------------------------------------------------------- #
+# Graphics item with hover tooltip support                                     #
+# ---------------------------------------------------------------------------- #
+class HyperedgeItem(QGraphicsEllipseItem):
+    """Ellipse item that can show overview tooltips when hovered."""
+
+    def __init__(self, name: str, rect, dock: "SpatialViewQDock"):
+        super().__init__(rect)
+        self.name = name
+        self.dock = dock
+        self.setAcceptHoverEvents(True)
+
+    def hoverEnterEvent(self, event: QGraphicsSceneHoverEvent):
+        # Call the new handler in the dock
+        self.dock._handle_hyperedge_hover_enter(self.name, event)
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event: QGraphicsSceneHoverEvent):
+        # Call the new handler in the dock
+        self.dock._handle_hyperedge_hover_leave(event)
+        super().hoverLeaveEvent(event)
+    
+    def hoverMoveEvent(self, event: QGraphicsSceneHoverEvent):
+        # NEW: Update tooltip position as the mouse moves
+        self.dock._handle_hyperedge_hover_move(event)
+        super().hoverMoveEvent(event)
+
+
+# ---------------------------------------------------------------------------- #
 # Main dock widget                                                             #
 # ---------------------------------------------------------------------------- #
 class SpatialViewQDock(QDockWidget):
     MIN_HYPEREDGE_DIAMETER = 0.5
     NODE_SIZE_SCALER       = 0.1
     zoom_threshold         = 400.0
+    tooltip_zoom_threshold = 200.0
     radial_placement_factor = 1.1
+    
 
     def __init__(self, bus: SelectionBus, parent=None):
         super().__init__("Hyperedge View", parent)
@@ -97,10 +159,11 @@ class SpatialViewQDock(QDockWidget):
         self.selected_links: pg.PlotCurveItem | None = None
         self.minimap_scatter: pg.ScatterPlotItem | None = None
         self._radial_layout_cache: tuple[dict, list] | None = None
-        self._radial_cache_by_edge: dict[str, tuple[dict, list]] = {} 
+        self._radial_cache_by_edge: dict[str, tuple[dict, list]] = {}
         self._abs_pos_cache: dict[tuple[str, int], np.ndarray] = {}
         self._selected_nodes: set[tuple[str, int]] = set()
         self.color_map: dict[str, str] = {}
+        self._overview_triplets: dict[str, tuple[int | None, ...]] | None = None
 
         # fast‑similarity pre‑computes (NEW) -------------------------------------
         self._features_norm: np.ndarray | None = None              # (N,D)   unit‑vectors
@@ -128,6 +191,8 @@ class SpatialViewQDock(QDockWidget):
         self.minimap_view.addItem(self.minimap_rect)
         self.plot.installEventFilter(self)
 
+        self.tooltip_manager = TooltipManager(self.plot)
+
         w = QWidget(); l=QVBoxLayout(w); l.addWidget(self.run_button); l.addWidget(self.plot)
         self.setWidget(w); self._pos_minimap()
 
@@ -153,6 +218,7 @@ class SpatialViewQDock(QDockWidget):
         self._clear_scene()
         self.session=session; self.fa2_layout=None; self._radial_cache_by_edge={}
         self._radial_layout_cache=None
+        self._overview_triplets=None
 
         if session is None:
             self.run_button.setEnabled(False); return
@@ -170,8 +236,10 @@ class SpatialViewQDock(QDockWidget):
         self.fa2_layout.node_sizes=sizes
 
         for name,size in zip(names,sizes):
-            r=size/2; ell=QGraphicsEllipseItem(-r,-r,size,size)
-            col=self.color_map.get(name,'#AAAAAA'); ell.setPen(pg.mkPen(col)); ell.setBrush(pg.mkBrush(col))
+            r=size/2
+            ell=HyperedgeItem(name, QtCore.QRectF(-r,-r,size,size), self)
+            col=self.color_map.get(name,'#AAAAAA')
+            ell.setPen(pg.mkPen(col)); ell.setBrush(pg.mkBrush(col))
             self.view.addItem(ell); self.hyperedgeItems[name]=ell
 
         # -------------- NEW: one‑time similarity pre‑compute --------------------
@@ -201,7 +269,11 @@ class SpatialViewQDock(QDockWidget):
         self.selected_scatter=self.selected_links=None
         self._selected_nodes.clear()
         self._abs_pos_cache={}
-        if self.minimap_scatter: self.minimap.plotItem.removeItem(self.minimap_scatter)
+        self._overview_triplets=None
+        # QToolTip.hideText()
+        self.tooltip_manager.hide()
+        if self.minimap_scatter: 
+            self.minimap.plotItem.removeItem(self.minimap_scatter)
         self.minimap_scatter=None
         self.timer.stop()
 
@@ -336,6 +408,106 @@ class SpatialViewQDock(QDockWidget):
             self.selected_links.setData(arr[:,0], arr[:,1], connect='pairs')
         elif self.selected_links:
             self.selected_links.setData([], [])
+
+
+    # -------------------------------------------------------------------
+    # Tooltip helpers
+    # -------------------------------------------------------------------
+    # def _should_show_tooltip(self) -> bool:
+    #     xr, _ = self.view.viewRange()
+    #     return (xr[1] - xr[0]) <= self.tooltip_zoom_threshold
+
+    # def _compute_overview_triplets(self) -> dict[str, tuple[int | None, ...]]:
+    #     session = self.session
+    #     if session is None:
+    #         return {}
+    #     return session.compute_overview_triplets()
+
+    # def _maybe_show_tooltip(self, name: str, event):
+    #     # Early‑outs and cache unchanged … ---------------------------------
+    #     if not self._should_show_tooltip():
+    #         return
+    #     if self._overview_triplets is None:
+    #         self._overview_triplets = self._compute_overview_triplets()
+
+    #     trip = self._overview_triplets.get(name)
+    #     if not trip or self.session is None:
+    #         return
+
+    #     # ------------------------------------------------------------------
+    #     # Build an HTML snippet with <img> tags.
+    #     # Qt needs a *URL*, so wrap local paths with file://
+    #     # ------------------------------------------------------------------
+    #     html_parts = []
+    #     for i in trip:
+    #         if i is None:
+    #             continue
+    #         fn = self.session.im_list[i]
+    #         url = QUrl.fromLocalFile(fn).toString()      # guarantees escaping
+    #         html_parts.append(
+    #             f'<img src="{url}" width="{THUMB_SIZE}" '
+    #             f'height="{THUMB_SIZE}" style="margin:2px;">'
+    #         )
+
+    #     # Join thumbnails in a row; wrap in <html> so Qt treats it as rich text
+    #     html = "<html>" + "".join(html_parts) + "</html>"
+
+    #     # Show it
+    #     pos = event.screenPos()                 
+    #     QToolTip.showText(pos, html, self.plot)
+
+    def _should_show_tooltip(self) -> bool:
+        xr, _ = self.view.viewRange()
+        return (xr[1] - xr[0]) <= self.tooltip_zoom_threshold
+
+    def _compute_overview_triplets(self) -> dict[str, tuple[int | None, ...]]:
+        session = self.session
+        if session is None:
+            return {}
+        return session.compute_overview_triplets()
+
+    # --- NEW HANDLERS FOR HyperedgeItem ---
+
+    def _handle_hyperedge_hover_enter(self, name: str, event: QGraphicsSceneHoverEvent):
+        """Handles mouse entering a hyperedge item."""
+        # This contains the logic from your old `_maybe_show_tooltip`
+        
+        # Early-outs and cache unchanged …
+        if not self._should_show_tooltip():
+            return
+        if self._overview_triplets is None:
+            self._overview_triplets = self._compute_overview_triplets()
+
+        trip = self._overview_triplets.get(name)
+        if not trip or self.session is None:
+            return
+
+        # Build an HTML snippet with <img> tags.
+        html_parts = []
+        for i in trip:
+            if i is None:
+                continue
+            fn = self.session.im_list[i]
+            url = QUrl.fromLocalFile(fn).toString()
+            html_parts.append(
+                f'<img src="{url}" width="{THUMB_SIZE}" '
+                f'height="{THUMB_SIZE}" style="margin:2px;">'
+            )
+
+        html = "".join(html_parts)
+        if not html:
+            return
+            
+        # Show the tooltip using our manager
+        self.tooltip_manager.show(event.screenPos(), html)
+
+    def _handle_hyperedge_hover_leave(self, event: QGraphicsSceneHoverEvent):
+        """Handles mouse leaving a hyperedge item."""
+        self.tooltip_manager.hide()
+
+    def _handle_hyperedge_hover_move(self, event: QGraphicsSceneHoverEvent):
+        """Handles mouse moving over a hyperedge item."""
+        self.tooltip_manager.update_position(event.screenPos())
 
     # ============================================================================ #
     # Fast radial‑layout computation                                               #

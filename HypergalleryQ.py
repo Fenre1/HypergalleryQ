@@ -389,47 +389,10 @@ class MainWin(QMainWindow):
                 sim_item.setData(float(val), Qt.UserRole); sim_item.setData(f"{val:.{DECIMALS}f}", Qt.DisplayRole)
 
     def _compute_overview_triplets(self) -> dict[str, tuple[int | None, ...]]:
-        """Return up to six image indexes for an overview of each hyperedge."""
-        res: dict[str, tuple[int | None, ...]] = {}
-        for name, idxs in self.model.hyperedges.items():
-            if not idxs:
-                continue
-            idxs = list(idxs)
-            feats = self.model.features[idxs]
-            avg = self.model.hyperedge_avg_features[name].reshape(1, -1)
-
-            sims = SIM_METRIC(avg, feats)[0]
-            top_order = np.argsort(sims)[::-1]
-            top = [idxs[i] for i in top_order[:3]]
-
-            extremes: list[int] = []
-            if len(idxs) >= 2:
-                sim_mat = SIM_METRIC(feats, feats)
-                np.fill_diagonal(sim_mat, 1.0)
-                i, j = divmod(np.argmin(sim_mat), sim_mat.shape[1])
-                extremes = [idxs[i], idxs[j]]
-
-            far_order = np.argsort(sims)  # ascending
-            farthest: int | None = None
-            for i in far_order:
-                cand = idxs[i]
-                if cand not in top and cand not in extremes:
-                    farthest = cand
-                    break
-
-            final: list[int | None] = []
-            for idx in top + extremes:
-                if idx not in final:
-                    final.append(idx)
-            if farthest is not None and farthest not in final:
-                final.append(farthest)
-
-            while len(final) < 6:
-                final.append(None)
-
-            res[name] = tuple(final[:6])
-
-        return res
+        """Delegate to the session model for cached overview triplets."""
+        if not self.model:
+            return {}
+        return self.model.compute_overview_triplets()
 
 
     def _update_intersection_items(self, parent: QStandardItem, inter_map):
