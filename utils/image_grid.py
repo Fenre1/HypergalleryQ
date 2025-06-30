@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PyQt5.QtWidgets import (
     QListView, QDockWidget, QWidget, QLabel, QGridLayout, QHBoxLayout,
-    QVBoxLayout, QFrame
+    QVBoxLayout, QFrame, QScrollArea
 )
 from PyQt5.QtGui import QPixmap, QIcon, QImage, QPainter, QPen, QColor
 from PyQt5.QtCore import (
@@ -173,7 +173,7 @@ class ImageGridDock(QDockWidget):
         self.view.setLayoutMode(QListView.Batched)
         self.view.setBatchSize(64)
 
-        self._overview_widget: QWidget | None = None
+        self._overview_widget: QScrollArea | None = None
         self._mode = "grid"  # or "overview"
 
         self.setWidget(self.view)
@@ -248,8 +248,8 @@ class ImageGridDock(QDockWidget):
         self.session = session
         self._mode = "overview"
 
-        widget = QWidget()
-        layout = QGridLayout(widget)
+        content = QWidget()
+        layout = QGridLayout(content)
         layout.setSpacing(10)
 
         col = row = 0
@@ -284,9 +284,13 @@ class ImageGridDock(QDockWidget):
             lbl.installEventFilter(self)
 
         layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        self._overview_widget = widget
-        self.setWidget(widget)
-
+        layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(content)
+        self._overview_widget = scroll
+        self.setWidget(scroll)
+        
     def show_grid(self):
         if self._mode != "grid":
             self._mode = "grid"
