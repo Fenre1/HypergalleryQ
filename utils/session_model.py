@@ -311,7 +311,15 @@ class SessionModel(QObject):
         sims  = SIM_METRIC(ref.reshape(1, -1), mat)[0]
         return dict(zip(names, sims))
     
-
+    def similarity_std(self, name: str) -> float | None:
+        """Return the standard deviation of image-to-average similarities."""
+        idxs = list(self.hyperedges.get(name, []))
+        if not idxs:
+            return None
+        feats = self.features[idxs]
+        avg = self.hyperedge_avg_features[name][None, :]
+        sims = SIM_METRIC(avg, feats)[0]
+        return float(np.std(sims))
 
         # ------------------------------------------------------------------
     def apply_clustering_matrix(self, matrix: np.ndarray, *, prefix: str = "edge") -> None:

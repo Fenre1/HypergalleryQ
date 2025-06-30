@@ -78,7 +78,8 @@ def apply_dark_palette(app: QApplication) -> None:
 
 THRESHOLD_DEFAULT = 0.8
 SIM_COL = 3
-INTER_COL = 4
+STDDEV_COL = 4
+INTER_COL = 5
 DECIMALS = 3
 UNGROUPED = "Ungrouped"
 
@@ -246,10 +247,14 @@ def _append_leaf(parent_or_model, rowdict):
         name_item,
         _make_item(str(rowdict["image_count"]), rowdict["image_count"]),
         _make_item(rowdict["status"]),
-                _make_item(
+        _make_item(
             "" if rowdict["similarity"] is None
             else f"{rowdict['similarity']:.3f}",
             None if rowdict["similarity"] is None else float(rowdict["similarity"]),
+        ),
+        _make_item(
+            "" if rowdict.get("stddev") is None else f"{rowdict['stddev']:.3f}",
+            None if rowdict.get("stddev") is None else float(rowdict["stddev"]),
         ),
         _make_item(
             "" if rowdict.get("intersection") is None else str(rowdict["intersection"]),
@@ -308,6 +313,7 @@ def build_row_data(groups, model):
     for g, children in groups.items():
         for child in children:
             meta = status[child]
+            stddev = model.similarity_std(child)
             rows.append(
                 dict(
                     uuid=meta["uuid"],
@@ -315,6 +321,7 @@ def build_row_data(groups, model):
                     image_count=len(model.hyperedges[child]),
                     status=meta["status"],
                     similarity=None,
+                    stddev=stddev,
                     intersection=None,
                     group_name=g,
                     color=model.edge_colors.get(child, "#808080"),
@@ -1017,7 +1024,7 @@ class MainWin(QMainWindow):
         self.groups = rename_groups_sequentially(perform_hierarchical_grouping(self.model, thresh=thr))
         rows = build_row_data(self.groups, self.model)
 
-        headers = ["Name", "Images", "Status", "Similarity", "Intersection"]
+        headers = ["Name", "Images", "Status", "Similarity", "Std. Dev.", "Intersection"]
         model = build_qmodel(rows, headers)
         model.itemChanged.connect(self._on_item_changed)
         self.tree.setModel(model)
