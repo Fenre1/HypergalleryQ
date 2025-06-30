@@ -41,8 +41,17 @@ class TooltipManager:
         )
         self.tooltip.hide()
 
-    def show(self, screen_pos: QPoint, html_content: str):
+    def _as_qpoint(self, pos) -> QPoint:
+        """Coerce various point types to ``QPoint``."""
+        if isinstance(pos, QPoint):
+            return pos
+        if hasattr(pos, "toPoint"):
+            return pos.toPoint()
+        return QPoint(int(pos.x()), int(pos.y()))
+
+    def show(self, screen_pos, html_content: str):
         """Shows the tooltip with the given content at the specified screen position."""
+        screen_pos = self._as_qpoint(screen_pos)
         self.tooltip.setText(html_content)
         self.tooltip.adjustSize()  # Resize to fit content
         # Offset slightly from the cursor
@@ -53,9 +62,10 @@ class TooltipManager:
         """Hides the tooltip."""
         self.tooltip.hide()
 
-    def update_position(self, screen_pos: QPoint):
+    def update_position(self, screen_pos):
         """Updates the position of the tooltip if it's visible."""
         if self.tooltip.isVisible():
+            screen_pos = self._as_qpoint(screen_pos)
             self.tooltip.move(screen_pos + QPoint(15, 10))
 
 # ---------------------------------------------------------------------------- #
@@ -134,6 +144,29 @@ class HyperedgeItem(QGraphicsEllipseItem):
         super().hoverMoveEvent(event)
 
 
+class ImageScatterItem(pg.ScatterPlotItem):
+    """Scatter item that shows a thumbnail tooltip when hovered."""
+
+    def __init__(self, dock: "SpatialViewQDock", **kwargs):
+        super().__init__(**kwargs)
+        self.dock = dock
+        self.setAcceptHoverEvents(True)
+
+    def hoverEvent(self, event):
+        if event.isExit():
+            self.dock._handle_image_hover_leave(event)
+            super().hoverEvent(event)
+            return
+
+        pts = self.pointsAt(event.pos())
+        if pts:
+            # show tooltip for the first point under cursor
+            self.dock._handle_image_hover_enter(pts[0], event)
+        else:
+            self.dock._handle_image_hover_leave(event)
+        self.dock._handle_image_hover_move(event)
+        super().hoverEvent(event)
+
 # ---------------------------------------------------------------------------- #
 # Main dock widget                                                             #
 # ---------------------------------------------------------------------------- #
@@ -142,6 +175,7 @@ class SpatialViewQDock(QDockWidget):
     NODE_SIZE_SCALER       = 0.1
     zoom_threshold         = 400.0
     tooltip_zoom_threshold = 200.0
+    image_tooltip_zoom_threshold = 50.0
     radial_placement_factor = 1.1
     
 
@@ -330,19 +364,27 @@ class SpatialViewQDock(QDockWidget):
     def _update_image_layer(self):
         if self._radial_layout_cache is None:
             if self.image_scatter: self.image_scatter.hide()
-            if self.link_curve: self.link_curve.hide(); return
+            if self.link_curve: self.link_curve.hide()
+            self.tooltip_manager.hide()
+            return
 
         xr,_=self.view.viewRange()
         if (xr[1]-xr[0])>self.zoom_threshold:
             if self.image_scatter: self.image_scatter.hide()
-            if self.link_curve: self.link_curve.hide(); return
+            if self.link_curve: self.link_curve.hide()
+            self.tooltip_manager.hide()
+            return
         if self.image_scatter: self.image_scatter.show()
         if self.link_curve: self.link_curve.show()
 
         if self.image_scatter is None:
-            self.image_scatter=pg.ScatterPlotItem(size=8,symbol='o',pxMode=True,
-                                                  brush=pg.mkBrush('w'),pen=pg.mkPen('k'),
-                                                  useOpenGL=True)
+            self.image_scatter=ImageScatterItem(self,
+                                               size=8,
+                                               symbol='o',
+                                               pxMode=True,
+                                               brush=pg.mkBrush('w'),
+                                               pen=pg.mkPen('k'),
+                                               useOpenGL=True)
             self.image_scatter.sigClicked.connect(self._on_image_clicked)
             self.view.addItem(self.image_scatter)
         if self.link_curve is None:
@@ -508,6 +550,31 @@ class SpatialViewQDock(QDockWidget):
     def _handle_hyperedge_hover_move(self, event: QGraphicsSceneHoverEvent):
         """Handles mouse moving over a hyperedge item."""
         self.tooltip_manager.update_position(event.screenPos())
+
+    def _should_show_image_tooltip(self) -> bool:
+        xr, _ = self.view.viewRange()
+        return (xr[1] - xr[0]) <= self.image_tooltip_zoom_threshold
+
+    def _handle_image_hover_enter(self, point, event):
+        if not self._should_show_image_tooltip():
+            return
+        if self.session is None:
+            return
+        data = point.data()
+        if not data:
+            return
+        idx = data[1]
+        fn = self.session.im_list[idx]
+        url = QUrl.fromLocalFile(fn).toString()
+        html = f'<img src="{url}" width="{THUMB_SIZE}" height="{THUMB_SIZE}" style="margin:2px;">'
+        self.tooltip_manager.show(event.screenPos(), html)
+
+    def _handle_image_hover_leave(self, event):
+        self.tooltip_manager.hide()
+
+    def _handle_image_hover_move(self, event):
+        self.tooltip_manager.update_position(event.screenPos())
+
 
     # ============================================================================ #
     # Fast radial‑layout computation                                               #
