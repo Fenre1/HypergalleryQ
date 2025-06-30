@@ -93,9 +93,13 @@ class SpatialViewQDock(QDockWidget):
         self.hyperedgeItems: dict[str, QGraphicsEllipseItem] = {}
         self.image_scatter: pg.ScatterPlotItem | None = None
         self.link_curve: pg.PlotCurveItem | None = None
+        self.selected_scatter: pg.ScatterPlotItem | None = None
+        self.selected_links: pg.PlotCurveItem | None = None
         self.minimap_scatter: pg.ScatterPlotItem | None = None
         self._radial_layout_cache: tuple[dict, list] | None = None
-        self._radial_cache_by_edge: dict[str, tuple[dict, list]] = {}   # NEW
+        self._radial_cache_by_edge: dict[str, tuple[dict, list]] = {} 
+        self._abs_pos_cache: dict[tuple[str, int], np.ndarray] = {}
+        self._selected_nodes: set[tuple[str, int]] = set()
         self.color_map: dict[str, str] = {}
 
         # fast‑similarity pre‑computes (NEW) -------------------------------------
@@ -190,12 +194,17 @@ class SpatialViewQDock(QDockWidget):
         for it in self.hyperedgeItems.values():
             if it.scene(): it.scene().removeItem(it)
         self.hyperedgeItems.clear()
-        for item in (self.image_scatter,self.link_curve):
+        for item in (self.image_scatter,self.link_curve,
+                     self.selected_scatter,self.selected_links):
             if item: self.view.removeItem(item)
         self.image_scatter=self.link_curve=None
+        self.selected_scatter=self.selected_links=None
+        self._selected_nodes.clear()
+        self._abs_pos_cache={}
         if self.minimap_scatter: self.minimap.plotItem.removeItem(self.minimap_scatter)
         self.minimap_scatter=None
         self.timer.stop()
+
 
     # ============================================================================ #
     # Animation                                                                    #
@@ -262,29 +271,71 @@ class SpatialViewQDock(QDockWidget):
             self.image_scatter=pg.ScatterPlotItem(size=8,symbol='o',pxMode=True,
                                                   brush=pg.mkBrush('w'),pen=pg.mkPen('k'),
                                                   useOpenGL=True)
+            self.image_scatter.sigClicked.connect(self._on_image_clicked)
             self.view.addItem(self.image_scatter)
         if self.link_curve is None:
             self.link_curve=pg.PlotCurveItem(pen=pg.mkPen(QColor(255,255,255,150),width=1))
             self.view.addItem(self.link_curve)
+        if self.selected_scatter is None:
+            self.selected_scatter=pg.ScatterPlotItem(size=8,symbol='o',pxMode=True,
+                                                     brush=pg.mkBrush('r'),pen=pg.mkPen('k'),
+                                                     useOpenGL=True)
+            self.view.addItem(self.selected_scatter)
+        if self.selected_links is None:
+            self.selected_links=pg.PlotCurveItem(pen=pg.mkPen(QColor(255,0,0,150),width=1))
+            self.view.addItem(self.selected_links)
 
         rel,links=self._radial_layout_cache
         k_list=list(rel.keys())
         if not k_list:
-            self.image_scatter.setData([],[]); self.link_curve.setData([],[]); return
+            self.image_scatter.setData([],[]); self.link_curve.setData([],[])
+            self.selected_scatter.setData([],[]); self.selected_links.setData([],[])
+            self._abs_pos_cache={}
+            return
 
         offsets=np.array(list(rel.values()),dtype=float)
         centres=np.array([self.fa2_layout.positions[e] for e,_ in k_list])
         abs_pos=centres+offsets
-        self.image_scatter.setData(pos=abs_pos)
+        self.image_scatter.setData(pos=abs_pos, data=k_list)
+        self._abs_pos_cache={k:p for k,p in zip(k_list,abs_pos)}
 
         if links:
             pairs=np.empty((2*len(links),2),dtype=float)
-            abs_dict={k:p for k,p in zip(k_list,abs_pos)}
+            abs_dict=self._abs_pos_cache
             for n,(a,b) in enumerate(links):
                 pairs[2*n]=abs_dict[a]; pairs[2*n+1]=abs_dict[b]
             self.link_curve.setData(pairs[:,0],pairs[:,1],connect='pairs')
         else:
             self.link_curve.setData([],[])
+
+        self._update_selected_overlay()
+
+    def _update_selected_overlay(self):
+        if not self._selected_nodes or not self._radial_layout_cache:
+            if self.selected_scatter:
+                self.selected_scatter.setData([], [])
+            if self.selected_links:
+                self.selected_links.setData([], [])
+            return
+
+        abs_pos_cache = self._abs_pos_cache
+        sel_pos = [abs_pos_cache[k] for k in self._selected_nodes if k in abs_pos_cache]
+
+        if self.selected_scatter:
+            self.selected_scatter.setData(pos=np.array(sel_pos))
+
+        rel, links = self._radial_layout_cache
+        pairs = []
+        for a, b in links:
+            if a in self._selected_nodes or b in self._selected_nodes:
+                if a in abs_pos_cache and b in abs_pos_cache:
+                    pairs.append(abs_pos_cache[a])
+                    pairs.append(abs_pos_cache[b])
+        if pairs and self.selected_links:
+            arr = np.array(pairs)
+            self.selected_links.setData(arr[:,0], arr[:,1], connect='pairs')
+        elif self.selected_links:
+            self.selected_links.setData([], [])
 
     # ============================================================================ #
     # Fast radial‑layout computation                                               #
@@ -371,28 +422,83 @@ class SpatialViewQDock(QDockWidget):
     # ----------------------------------------------------------------------- #
     # Event handlers                                                          #
     # ----------------------------------------------------------------------- #
-    def _on_edges(self,names:list[str]):
-        # grey
-        for ell in self.hyperedgeItems.values():
-            ell.setPen(pg.mkPen('#808080')); ell.setBrush(pg.mkBrush('#808080'))
-        # highlight
-        for name in names:
-            ell=self.hyperedgeItems.get(name)
-            if ell:
-                col=self.color_map.get(name,'yellow')
-                ell.setPen(pg.mkPen(col)); ell.setBrush(pg.mkBrush(col))
+    def _on_edges(self, names: list[str]):
+        # restore original colours
+        for name, ell in self.hyperedgeItems.items():
+            col = self.color_map.get(name, '#AAAAAA')
+            ell.setPen(pg.mkPen(col))
+            ell.setBrush(pg.mkBrush(col))
 
-        self._radial_layout_cache = (self._compute_radial_layout(names[0])
-                                     if len(names)==1 else None)
+        self._selected_nodes.clear()
+
+        # ────────────────────────────────────────────────────────────────────
+        # Only overwrite the cache if we _really_ have exactly one edge.
+        # Otherwise leave the previous radial layout untouched.
+        # ────────────────────────────────────────────────────────────────────
+        if len(names) == 1:
+            self._radial_layout_cache = self._compute_radial_layout(names[0])
+        # else: keep the existing layout
+
         self._update_image_layer()
 
-    def _on_click(self,ev):
-        if ev.button()!=Qt.LeftButton: return
-        for name,ell in self.hyperedgeItems.items():
-            if ell is self.plot.scene().itemAt(ev.scenePos(), QtGui.QTransform()):
-                self.bus.set_edges([name]); ev.accept(); return
-        if not (QApplication.keyboardModifiers() & Qt.ShiftModifier):
-            self.bus.set_edges([])
+
+    def _on_click(self, ev):
+        print('fire1')
+        if ev.button() != Qt.LeftButton:
+            return
+
+        scene_pos = ev.scenePos()
+        item = self.plot.scene().itemAt(scene_pos, QtGui.QTransform())
+
+        # Ignore clicks on image points so edge selection persists
+        if isinstance(item, pg.ScatterPlotItem) or (
+            item is not None and isinstance(item.parentItem(), pg.ScatterPlotItem)
+        ):
+            print('fire2')
+            return
+
+        # for name, ell in self.hyperedgeItems.items():
+        #     print('fire3')
+        #     if ell is item:
+        #         self.bus.set_edges([name])
+        #         ev.accept()
+        #         return
+
+        # if not (QApplication.keyboardModifiers() & Qt.ShiftModifier):
+        #     print('fire4')
+        #     self.bus.set_edges([])
+
+    def _on_image_clicked(self, scatter, points):
+        print('fire5')
+        if not points:
+            print('fire6')
+            return
+        sel_nodes = [pt.data() for pt in points]
+        print('fire7', sel_nodes)
+        # idxs  = [n[1] for n in nodes if n]
+        sel_imgs  = [idx for (_e, idx) in sel_nodes]
+        print('fire8', sel_imgs)
+        if sel_imgs:
+            # Hold **Ctrl** while dragging to add to the existing selection.
+            if QApplication.keyboardModifiers() & Qt.ControlModifier:
+                print('fire9')
+                self._selected_nodes.update(sel_nodes)   # additive
+            else:
+                print('fire10')
+                self._selected_nodes = set(sel_nodes)    # replace
+            self._update_selected_overlay()
+            print('fire11')
+            self.bus.set_images(sel_imgs)
+            print('fire12')
+
+
+        # if QApplication.keyboardModifiers() & Qt.ShiftModifier:
+        #     self._selected_nodes.update(nodes)
+        # else:
+        #     self._selected_nodes = set(nodes)
+        # self._update_selected_overlay()
+        # if idxs:
+        #     self.bus.set_images(sorted(set(idxs)))
 
     def _on_lasso(self, pts: list[QPointF]):
         """
@@ -429,10 +535,17 @@ class SpatialViewQDock(QDockWidget):
         offsets   = np.array(list(rel.values()))
         abs_pos   = centres + offsets
         mask_imgs = mpl_path.contains_points(abs_pos)
-        sel_imgs  = [idx for (_e, idx), inside in zip(keys, mask_imgs) if inside]
+        sel_nodes = [k for k, inside in zip(keys, mask_imgs) if inside]
+        sel_imgs  = [idx for (_e, idx) in sel_nodes]
 
         if sel_imgs:
-            # keep current edge selection → thumbnails stay visible
+            print('lasso',sel_imgs)
+            # Hold **Ctrl** while dragging to add to the existing selection.
+            if QApplication.keyboardModifiers() & Qt.ControlModifier:
+                self._selected_nodes.update(sel_nodes)   # additive
+            else:
+                self._selected_nodes = set(sel_nodes)    # replace
+            self._update_selected_overlay()
             self.bus.set_images(sel_imgs)
 
 
