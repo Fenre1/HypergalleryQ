@@ -319,10 +319,11 @@ def train_dino(args, features, knn):
     dataset = EmbedNN(features, None, knn, transform=transform, k=args.knn)
     print('fire1')
     sampler = None
-    if len(dataset) < 10*args.batch_size_per_gpu: 
-        check_drop = False
-    else:
-        check_drop = True
+    # if len(dataset) < 10*args.batch_size_per_gpu: 
+    #     check_drop = False
+    # else:
+    #     check_drop = True
+    check_drop = len(dataset) % args.batch_size_per_gpu != 0
     print('fire2')
     data_loader = torch.utils.data.DataLoader(
         dataset,
