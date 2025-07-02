@@ -850,6 +850,7 @@ class MainWin(QMainWindow):
             oc_extractor = OpenClipFeatureExtractor()
             oc_features = oc_extractor.extract_features(files)
             matrix, _ = temi_cluster(features, out_dim=n_edges, threshold=thr)
+            oc_matrix, _ = temi_cluster(oc_features, out_dim=n_edges, threshold=thr)
 
             empty_cols = np.where(matrix.sum(axis=0) == 0)[0]
             if len(empty_cols) > 0:
@@ -859,6 +860,9 @@ class MainWin(QMainWindow):
                     "Empty Hyperedges Removed",
                     f"{len(empty_cols)} empty hyperedges were removed after clustering."
                 )
+            oc_empty = np.where(oc_matrix.sum(axis=0) == 0)[0]
+            if len(oc_empty) > 0:
+                oc_matrix = np.delete(oc_matrix, oc_empty, axis=1)
         except Exception as e:
             if app:
                 app.restoreOverrideCursor()
@@ -876,6 +880,9 @@ class MainWin(QMainWindow):
                 pass
 
         self.model = SessionModel(files, df, features, Path(directory), openclip_features=oc_features)
+        if oc_matrix.size:
+            self.model.append_clustering_matrix(oc_matrix, origin="openclip", prefix="clip")
+
         self.model.layoutChanged.connect(self.regroup)
         self._overview_triplets = None
         self.model.layoutChanged.connect(self._on_layout_changed)
@@ -907,6 +914,17 @@ class MainWin(QMainWindow):
             if self.model.openclip_features is None:
                 oc_extractor = OpenClipFeatureExtractor()
                 self.model.openclip_features = oc_extractor.extract_features(self.model.im_list)
+            if all(orig != "openclip" for orig in self.model.edge_origins.values()):
+                n_edges = len(self.model.cat_list)
+                oc_matrix, _ = temi_cluster(
+                    self.model.openclip_features,
+                    out_dim=n_edges,
+                    threshold=THRESHOLD_DEFAULT,
+                )
+                oc_empty = np.where(oc_matrix.sum(axis=0) == 0)[0]
+                if len(oc_empty) > 0:
+                    oc_matrix = np.delete(oc_matrix, oc_empty, axis=1)
+                self.model.append_clustering_matrix(oc_matrix, origin="openclip", prefix="clip")
 
             self.model.layoutChanged.connect(self.regroup)
 
