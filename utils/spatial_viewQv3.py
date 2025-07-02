@@ -232,7 +232,7 @@ class SpatialViewQDock(QDockWidget):
 
         # timer ------------------------------------------------------------------
         self.timer = QTimer(self); self.timer.setInterval(16); self.timer.timeout.connect(self._frame)
-        self.auto_stop_ms = 10_000
+        self.auto_stop_ms = 1000
 
         # bus --------------------------------------------------------------------
         self.bus.edgesChanged.connect(self._on_edges)
@@ -455,48 +455,6 @@ class SpatialViewQDock(QDockWidget):
     # -------------------------------------------------------------------
     # Tooltip helpers
     # -------------------------------------------------------------------
-    # def _should_show_tooltip(self) -> bool:
-    #     xr, _ = self.view.viewRange()
-    #     return (xr[1] - xr[0]) <= self.tooltip_zoom_threshold
-
-    # def _compute_overview_triplets(self) -> dict[str, tuple[int | None, ...]]:
-    #     session = self.session
-    #     if session is None:
-    #         return {}
-    #     return session.compute_overview_triplets()
-
-    # def _maybe_show_tooltip(self, name: str, event):
-    #     # Early‑outs and cache unchanged … ---------------------------------
-    #     if not self._should_show_tooltip():
-    #         return
-    #     if self._overview_triplets is None:
-    #         self._overview_triplets = self._compute_overview_triplets()
-
-    #     trip = self._overview_triplets.get(name)
-    #     if not trip or self.session is None:
-    #         return
-
-    #     # ------------------------------------------------------------------
-    #     # Build an HTML snippet with <img> tags.
-    #     # Qt needs a *URL*, so wrap local paths with file://
-    #     # ------------------------------------------------------------------
-    #     html_parts = []
-    #     for i in trip:
-    #         if i is None:
-    #             continue
-    #         fn = self.session.im_list[i]
-    #         url = QUrl.fromLocalFile(fn).toString()      # guarantees escaping
-    #         html_parts.append(
-    #             f'<img src="{url}" width="{THUMB_SIZE}" '
-    #             f'height="{THUMB_SIZE}" style="margin:2px;">'
-    #         )
-
-    #     # Join thumbnails in a row; wrap in <html> so Qt treats it as rich text
-    #     html = "<html>" + "".join(html_parts) + "</html>"
-
-    #     # Show it
-    #     pos = event.screenPos()                 
-    #     QToolTip.showText(pos, html, self.plot)
 
     def _should_show_tooltip(self) -> bool:
         xr, _ = self.view.viewRange()

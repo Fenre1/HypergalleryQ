@@ -77,9 +77,10 @@ def apply_dark_palette(app: QApplication) -> None:
     app.setPalette(palette)
 
 THRESHOLD_DEFAULT = 0.8
-SIM_COL = 3
-STDDEV_COL = 4
-INTER_COL = 5
+ORIGIN_COL = 3
+SIM_COL = 4
+STDDEV_COL = 5
+INTER_COL = 6
 DECIMALS = 3
 UNGROUPED = "Ungrouped"
 
@@ -247,6 +248,7 @@ def _append_leaf(parent_or_model, rowdict):
         name_item,
         _make_item(str(rowdict["image_count"]), rowdict["image_count"]),
         _make_item(rowdict["status"]),
+        _make_item(rowdict.get("origin", "")),
         _make_item(
             "" if rowdict["similarity"] is None
             else f"{rowdict['similarity']:.3f}",
@@ -320,6 +322,7 @@ def build_row_data(groups, model):
                     name=child,
                     image_count=len(model.hyperedges[child]),
                     status=meta["status"],
+                    origin=model.edge_origins.get(child, ""),
                     similarity=None,
                     stddev=stddev,
                     intersection=None,
@@ -987,7 +990,15 @@ class MainWin(QMainWindow):
         self.groups = rename_groups_sequentially(perform_hierarchical_grouping(self.model, thresh=thr))
         rows = build_row_data(self.groups, self.model)
 
-        headers = ["Name", "Images", "Status", "Similarity", "Std. Dev.", "Intersection"]
+        headers = [
+            "Name",
+            "Images",
+            "Status",
+            "Origin",
+            "Similarity",
+            "Std. Dev.",
+            "Intersection",
+        ]
         model = build_qmodel(rows, headers)
         model.itemChanged.connect(self._on_item_changed)
         self.tree.setModel(model)
