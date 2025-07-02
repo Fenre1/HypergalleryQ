@@ -142,11 +142,11 @@ def fix_random_seeds(seed=31):
     np.random.seed(seed)
 
 
-def get_args(out_dim):
+def get_args(out_dim, embed_dim):
     return SimpleNamespace(
         # core training setup
         out_dim=out_dim,
-        embed_dim=1536,
+        embed_dim=embed_dim,
         num_heads=16,
         knn=25,
         precomputed=True,
@@ -439,7 +439,7 @@ def train_model(features: Union[np.ndarray, torch.Tensor], out_dim: int) -> nn.M
         A trained model (nn.Module) ready for inference.
     """
     features = torch.tensor(features, dtype=torch.float32) if not torch.is_tensor(features) else features
-    args = get_args(out_dim)
+    args = get_args(out_dim, features.shape[1])
 
     if args.batch_size_per_gpu > len(features):
         args.batch_size_per_gpu = len(features)//2
