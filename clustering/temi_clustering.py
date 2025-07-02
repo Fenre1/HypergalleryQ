@@ -234,7 +234,7 @@ def train_one_epoch(student_teacher_model, dino_loss, data_loader,
         images = [im.cuda(non_blocking=True) for im in images]
         
         # teacher and student forward passes + compute dino loss
-        with torch.cuda.amp.autocast(fp16_scaler is not None):
+        with torch.amp.autocast("cuda", enabled=fp16_scaler is not None):
             teacher_out, student_out = student_teacher_model(images)
             if losses.is_multihead(dino_loss) or args.num_heads == 1:
                 head_losses = dino_loss(student_out, teacher_out, epoch=epoch)
@@ -299,8 +299,11 @@ def train_dino(args, features, knn):
     # args.batch_size_per_gpu = 512
     fix_random_seeds(args.seed)
     cudnn.benchmark = True
+    print('pre loading')
     student, _, normalize = load_model(args, head=True, split_preprocess=True)
+    print('loading1')
     teacher, _ = load_model(args)
+    print('loading2')
     if not args.precomputed:
         aug = IMAGE_AUGMENTATIONS[args.image_aug](num_augs=args.num_augs, **args.aug_args)
         transform = AugWrapper(
@@ -314,11 +317,13 @@ def train_dino(args, features, knn):
         aug = EMBED_AUGMENTATIONS[args.embed_aug](num_augs=args.num_augs, **args.aug_args)
         transform = AugWrapper(global_augs=aug)
     dataset = EmbedNN(features, None, knn, transform=transform, k=args.knn)
+    print('fire1')
     sampler = None
     if len(dataset) < 10*args.batch_size_per_gpu: 
         check_drop = False
     else:
         check_drop = True
+    print('fire2')
     data_loader = torch.utils.data.DataLoader(
         dataset,
         shuffle=(sampler is None),
@@ -328,6 +333,7 @@ def train_dino(args, features, knn):
         pin_memory=True,
         drop_last=check_drop,
     )
+    print('fire3')
     print(f"In-distribution Data loaded: there are {len(dataset)} images.")
     print("len dataloader", len(data_loader))
     student_teacher_model = TeacherStudentCombo(teacher=teacher, student=student, args=args)
