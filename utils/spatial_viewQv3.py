@@ -152,6 +152,7 @@ class ImageScatterItem(pg.ScatterPlotItem):
         self.dock = dock
         self.setAcceptHoverEvents(True)
 
+
     def hoverEvent(self, event):
         if event.isExit():
             self.dock._handle_image_hover_leave(event)
@@ -166,6 +167,31 @@ class ImageScatterItem(pg.ScatterPlotItem):
             self.dock._handle_image_hover_leave(event)
         self.dock._handle_image_hover_move(event)
         super().hoverEvent(event)
+
+
+
+    # def hoverEvent(self, event):
+    #     if event.isExit():
+    #         self.dock._handle_image_hover_leave(event)
+    #         super().hoverEvent(event)
+    #         return
+
+    #     pts = self.pointsAt(event.pos())
+    #     if len(pts) > 0:
+    #         # Prefer hyperedge tooltips if one is also under the cursor
+    #         items = self.scene().items(event.scenePos())
+    #         for itm in items:
+    #             if isinstance(itm, HyperedgeItem):
+    #                 # Hyperedge takes precedence - do not show image tooltip
+    #                 self.dock._handle_image_hover_leave(event)
+    #                 break
+    #         else:
+    #             # show tooltip for the first point under cursor
+    #             self.dock._handle_image_hover_enter(pts[0], event)
+    #     else:
+    #         self.dock._handle_image_hover_leave(event)
+    #     self.dock._handle_image_hover_move(event)
+    #     super().hoverEvent(event)
 
 # ---------------------------------------------------------------------------- #
 # Main dock widget                                                             #
