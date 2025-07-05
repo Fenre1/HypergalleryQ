@@ -46,7 +46,8 @@ from utils.selection_bus import SelectionBus
 from utils.session_model import SessionModel
 from utils.image_grid import ImageGridDock
 from utils.hyperedge_matrix import HyperedgeMatrixDock
-from utils.spatial_viewQv3 import SpatialViewQDock
+# from utils.spatial_viewQv3 import SpatialViewQDock
+from utils.spatial_viewQv4 import SpatialViewQDock
 from utils.feature_extraction import Swinv2LargeFeatureExtractor, OpenClipFeatureExtractor
 from utils.file_utils import get_image_files
 from clustering.temi_clustering import temi_cluster
