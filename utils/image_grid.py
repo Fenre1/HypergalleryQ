@@ -229,6 +229,13 @@ class ImageGridDock(QDockWidget):
 
     def _remember_edges(self, names: list[str]):
         self._selected_edges = names
+        if len(names) == 1:
+            title = f"Images of {names[0]}"
+        elif len(names) > 1:
+            title = f"Images of {len(names)} hyperedges"
+        else:
+            title = "Images"
+        self.setWindowTitle(title)
 
     def _on_double_clicked(self, index: QModelIndex):
         if not self.session:

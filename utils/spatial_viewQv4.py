@@ -448,9 +448,13 @@ class SpatialViewQDock(QDockWidget):
             f'width="{THUMB_SIZE}" height="{THUMB_SIZE}" style="margin:2px;">'
             for i in trip if i is not None
         ]
-        if not html_parts: return
+        if not html_parts:
+            return
 
-        self.tooltip_manager.show(screen_pos, "".join(html_parts))
+        html = f"<b>{name}</b><br>" + "".join(html_parts)
+        self.tooltip_manager.show(screen_pos, html)
+
+        # self.tooltip_manager.show(screen_pos, "".join(html_parts))
 
     def _show_image_tooltip(self, point, screen_pos: QPoint):
         if self.session is None: return
