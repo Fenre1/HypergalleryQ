@@ -310,21 +310,30 @@ class SpatialViewQDock(QDockWidget):
         norms = np.linalg.norm(feats, axis=1, keepdims=True); norms[norms == 0] = 1
         self._features_norm = feats / norms
         self._centroid_norm.clear(); self._centroid_sim.clear()
-        self._image_umap = {}
-        for edge in edges:
-            c = session.hyperedge_avg_features[edge].astype(np.float32)
-            c /= max(np.linalg.norm(c), 1e-9); self._centroid_norm[edge] = c
-            idx = list(session.hyperedges[edge])
-            self._centroid_sim[edge] = self._features_norm[idx] @ c if idx else np.array([])
-            if idx:
-                emb = umap.UMAP(n_components=2, random_state=42).fit_transform(self._features_norm[idx])
-                emb = emb - emb.mean(axis=0)
-                m = np.max(np.linalg.norm(emb, axis=1))
-                if m > 0:
-                    emb = emb / m
-                self._image_umap[edge] = {i: emb[k] for k, i in enumerate(idx)}
-            else:
-                self._image_umap[edge] = {}
+        self._image_umap = session.image_umap or {}
+
+        if not self._image_umap:
+            for edge in edges:
+                c = session.hyperedge_avg_features[edge].astype(np.float32)
+                c /= max(np.linalg.norm(c), 1e-9); self._centroid_norm[edge] = c
+                idx = list(session.hyperedges[edge])
+                self._centroid_sim[edge] = self._features_norm[idx] @ c if idx else np.array([])
+                if idx:
+                    emb = umap.UMAP(n_components=2, random_state=42).fit_transform(self._features_norm[idx])
+                    emb = emb - emb.mean(axis=0)
+                    m = np.max(np.linalg.norm(emb, axis=1))
+                    if m > 0:
+                        emb = emb / m
+                    self._image_umap[edge] = {i: emb[k] for k, i in enumerate(idx)}
+                else:
+                    self._image_umap[edge] = {}
+            session.image_umap = self._image_umap
+        else:
+            for edge in edges:
+                c = session.hyperedge_avg_features[edge].astype(np.float32)
+                c /= max(np.linalg.norm(c), 1e-9); self._centroid_norm[edge] = c
+                idx = list(session.hyperedges[edge])
+                self._centroid_sim[edge] = self._features_norm[idx] @ c if idx else np.array([])
 
         # FIX 1: The hyperedge items were created at (0,0) and never moved.
         # This call positions them correctly according to the UMAP layout.

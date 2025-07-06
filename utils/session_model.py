@@ -33,6 +33,17 @@ class SessionModel(QObject):
             df_edges = pd.DataFrame(matrix, columns=cat_list)
             features = hdf["features"][()]
             umap_emb = hdf["umap_embedding"][()] if "umap_embedding" in hdf else None
+            image_umap: Optional[Dict[str, Dict[int, np.ndarray]]] = None
+            if "image_umap" in hdf:
+                image_umap = {}
+                grp = hdf["image_umap"]
+                for edge in grp:
+                    data = grp[edge][()]
+                    if data.size > 0:
+                        image_umap[edge] = {int(i): data[idx, 1:] for idx, i in enumerate(data[:, 0].astype(int))}
+                    else:
+                        image_umap[edge] = {}
+
             openclip_feats = hdf["openclip_features"][()] if "openclip_features" in hdf else None
 
             if "edge_origins" in hdf:
@@ -56,6 +67,7 @@ class SessionModel(QObject):
             path,
             openclip_features=openclip_feats,
             umap_embedding=umap_emb,
+            image_umap=image_umap,
             thumbnail_data=thumbnail_data,
             thumbnails_are_embedded=thumbnails_embedded,
             edge_origins=edge_orig,
@@ -93,7 +105,11 @@ class SessionModel(QObject):
                 hdf.create_dataset("openclip_features", data=self.openclip_features, dtype="f4")
             if self.umap_embedding is not None:
                 hdf.create_dataset("umap_embedding", data=self.umap_embedding, dtype="f4")
-
+            if getattr(self, "image_umap", None):
+                grp = hdf.create_group("image_umap")
+                for edge, mapping in self.image_umap.items():
+                    arr = np.array([[idx, vec[0], vec[1]] for idx, vec in mapping.items()], dtype="f4")
+                    grp.create_dataset(edge, data=arr, dtype="f4")
             hdf.attrs["thumbnails_are_embedded"] = self.thumbnails_are_embedded
 
             if self.thumbnail_data:
@@ -119,6 +135,7 @@ class SessionModel(QObject):
                  *,
                  openclip_features: np.ndarray | None = None,
                  umap_embedding: np.ndarray | None = None,
+                 image_umap: Optional[Dict[str, Dict[int, np.ndarray]]] = None,
                  thumbnail_data: Optional[List[bytes] | List[str]] = None,
                  thumbnails_are_embedded: bool = True,
                  edge_origins: Optional[List[str]] | None = None):
@@ -149,6 +166,7 @@ class SessionModel(QObject):
             for i, name in enumerate(self.cat_list)
         }
         self.umap_embedding = umap_embedding
+        self.image_umap = image_umap
         self.h5_path = h5_path
         
         self.thumbnail_data: Optional[List[bytes] | List[str]] = thumbnail_data
