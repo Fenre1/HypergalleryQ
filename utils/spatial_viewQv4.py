@@ -710,18 +710,28 @@ class SpatialViewQDock(QDockWidget):
         if session is None or layout is None: return {}, []
 
         offsets, links = {}, []
-        radius_map = {n: (layout.node_sizes[self.edge_index[n]] / 2) * self.radial_placement_factor for n in layout.names}
+        if sel_name not in layout.names:
+            return {}, []
+
+        radius_map = {
+            n: (layout.node_sizes[self.edge_index[n]] / 2) * self.radial_placement_factor
+            for n in layout.names
+        }
+
         sel_idx = list(session.hyperedges[sel_name])
-        if not sel_idx: return {}, []
+        if not sel_idx:
+            return {}, []
 
         for idx in sel_idx:
             vec = self._image_umap.get(sel_name, {}).get(idx, np.zeros(2))
             offsets[(sel_name, idx)] = vec * radius_map[sel_name]
 
         for tgt in session.hyperedges:
-            if tgt == sel_name: continue
+            if tgt == sel_name or tgt not in layout.names:
+                continue
             shared = session.hyperedges[tgt] & session.hyperedges[sel_name]
-            if not shared: continue
+            if not shared:
+                continue
             for idx in session.hyperedges[tgt]:
                 vec = self._image_umap.get(tgt, {}).get(idx, np.zeros(2))
                 offsets[(tgt, idx)] = vec * radius_map[tgt]
@@ -782,6 +792,9 @@ class SpatialViewQDock(QDockWidget):
         node_sizes = np.array([layout[n][1] for n in names])
         positions = {n: layout[n][0] for n in names}
         self.fa2_layout = SimpleNamespace(names=names, node_sizes=node_sizes, positions=positions)
+        self.edge_index = {n: i for i, n in enumerate(names)}
+        self._radial_cache_by_edge.clear()
+        self._radial_layout_cache = None
 
         for name in list(self.hyperedgeItems):
             if name not in layout:
