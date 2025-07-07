@@ -37,7 +37,7 @@ from PyQt5.QtGui import (
     QIcon,
     QPixmap,
 )
-from PyQt5.QtCore import Qt, QSignalBlocker, QObject, pyqtSignal as Signal
+from PyQt5.QtCore import Qt, QSignalBlocker, QObject, pyqtSignal as Signal, QTimer
 
 from utils.data_loader import (
     DATA_DIRECTORY, get_h5_files_in_directory, load_session_data
@@ -434,6 +434,15 @@ class MainWin(QMainWindow):
         self.bus = SelectionBus()
         self.bus.edgesChanged.connect(self._update_bus_images)
         self.bus.edgesChanged.connect(print)
+
+        # Track layout changes vs. hyperedge modifications
+        self._skip_next_layout = False
+        self._layout_timer = QTimer(self)
+        self._layout_timer.setSingleShot(True)
+        self._layout_timer.timeout.connect(self._apply_layout_change)
+        self._skip_reset_timer = QTimer(self)
+        self._skip_reset_timer.setSingleShot(True)
+        self._skip_reset_timer.timeout.connect(lambda: setattr(self, "_skip_next_layout", False))
 
         # ----------------- WIDGET AND DOCK CREATION ------------------------------------
         # Create all widgets and docks first, then arrange them.
@@ -906,6 +915,14 @@ class MainWin(QMainWindow):
                 self.model.layoutChanged.disconnect(self.regroup)
             except TypeError:
                 pass
+            try:
+                self.model.layoutChanged.disconnect(self._on_layout_changed)
+            except TypeError:
+                pass
+            try:
+                self.model.hyperedgeModified.disconnect(self._on_model_hyperedge_modified)
+            except TypeError:
+                pass
 
         self.model = SessionModel(files, df, features, Path(directory), openclip_features=oc_features)
         if oc_matrix.size:
@@ -914,6 +931,7 @@ class MainWin(QMainWindow):
         self.model.layoutChanged.connect(self.regroup)
         self._overview_triplets = None
         self.model.layoutChanged.connect(self._on_layout_changed)
+        self.model.hyperedgeModified.connect(self._on_model_hyperedge_modified)
 
         self.image_grid.set_model(self.model)
         self.image_grid.set_use_full_images(True)
@@ -935,7 +953,14 @@ class MainWin(QMainWindow):
                 try:
                     self.model.layoutChanged.disconnect(self.regroup)
                 except TypeError:
-                    # This can happen if the signal was never connected
+                    pass
+                try:
+                    self.model.layoutChanged.disconnect(self._on_layout_changed)
+                except TypeError:
+                    pass
+                try:
+                    self.model.hyperedgeModified.disconnect(self._on_model_hyperedge_modified)
+                except TypeError:
                     pass
 
             self.model = SessionModel.load_h5(path)
@@ -958,6 +983,7 @@ class MainWin(QMainWindow):
 
             self._overview_triplets = None
             self.model.layoutChanged.connect(self._on_layout_changed)
+            self.model.hyperedgeModified.connect(self._on_model_hyperedge_modified)            
         except Exception as e:
             QMessageBox.critical(self, "Load error", str(e))
             return
@@ -1006,14 +1032,24 @@ class MainWin(QMainWindow):
 
     def _on_layout_changed(self):
         self._overview_triplets = None
-        # Rebuild the spatial view whenever the underlying hypergraph layout
-        # changes so that new/removed edges or images are reflected.
-        if hasattr(self, "spatial_dock"):
+        if self._layout_timer.isActive():
+            self._layout_timer.stop()
+        self._layout_timer.start(0)
+
+    def _apply_layout_change(self):
+        if hasattr(self, "spatial_dock") and not self._skip_next_layout:
             self.spatial_dock.set_model(self.model)
         self.regroup()
+        self._skip_next_layout = False
 
     def toggle_full_images(self, flag: bool) -> None:
         self.image_grid.set_use_full_images(flag)
+
+    def _on_model_hyperedge_modified(self, _name: str):
+        self._skip_next_layout = True
+        if self._skip_reset_timer.isActive():
+            self._skip_reset_timer.stop()
+        self._skip_reset_timer.start(100)
 
     def _on_item_changed(self, item: QStandardItem):
         if item.column() != 0 or item.hasChildren(): return
