@@ -18,6 +18,7 @@ class SessionModel(QObject):
     edgeRenamed      = Signal(str, str)      # old, new
     layoutChanged    = Signal()              # big regroup or reload
     similarityDirty  = Signal()              # vectors changed; views may flush
+    hyperedgeModified = Signal(str)
 
     # ─── construction helpers ───────────────────────────────────────────
     @classmethod
@@ -291,6 +292,7 @@ class SessionModel(QObject):
         # 6. Signal to the UI that the overall layout has changed
         self.overview_triplets = None
         self.layoutChanged.emit()
+        self.hyperedgeModified.emit(name)
     # --------------------------------------------------------------------
 
     def add_images_to_hyperedge(self, name: str, idxs: Iterable[int]) -> None:
@@ -315,7 +317,7 @@ class SessionModel(QObject):
             self.overview_triplets = None
             self.layoutChanged.emit()
             self.similarityDirty.emit()
-
+            self.hyperedgeModified.emit(name)
 
     def remove_images_from_edges(self, img_idxs: List[int], edges: List[str]) -> None:
         """Remove given image indices from the specified hyperedges."""
@@ -347,6 +349,7 @@ class SessionModel(QObject):
             self.overview_triplets = None
             self.layoutChanged.emit()
             self.similarityDirty.emit()
+            self.hyperedgeModified.emit(edge)            
 
     def delete_hyperedge(self, name: str, orphan_name: str = "orphaned images") -> None:
         """Remove a hyperedge and reassign lone images to an orphan group."""
@@ -399,7 +402,8 @@ class SessionModel(QObject):
         self.overview_triplets = None
         self.layoutChanged.emit()
         self.similarityDirty.emit()
-
+        self.hyperedgeModified.emit(orphan_name)
+        self.hyperedgeModified.emit(name)
 
     # convenience read-only properties -----------------------------------
     def vector_for(self, name: str) -> np.ndarray | None:

@@ -20,7 +20,75 @@ from .session_model import SessionModel
 from .similarity import SIM_METRIC       # kept for non‑cosine fallback
 
 THUMB_SIZE = 128
+class _RecalcWorker(QtCore.QObject):
+    imageEmbeddingReady = Signal(str, dict)
+    layoutReady = Signal(dict)
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.session: SessionModel | None = None
+
+    @QtCore.pyqtSlot(str)
+    def recompute(self, edge_name: str):
+        session = self.session
+        if session is None:
+            return
+        feats = session.features.astype(np.float32)
+        norms = np.linalg.norm(feats, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        feats_norm = feats / norms
+
+        mapping: dict[int, np.ndarray] = {}
+        if edge_name in session.hyperedges:
+            idx = list(session.hyperedges[edge_name])
+            if idx:
+                emb = umap.UMAP(n_components=2, random_state=42).fit_transform(feats_norm[idx])
+                emb = emb - emb.mean(axis=0)
+                m = np.max(np.linalg.norm(emb, axis=1))
+                if m > 0:
+                    emb = emb / m
+                mapping = {i: emb[k] for k, i in enumerate(idx)}
+
+        edges = list(session.hyperedges)
+        edge_feats = np.stack([session.hyperedge_avg_features[e] for e in edges]).astype(np.float32)
+        reducer = umap.UMAP(n_components=2, random_state=42, min_dist=0.8)
+        initial_pos = reducer.fit_transform(edge_feats)
+        diameters = np.maximum(
+            np.array([np.sqrt(len(session.hyperedges[n])) for n in edges]) * SpatialViewQDock.NODE_SIZE_SCALER,
+            SpatialViewQDock.MIN_HYPEREDGE_DIAMETER,
+        )
+        raw_scale = np.max(np.abs(initial_pos))
+        if raw_scale == 0:
+            raw_scale = 1.0
+        scale_factor = 10.0 / raw_scale
+        radii = (diameters / 2.0) / scale_factor
+        resolved = self._resolve_overlaps(initial_pos, radii)
+        pos = resolved - resolved.mean(axis=0)
+        scale = np.max(np.abs(pos))
+        if scale > 0:
+            pos = pos / scale * 10.0
+
+        layout = {n: (pos[i], diameters[i]) for i, n in enumerate(edges)}
+        self.imageEmbeddingReady.emit(edge_name, mapping)
+        self.layoutReady.emit(layout)
+
+    def _resolve_overlaps(self, positions: np.ndarray, radii: np.ndarray, iterations: int = 100, strength: float = 0.7) -> np.ndarray:
+        pos = positions.copy()
+        num_nodes = len(pos)
+        for _ in range(iterations):
+            for i in range(num_nodes):
+                for j in range(i + 1, num_nodes):
+                    delta = pos[i] - pos[j]
+                    dist_sq = np.sum(delta ** 2)
+                    min_dist = radii[i] + radii[j]
+                    if dist_sq < min_dist ** 2 and dist_sq > 1e-9:
+                        dist = np.sqrt(dist_sq)
+                        overlap = min_dist - dist
+                        push = delta / dist * overlap * strength * 0.5
+                        pos[i] += push
+                        pos[j] -= push
+        return pos
+    
 class TooltipManager:
     """Manages a custom QLabel widget to provide persistent tooltips."""
     def __init__(self, parent_widget: QWidget):
@@ -155,6 +223,7 @@ class ImageScatterItem(pg.ScatterPlotItem):
 # Main dock widget                                                             #
 # ---------------------------------------------------------------------------- #
 class SpatialViewQDock(QDockWidget):
+    requestRecalc = Signal(str)
     MIN_HYPEREDGE_DIAMETER = 0.5
     NODE_SIZE_SCALER       = 0.1
     zoom_threshold         = 400.0
@@ -187,7 +256,16 @@ class SpatialViewQDock(QDockWidget):
         self._centroid_norm: dict[str, np.ndarray] = {}
         self._centroid_sim: dict[str, np.ndarray] = {}
         self._image_umap: dict[str, dict[int, np.ndarray]] = {}
-
+        
+        # background worker for recomputing embeddings
+        self._worker_thread = QtCore.QThread(self)
+        self._worker = _RecalcWorker()
+        self._worker.moveToThread(self._worker_thread)
+        self.requestRecalc.connect(self._worker.recompute)
+        self._worker_thread.start()
+        self._worker.imageEmbeddingReady.connect(self._on_worker_image)
+        self._worker.layoutReady.connect(self._on_worker_layout)
+        
         # GUI Setup
         self.view = LassoViewBox(); self.view.setBackgroundColor("#444444")
         self.view.sigRangeChanged.connect(self._update_minimap_view)
@@ -240,6 +318,11 @@ class SpatialViewQDock(QDockWidget):
     # ============================================================================ #
     def set_model(self, session: SessionModel | None):
         self._clear_scene()
+        if self.session:
+            try:
+                self.session.hyperedgeModified.disconnect(self._on_hyperedge_modified)
+            except TypeError:
+                pass
         self.session = session
         self.fa2_layout = None
         self._radial_cache_by_edge = {}
@@ -247,6 +330,7 @@ class SpatialViewQDock(QDockWidget):
         self._overview_triplets = None
         if session is None:
             return
+        self.session.hyperedgeModified.connect(self._on_hyperedge_modified)
         self.color_map = session.edge_colors.copy()
         edges = list(session.hyperedges)
         edge_feats = np.stack([session.hyperedge_avg_features[e] for e in edges]).astype(np.float32)
@@ -667,6 +751,52 @@ class SpatialViewQDock(QDockWidget):
             self._radial_layout_cache = self._compute_radial_layout(names[0])
         self._update_image_layer()
 
+    def _on_hyperedge_modified(self, name: str):
+        if not self.session:
+            return
+        self._worker.session = self.session
+        self.requestRecalc.emit(name)
+
+    def _on_worker_image(self, edge: str, mapping: dict):
+        if not self.session:
+            return
+        self._image_umap[edge] = mapping
+        if self.session.image_umap is None:
+            self.session.image_umap = {}
+        self.session.image_umap[edge] = mapping
+        self._radial_cache_by_edge.pop(edge, None)
+        self._radial_layout_cache = None
+        self._update_image_layer()
+
+    def _on_worker_layout(self, layout: dict):
+        if not self.session:
+            return
+        names = list(layout)
+        node_sizes = np.array([layout[n][1] for n in names])
+        positions = {n: layout[n][0] for n in names}
+        self.fa2_layout = SimpleNamespace(names=names, node_sizes=node_sizes, positions=positions)
+
+        for name in list(self.hyperedgeItems):
+            if name not in layout:
+                self.view.removeItem(self.hyperedgeItems.pop(name))
+        for name in names:
+            size = layout[name][1]
+            r = size / 2
+            if name not in self.hyperedgeItems:
+                ell = HyperedgeItem(name, QtCore.QRectF(-r, -r, size, size))
+                col = self.color_map.get(name, '#AAAAAA')
+                ell.setPen(pg.mkPen(col)); ell.setBrush(pg.mkBrush(col))
+                self.view.addItem(ell)
+                self.hyperedgeItems[name] = ell
+            else:
+                self.hyperedgeItems[name].setRect(QtCore.QRectF(-r, -r, size, size))
+            x, y = positions[name]
+            self.hyperedgeItems[name].setPos(x, y)
+        self._refresh_edges()
+        self._update_image_layer()
+
+
+
     def _on_click(self, ev):
         if ev.button() != Qt.LeftButton: return
 
@@ -727,4 +857,7 @@ class SpatialViewQDock(QDockWidget):
         self.view.setRange(xRange=(x-dx,x+dx),yRange=(y-dy,y+dy),padding=0)
 
     def closeEvent(self, e):
+        if self._worker_thread.isRunning():
+            self._worker_thread.quit()
+            self._worker_thread.wait()
         super().closeEvent(e)

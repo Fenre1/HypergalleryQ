@@ -1004,6 +1004,10 @@ class MainWin(QMainWindow):
 
     def _on_layout_changed(self):
         self._overview_triplets = None
+        # Rebuild the spatial view whenever the underlying hypergraph layout
+        # changes so that new/removed edges or images are reflected.
+        if hasattr(self, "spatial_dock"):
+            self.spatial_dock.set_model(self.model)
         self.regroup()
 
     def toggle_full_images(self, flag: bool) -> None:
