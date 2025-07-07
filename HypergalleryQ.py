@@ -277,6 +277,7 @@ def calculate_similarity_matrix(vecs):
 
 
 def perform_hierarchical_grouping(model, thresh=0.8):
+    print('start hch grouping')
     vecs   = model.hyperedge_avg_features.copy()
     comp   = {k: [k] for k in vecs}
     counts = {k: 1     for k in vecs}
@@ -294,6 +295,7 @@ def perform_hierarchical_grouping(model, thresh=0.8):
         comp[new] = comp.pop(row) + comp.pop(col)
         counts[new] = c1 + c2
         vecs.pop(row), vecs.pop(col)
+    print('end hch grouping')
     return comp
 
 
@@ -1031,6 +1033,7 @@ class MainWin(QMainWindow):
         self.bus.set_images(sorted(idxs))
 
     def regroup(self):
+        print('start regroup')
         if not self.model: return
         thr = self.slider.value() / 100
         self.label.setText(f"Grouping threshold: {thr:.2f}")
@@ -1053,7 +1056,10 @@ class MainWin(QMainWindow):
         self.tree.selectionModel().selectionChanged.connect(self.tree._send_bus_update)
         self.tree.expandAll()
 
-        if hasattr(self, 'matrix_dock'): self.matrix_dock.update_matrix()
+        if hasattr(self, 'matrix_dock'): 
+            self.matrix_dock.update_matrix()
+        print('end regroup')
+
 
     def _update_group_similarity(self, group_item: QStandardItem):
         vals = [v for v in (group_item.child(r, SIM_COL).data(Qt.UserRole) for r in range(group_item.rowCount())) if v is not None]

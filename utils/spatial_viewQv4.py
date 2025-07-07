@@ -30,6 +30,7 @@ class _RecalcWorker(QtCore.QObject):
 
     @QtCore.pyqtSlot(str)
     def recompute(self, edge_name: str):
+        print('start recompute')
         session = self.session
         if session is None:
             return
@@ -42,6 +43,7 @@ class _RecalcWorker(QtCore.QObject):
         if edge_name in session.hyperedges:
             idx = list(session.hyperedges[edge_name])
             if idx:
+                print('umap1')
                 emb = umap.UMAP(n_components=2, random_state=42).fit_transform(feats_norm[idx])
                 emb = emb - emb.mean(axis=0)
                 m = np.max(np.linalg.norm(emb, axis=1))
@@ -52,6 +54,7 @@ class _RecalcWorker(QtCore.QObject):
         edges = list(session.hyperedges)
         edge_feats = np.stack([session.hyperedge_avg_features[e] for e in edges]).astype(np.float32)
         reducer = umap.UMAP(n_components=2, random_state=42, min_dist=0.8)
+        print('umap2')
         initial_pos = reducer.fit_transform(edge_feats)
         diameters = np.maximum(
             np.array([np.sqrt(len(session.hyperedges[n])) for n in edges]) * SpatialViewQDock.NODE_SIZE_SCALER,
@@ -71,8 +74,10 @@ class _RecalcWorker(QtCore.QObject):
         layout = {n: (pos[i], diameters[i]) for i, n in enumerate(edges)}
         self.imageEmbeddingReady.emit(edge_name, mapping)
         self.layoutReady.emit(layout)
+        print('end recompute')
 
     def _resolve_overlaps(self, positions: np.ndarray, radii: np.ndarray, iterations: int = 100, strength: float = 0.7) -> np.ndarray:
+        print('start resolve')
         pos = positions.copy()
         num_nodes = len(pos)
         for _ in range(iterations):
@@ -87,6 +92,7 @@ class _RecalcWorker(QtCore.QObject):
                         push = delta / dist * overlap * strength * 0.5
                         pos[i] += push
                         pos[j] -= push
+        print('end resolve')
         return pos
     
 class TooltipManager:
@@ -336,7 +342,7 @@ class SpatialViewQDock(QDockWidget):
         edge_feats = np.stack([session.hyperedge_avg_features[e] for e in edges]).astype(np.float32)
         sizes = np.maximum(np.array([np.sqrt(len(session.hyperedges[n])) for n in edges]) * self.NODE_SIZE_SCALER,
                            self.MIN_HYPEREDGE_DIAMETER)
-
+        print('umap3')
         reducer = umap.UMAP(n_components=2, random_state=42, min_dist=0.8)
         initial_pos = reducer.fit_transform(edge_feats)
 
@@ -380,6 +386,7 @@ class SpatialViewQDock(QDockWidget):
                 idx = list(session.hyperedges[edge])
                 self._centroid_sim[edge] = self._features_norm[idx] @ c if idx else np.array([])
                 if idx:
+                    print('umap4')
                     emb = umap.UMAP(n_components=2, random_state=42).fit_transform(self._features_norm[idx])
                     emb = emb - emb.mean(axis=0)
                     m = np.max(np.linalg.norm(emb, axis=1))
