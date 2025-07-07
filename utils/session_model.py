@@ -348,7 +348,57 @@ class SessionModel(QObject):
             self.layoutChanged.emit()
             self.similarityDirty.emit()
 
+    def delete_hyperedge(self, name: str, orphan_name: str = "orphaned images") -> None:
+        """Remove a hyperedge and reassign lone images to an orphan group."""
+        if name not in self.hyperedges:
+            return
 
+        members = self.hyperedges.pop(name)
+
+        if name in self.df_edges.columns:
+            self.df_edges.drop(columns=[name], inplace=True)
+        if name in self.cat_list:
+            self.cat_list.remove(name)
+        self.hyperedge_avg_features.pop(name, None)
+        self.status_map.pop(name, None)
+        self.edge_origins.pop(name, None)
+        self.edge_colors.pop(name, None)
+        if getattr(self, "image_umap", None):
+            self.image_umap.pop(name, None)
+
+        # ensure orphan hyperedge exists
+        if orphan_name not in self.hyperedges:
+            self.hyperedges[orphan_name] = set()
+            self.df_edges[orphan_name] = 0
+            self.cat_list.append(orphan_name)
+            n_features = self.features.shape[1]
+            self.hyperedge_avg_features[orphan_name] = np.zeros(n_features)
+            self.status_map[orphan_name] = {"uuid": str(uuid.uuid4()), "status": "Orphaned"}
+            cmap_hues = max(len(self.cat_list), 16)
+            self.edge_colors[orphan_name] = pg.mkColor(pg.intColor(len(self.edge_colors), hues=cmap_hues)).name()
+            self.edge_origins[orphan_name] = "system"
+
+        for idx in members:
+            if idx in self.image_mapping:
+                self.image_mapping[idx].discard(name)
+                if not self.image_mapping[idx]:
+                    self.image_mapping[idx].add(orphan_name)
+                    self.hyperedges[orphan_name].add(idx)
+                    self.df_edges.at[idx, orphan_name] = 1
+            if idx < len(self.df_edges.index):
+                # column already removed but ensure value cleared if leftover
+                pass
+
+        # update features for orphan group
+        orphans = self.hyperedges[orphan_name]
+        if orphans:
+            self.hyperedge_avg_features[orphan_name] = self.features[list(orphans)].mean(axis=0)
+        else:
+            self.hyperedge_avg_features[orphan_name] = np.zeros(self.features.shape[1])
+
+        self.overview_triplets = None
+        self.layoutChanged.emit()
+        self.similarityDirty.emit()
 
 
     # convenience read-only properties -----------------------------------

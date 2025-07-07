@@ -454,6 +454,9 @@ class MainWin(QMainWindow):
         self.btn_add_hyperedge = QPushButton("Add Hyperedge")
         self.btn_add_hyperedge.clicked.connect(self.on_add_hyperedge)
         
+        self.btn_del_hyperedge = QPushButton("Delete Hyperedge")
+        self.btn_del_hyperedge.clicked.connect(self.on_delete_hyperedge)
+
         self.btn_add_img = QPushButton("Add images to hyperedge")
         self.btn_add_img.clicked.connect(self.add_selection_to_hyperedge)
         
@@ -485,6 +488,7 @@ class MainWin(QMainWindow):
 
         toolbar_layout.addWidget(self.btn_sim)
         toolbar_layout.addWidget(self.btn_add_hyperedge)
+        toolbar_layout.addWidget(self.btn_del_hyperedge)
         toolbar_layout.addWidget(self.btn_add_img)
         toolbar_layout.addWidget(self.btn_del_img)
         toolbar_layout.addWidget(self.btn_rank)        
@@ -601,6 +605,27 @@ class MainWin(QMainWindow):
         else:
             # User clicked Cancel or entered nothing
             print("Add hyperedge cancelled.")
+
+    def on_delete_hyperedge(self):
+        if not self.model:
+            QMessageBox.warning(self, "No Session", "Please load a session first.")
+            return
+
+        model = self.tree.model()
+        sel = self.tree.selectionModel().selectedRows(0) if model else []
+        if not sel:
+            QMessageBox.information(self, "No Selection", "Select a hyperedge in the tree first.")
+            return
+
+        item = model.itemFromIndex(sel[0])
+        if item.hasChildren():
+            QMessageBox.information(self, "Invalid Selection", "Please select a single hyperedge, not a group.")
+            return
+
+        name = item.text()
+        res = QMessageBox.question(self, "Delete Hyperedge", f"Delete hyperedge '{name}'?", QMessageBox.Yes | QMessageBox.No)
+        if res == QMessageBox.Yes:
+            self.model.delete_hyperedge(name)
 
     def on_remove_images(self):
         if not self.model:
