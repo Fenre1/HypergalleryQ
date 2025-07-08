@@ -16,6 +16,8 @@ from PyQt5.QtCore import (
     QModelIndex,
     QSize,
     QEvent,
+    QPoint,
+    QUrl,
 )
 from PyQt5.QtGui import QPixmap, QColor, QKeySequence
 from PyQt5.QtWidgets import (
@@ -30,6 +32,29 @@ from PyQt5.QtWidgets import (
 from .selection_bus import SelectionBus
 from .session_model import SessionModel
 from .image_popup import show_image_metadata
+
+class TooltipManager:
+    """Simple helper to show persistent HTML tooltips."""
+
+    def __init__(self, parent_widget):
+        from PyQt5.QtWidgets import QLabel
+
+        self.tooltip = QLabel(parent_widget)
+        self.tooltip.setWindowFlags(Qt.ToolTip | Qt.FramelessWindowHint)
+        self.tooltip.setStyleSheet(
+            "QLabel { background-color: #FFFFE0; color: black; "
+            "border: 1px solid black; padding: 2px; }"
+        )
+        self.tooltip.hide()
+
+    def show(self, global_pos: QPoint, html: str):
+        self.tooltip.setText(html)
+        self.tooltip.adjustSize()
+        self.tooltip.move(global_pos + QPoint(15, 10))
+        self.tooltip.show()
+
+    def hide(self):
+        self.tooltip.hide()
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -195,7 +220,8 @@ class HyperedgeMatrixDock(QDockWidget):
         self.bus = bus
         self._base_thumb = thumb_size
         self._zoom = 1.0
-
+        self._overview_triplets: Dict[str, tuple[int | None, ...]] | None = None
+        self._last_index = QModelIndex()
         # --- TableView & Model ----------------------------------------
         self._view = QTableView(self)
         self._view.setSelectionMode(QAbstractItemView.NoSelection)
@@ -235,12 +261,15 @@ class HyperedgeMatrixDock(QDockWidget):
 
         # --- Ctrl+Wheel event filter ----------------------------------
         self._view.viewport().installEventFilter(self)
+        self._view.viewport().setMouseTracking(True)
 
+        self.tooltip_manager = TooltipManager(self._view)
     # ------------------------------------------------------------------
     # Public API --------------------------------------------------------
     def set_model(self, session: SessionModel | None):
         """Load / clear the matrix."""
         self._model.set_session(session)
+        self._overview_triplets = None
         self.zoom_reset()  # ensures headers match current _base_thumb
 
     def update_matrix(self):
@@ -279,14 +308,14 @@ class HyperedgeMatrixDock(QDockWidget):
 
     # ------------------------------------------------------------------
     # Event filter for Ctrl+Wheel zoom ---------------------------------
-    def eventFilter(self, obj, event):
-        if event.type() == QEvent.Wheel and QApplication.keyboardModifiers() & Qt.ControlModifier:
-            if event.angleDelta().y() > 0:
-                self.zoom_in()
-            else:
-                self.zoom_out()
-            return True
-        return super().eventFilter(obj, event)
+    # def eventFilter(self, obj, event):
+    #     if event.type() == QEvent.Wheel and QApplication.keyboardModifiers() & Qt.ControlModifier:
+    #         if event.angleDelta().y() > 0:
+    #             self.zoom_in()
+    #         else:
+    #             self.zoom_out()
+    #         return True
+    #     return super().eventFilter(obj, event)
 
     # ------------------------------------------------------------------
     # Click / double‑click behaviour (unchanged) ------------------------
@@ -311,3 +340,77 @@ class HyperedgeMatrixDock(QDockWidget):
         idxs = sorted(self._model._session.hyperedges.get(name, []))
         if idxs:
             show_image_metadata(self._model._session, idxs[0], self)
+
+    # ------------------------------------------------------------------
+    # Tooltip handling -------------------------------------------------
+    def eventFilter(self, obj, event):
+        if obj is self._view.viewport():
+            if event.type() == QEvent.MouseMove:
+                self._update_tooltip(event)
+            elif event.type() == QEvent.Leave:
+                self.tooltip_manager.hide()
+
+        if event.type() == QEvent.Wheel and QApplication.keyboardModifiers() & Qt.ControlModifier:
+            if event.angleDelta().y() > 0:
+                self.zoom_in()
+            else:
+                self.zoom_out()
+            return True
+        return super().eventFilter(obj, event)
+
+    def _update_tooltip(self, event):
+        session = self._model._session
+        if session is None:
+            self.tooltip_manager.hide()
+            self._last_index = QModelIndex()
+            return
+
+        idx = self._view.indexAt(event.pos())
+        if not idx.isValid():
+            self.tooltip_manager.hide()
+            self._last_index = QModelIndex()
+            return
+
+        if idx == self._last_index:
+            # just reposition
+            global_pos = self._view.viewport().mapToGlobal(event.pos())
+            self.tooltip_manager.tooltip.move(global_pos + QPoint(15, 10))
+            return
+
+        self._last_index = idx
+        edges = self._model._edges
+        r_name = edges[idx.row()]
+        c_name = edges[idx.column()]
+        html = self._build_cell_tooltip(r_name, c_name)
+        if html:
+            global_pos = self._view.viewport().mapToGlobal(event.pos())
+            self.tooltip_manager.show(global_pos, html)
+        else:
+            self.tooltip_manager.hide()
+
+    def _build_cell_tooltip(self, row_edge: str, col_edge: str) -> str:
+        session = self._model._session
+        if session is None:
+            return ""
+
+        if self._overview_triplets is None:
+            self._overview_triplets = session.compute_overview_triplets()
+
+        row_imgs = self._overview_triplets.get(row_edge, ())
+        col_imgs = self._overview_triplets.get(col_edge, ())
+        size = self._model._thumb_size
+
+        def _img_tag(idx: int) -> str:
+            url = QUrl.fromLocalFile(session.im_list[idx]).toString()
+            return f'<img src="{url}" width="{size}" height="{size}" style="margin:2px;">'
+
+        row_html = "".join(_img_tag(i) for i in row_imgs if i is not None)
+        col_html = "<br>".join(_img_tag(i) for i in col_imgs if i is not None)
+
+        if not row_html and not col_html:
+            return ""
+
+        return (
+            f"<table><tr><td valign='top'><b>{col_edge}</b><br>{col_html}</td>"
+            f"<td valign='top'><b>{row_edge}</b><br>{row_html}</td></tr></table>"
+        )
