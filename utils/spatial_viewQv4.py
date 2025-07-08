@@ -2,7 +2,7 @@ from __future__ import annotations
 import numpy as np
 from math import cos, sin, pi
 from time import perf_counter
-import threading
+import numba as nb
 import umap
 from types import SimpleNamespace
 import pyqtgraph as pg
@@ -20,6 +20,31 @@ from .session_model import SessionModel
 from .similarity import SIM_METRIC       # kept for non‑cosine fallback
 
 THUMB_SIZE = 128
+
+@nb.njit(fastmath=True, cache=True)
+def _resolve_overlaps_numba(pos, radii, iterations, strength):
+    n = pos.shape[0]
+    for _ in range(iterations):
+        for i in range(n - 1):
+            for j in range(i + 1, n):
+                dx = pos[i, 0] - pos[j, 0]
+                dy = pos[i, 1] - pos[j, 1]
+                dist_sq = dx*dx + dy*dy
+                min_d   = radii[i] + radii[j]
+                if 1e-9 < dist_sq < min_d*min_d:
+                    dist     = np.sqrt(dist_sq)
+                    overlap  = (min_d - dist) * strength * 0.5
+                    push_x   = dx / dist * overlap
+                    push_y   = dy / dist * overlap
+                    pos[i, 0] += push_x
+                    pos[i, 1] += push_y
+                    pos[j, 0] -= push_x
+                    pos[j, 1] -= push_y
+    return pos
+
+
+
+
 class _RecalcWorker(QtCore.QObject):
     imageEmbeddingReady = Signal(str, dict)
     layoutReady = Signal(dict)
@@ -76,25 +101,42 @@ class _RecalcWorker(QtCore.QObject):
         self.layoutReady.emit(layout)
         print('end recompute')
 
-    def _resolve_overlaps(self, positions: np.ndarray, radii: np.ndarray, iterations: int = 100, strength: float = 0.7) -> np.ndarray:
-        print("Is in main thread?", threading.current_thread() == threading.main_thread())
-        print('start resolve')
-        pos = positions.copy()
-        num_nodes = len(pos)
-        for _ in range(iterations):
-            for i in range(num_nodes):
-                for j in range(i + 1, num_nodes):
-                    delta = pos[i] - pos[j]
-                    dist_sq = np.sum(delta ** 2)
-                    min_dist = radii[i] + radii[j]
-                    if dist_sq < min_dist ** 2 and dist_sq > 1e-9:
-                        dist = np.sqrt(dist_sq)
-                        overlap = min_dist - dist
-                        push = delta / dist * overlap * strength * 0.5
-                        pos[i] += push
-                        pos[j] -= push
-        print('end resolve')
-        return pos
+    def _resolve_overlaps(self, positions: np.ndarray, radii: np.ndarray,
+                          iterations: int = 100, strength: float = 0.7) -> np.ndarray:
+        """
+        Wrapper that prepares the data, calls the Numba kernel,
+        and converts the result back to the original dtype.
+        """
+        # 1. Make contiguous float32 copies – Numba likes that
+        pos32   = np.ascontiguousarray(positions, dtype=np.float32)
+        radii32 = np.ascontiguousarray(radii,     dtype=np.float32)
+
+        # 2. Call the compiled kernel (in‑place update + return)
+        pos_out32 = _resolve_overlaps_numba(pos32, radii32,
+                                            iterations, strength)
+
+        # 3. Convert back to the dtype the rest of your code expects
+        return pos_out32.astype(positions.dtype, copy=False)
+
+
+    # def _resolve_overlaps(self, positions: np.ndarray, radii: np.ndarray, iterations: int = 100, strength: float = 0.7) -> np.ndarray:
+    #     print('start resolve')
+    #     pos = positions.copy()
+    #     num_nodes = len(pos)
+    #     for _ in range(iterations):
+    #         for i in range(num_nodes):
+    #             for j in range(i + 1, num_nodes):
+    #                 delta = pos[i] - pos[j]
+    #                 dist_sq = np.sum(delta ** 2)
+    #                 min_dist = radii[i] + radii[j]
+    #                 if dist_sq < min_dist ** 2 and dist_sq > 1e-9:
+    #                     dist = np.sqrt(dist_sq)
+    #                     overlap = min_dist - dist
+    #                     push = delta / dist * overlap * strength * 0.5
+    #                     pos[i] += push
+    #                     pos[j] -= push
+    #     print('end resolve')
+    #     return pos
     
 class TooltipManager:
     """Manages a custom QLabel widget to provide persistent tooltips."""
