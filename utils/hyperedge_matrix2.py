@@ -243,6 +243,11 @@ class HyperedgeMatrixDock(QDockWidget):
         self._model.set_session(session)
         self.zoom_reset()  # ensures headers match current _base_thumb
 
+    def update_matrix(self):
+        """Compatibility wrapper used by the main window to refresh data."""
+        # Rebuild the model using whatever session is currently loaded
+        self._model.set_session(self._model._session)
+
     # ------------------------------------------------------------------
     # Zoom handlers -----------------------------------------------------
     def zoom_in(self):
