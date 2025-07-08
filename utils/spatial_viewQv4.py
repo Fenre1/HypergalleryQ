@@ -42,6 +42,16 @@ def _resolve_overlaps_numba(pos, radii, iterations, strength):
                     pos[j, 1] -= push_y
     return pos
 
+def _resolve_overlaps(positions: np.ndarray, radii: np.ndarray,
+                      iterations: int = 100, strength: float = 0.7) -> np.ndarray:
+    """Resolve overlaps using the Numba accelerated kernel."""
+    pos32   = np.ascontiguousarray(positions, dtype=np.float32)
+    radii32 = np.ascontiguousarray(radii,     dtype=np.float32)
+
+    pos_out32 = _resolve_overlaps_numba(pos32, radii32,
+                                        iterations, strength)
+
+    return pos_out32.astype(positions.dtype, copy=False)
 
 
 
@@ -90,7 +100,7 @@ class _RecalcWorker(QtCore.QObject):
             raw_scale = 1.0
         scale_factor = 10.0 / raw_scale
         radii = (diameters / 2.0) / scale_factor
-        resolved = self._resolve_overlaps(initial_pos, radii)
+        resolved = _resolve_overlaps(initial_pos, radii)
         pos = resolved - resolved.mean(axis=0)
         scale = np.max(np.abs(pos))
         if scale > 0:
@@ -101,42 +111,7 @@ class _RecalcWorker(QtCore.QObject):
         self.layoutReady.emit(layout)
         print('end recompute')
 
-    def _resolve_overlaps(self, positions: np.ndarray, radii: np.ndarray,
-                          iterations: int = 100, strength: float = 0.7) -> np.ndarray:
-        """
-        Wrapper that prepares the data, calls the Numba kernel,
-        and converts the result back to the original dtype.
-        """
-        # 1. Make contiguous float32 copies – Numba likes that
-        pos32   = np.ascontiguousarray(positions, dtype=np.float32)
-        radii32 = np.ascontiguousarray(radii,     dtype=np.float32)
 
-        # 2. Call the compiled kernel (in‑place update + return)
-        pos_out32 = _resolve_overlaps_numba(pos32, radii32,
-                                            iterations, strength)
-
-        # 3. Convert back to the dtype the rest of your code expects
-        return pos_out32.astype(positions.dtype, copy=False)
-
-
-    # def _resolve_overlaps(self, positions: np.ndarray, radii: np.ndarray, iterations: int = 100, strength: float = 0.7) -> np.ndarray:
-    #     print('start resolve')
-    #     pos = positions.copy()
-    #     num_nodes = len(pos)
-    #     for _ in range(iterations):
-    #         for i in range(num_nodes):
-    #             for j in range(i + 1, num_nodes):
-    #                 delta = pos[i] - pos[j]
-    #                 dist_sq = np.sum(delta ** 2)
-    #                 min_dist = radii[i] + radii[j]
-    #                 if dist_sq < min_dist ** 2 and dist_sq > 1e-9:
-    #                     dist = np.sqrt(dist_sq)
-    #                     overlap = min_dist - dist
-    #                     push = delta / dist * overlap * strength * 0.5
-    #                     pos[i] += push
-    #                     pos[j] -= push
-    #     print('end resolve')
-    #     return pos
     
 class TooltipManager:
     """Manages a custom QLabel widget to provide persistent tooltips."""
@@ -398,7 +373,7 @@ class SpatialViewQDock(QDockWidget):
         if raw_scale == 0: raw_scale = 1.0
         pos_scaling_factor = 10.0 / raw_scale
         raw_radii = (final_diameters / 2.0) / pos_scaling_factor
-        resolved_pos = self._resolve_overlaps(initial_pos, raw_radii)
+        resolved_pos = _resolve_overlaps(initial_pos, raw_radii)
 
         pos = resolved_pos - resolved_pos.mean(axis=0)
         scale = np.max(np.abs(pos))
@@ -784,24 +759,7 @@ class SpatialViewQDock(QDockWidget):
         self._radial_cache_by_edge[sel_name] = (offsets, links)
         return offsets, links
 
-    def _resolve_overlaps(self, positions: np.ndarray, radii: np.ndarray, iterations: int = 100, strength: float = 0.7) -> np.ndarray:
-        print('is this used??')
-        pos = positions.copy()
-        num_nodes = len(pos)
-        for _ in range(iterations):
-            for i in range(num_nodes):
-                for j in range(i + 1, num_nodes):
-                    delta = pos[i] - pos[j]
-                    dist_sq = np.sum(delta**2)
-                    min_dist = radii[i] + radii[j]
-                    if dist_sq < min_dist**2 and dist_sq > 1e-9:
-                        dist = np.sqrt(dist_sq)
-                        overlap = min_dist - dist
-                        push_vector = delta / dist
-                        move = push_vector * overlap * strength * 0.5
-                        pos[i] += move
-                        pos[j] -= move
-        return pos
+
 
     def _on_edges(self, names: list[str]):
         for name, ell in self.hyperedgeItems.items():
