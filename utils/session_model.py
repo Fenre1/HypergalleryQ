@@ -403,7 +403,7 @@ class SessionModel(QObject):
         self.layoutChanged.emit()
         self.similarityDirty.emit()
         self.hyperedgeModified.emit(orphan_name)
-        self.hyperedgeModified.emit(name)
+        # self.hyperedgeModified.emit(name)
 
     # convenience read-only properties -----------------------------------
     def vector_for(self, name: str) -> np.ndarray | None:

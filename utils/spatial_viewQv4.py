@@ -2,7 +2,7 @@ from __future__ import annotations
 import numpy as np
 from math import cos, sin, pi
 from time import perf_counter
-
+import threading
 import umap
 from types import SimpleNamespace
 import pyqtgraph as pg
@@ -77,6 +77,7 @@ class _RecalcWorker(QtCore.QObject):
         print('end recompute')
 
     def _resolve_overlaps(self, positions: np.ndarray, radii: np.ndarray, iterations: int = 100, strength: float = 0.7) -> np.ndarray:
+        print("Is in main thread?", threading.current_thread() == threading.main_thread())
         print('start resolve')
         pos = positions.copy()
         num_nodes = len(pos)
@@ -742,6 +743,7 @@ class SpatialViewQDock(QDockWidget):
         return offsets, links
 
     def _resolve_overlaps(self, positions: np.ndarray, radii: np.ndarray, iterations: int = 100, strength: float = 0.7) -> np.ndarray:
+        print('is this used??')
         pos = positions.copy()
         num_nodes = len(pos)
         for _ in range(iterations):
