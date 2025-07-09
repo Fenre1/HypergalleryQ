@@ -235,6 +235,31 @@ class SessionModel(QObject):
         self.thumbnail_data = thumbs
         self.thumbnails_are_embedded = True
 
+    # ------------------------------------------------------------------
+    def _update_edit_status(self, name: str, *, renamed: bool = False, modified: bool = False) -> None:
+        """Update the edit status for a hyperedge."""
+        entry = self.status_map.get(name)
+        if not entry:
+            return
+        status = entry.get("status", "Original")
+        if status in {"New", "Orphaned", "Cluster"}:
+            return
+        has_renamed = "Renamed" in status
+        has_modified = "modified" in status.lower()
+        if renamed:
+            has_renamed = True
+        if modified:
+            has_modified = True
+        if has_renamed and has_modified:
+            entry["status"] = "Renamed and modified"
+        elif has_renamed:
+            entry["status"] = "Renamed"
+        elif has_modified:
+            entry["status"] = "Modified"
+        else:
+            entry["status"] = "Original"
+
+
     # ─── public API used by the GUI today ───────────────────────────────
     def rename_edge(self, old: str, new: str) -> bool:
         """Return True on success, False if duplicate/invalid."""
@@ -248,6 +273,7 @@ class SessionModel(QObject):
         self.cat_list[self.cat_list.index(old)] = new
         self.hyperedge_avg_features[new] = self.hyperedge_avg_features.pop(old)
         self.status_map[new] = self.status_map.pop(old)
+        self._update_edit_status(new, renamed=True)
         if old in self.edge_origins:
             self.edge_origins[new] = self.edge_origins.pop(old)
         if old in self.edge_colors:
@@ -314,6 +340,7 @@ class SessionModel(QObject):
                 self.hyperedge_avg_features[name] = self.features[indices].mean(axis=0)
             else:
                 self.hyperedge_avg_features[name] = np.zeros(self.features.shape[1])
+            self._update_edit_status(name, modified=True)
             self.overview_triplets = None
             self.layoutChanged.emit()
             self.similarityDirty.emit()
@@ -344,7 +371,8 @@ class SessionModel(QObject):
                 self.hyperedge_avg_features[edge] = self.features[list(members)].mean(axis=0)
             else:
                 self.hyperedge_avg_features[edge] = np.zeros(self.features.shape[1])
-
+            self._update_edit_status(edge, modified=True)
+            
         if changed:
             self.overview_triplets = None
             self.layoutChanged.emit()
