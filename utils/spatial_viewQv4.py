@@ -255,6 +255,9 @@ class SpatialViewQDock(QDockWidget):
     hyperedge_tooltip_zoom_threshold = 200.0
     image_tooltip_zoom_threshold = 50.0
     radial_placement_factor = 1.1
+    highlight_pen_width_ratio = 0.0005
+    highlight_anim_base_ratio = 0.01
+    highlight_anim_peak_ratio = 0.3
 
     def __init__(self, bus: SelectionBus, parent=None):
         super().__init__("Hyperedge View", parent)
@@ -600,16 +603,16 @@ class SpatialViewQDock(QDockWidget):
         # Use a sine wave for a smooth pulse up and down: sin(pi * x)
         pulse_factor = math.sin(math.pi * progress)
         
-        # Define the pulse range
-        base_width = 8
-        peak_width = 20
-        current_width = base_width + (peak_width - base_width) * pulse_factor
-        
-        # Use a solid line for the animation; it looks cleaner
-        anim_pen = pg.mkPen('w', width=current_width, style=Qt.SolidLine)
-
         for item in self._animating_items:
-            item.setPen(anim_pen)
+            diam = item.rect().width()
+            base_width = diam * self.highlight_anim_base_ratio
+            peak_width = diam * self.highlight_anim_peak_ratio
+            current_width = base_width + (peak_width - base_width) * pulse_factor
+            pen = QPen(pg.mkColor('w'))
+            pen.setWidthF(current_width)
+            pen.setCosmetic(False)
+            pen.setStyle(Qt.SolidLine)
+            item.setPen(pen)
 
         self._anim_step_count -= 1
 
@@ -821,22 +824,19 @@ class SpatialViewQDock(QDockWidget):
 
         edges_to_highlight = {e for i in idxs for e in self.session.image_mapping.get(i, [])}
 
-        # Create a pen that will scale with the view
-        final_pen = QPen(pg.mkColor('w'))
-        final_pen.setWidthF(0.2)  # Using setWidthF for floating-point precision
-        final_pen.setCosmetic(False)  # This makes the pen scale with zoom
-        final_pen.setStyle(Qt.DashLine)
-
         items_to_animate = []
         for name, ell in self.hyperedgeItems.items():
             col = self.color_map.get(name, '#AAAAAA')
             if name in edges_to_highlight:
-                # Set the FINAL style immediately
-                ell.setPen(final_pen)
+                width = ell.rect().width() * self.highlight_pen_width_ratio
+                pen = QPen(pg.mkColor('w'))
+                pen.setWidthF(0.05)
+                pen.setCosmetic(False)
+                pen.setStyle(Qt.DashLine)
+                ell.setPen(pen)
                 ell.setBrush(pg.mkBrush(col))
                 items_to_animate.append(ell)
             else:
-                # Reset non-highlighted nodes
                 ell.setPen(pg.mkPen(col))
                 ell.setBrush(pg.mkBrush(col))
 
@@ -848,6 +848,7 @@ class SpatialViewQDock(QDockWidget):
 
         self._selected_nodes = {(e, i) for i in idxs for e in self.session.image_mapping.get(i, [])}
         self._update_selected_overlay()
+
 
 
     
