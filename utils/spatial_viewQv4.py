@@ -7,14 +7,14 @@ import umap
 from types import SimpleNamespace
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtGui
-from PyQt5.QtCore import Qt, QPointF, QEvent, pyqtSignal as Signal, QUrl, QPoint
+from PyQt5.QtCore import Qt, QPointF, QEvent, pyqtSignal as Signal, QUrl, QPoint, QTimer
 from PyQt5.QtGui import QPainterPath, QPen, QColor
 from PyQt5.QtWidgets import (
     QDockWidget, QWidget, QVBoxLayout, QApplication,
     QPushButton, QGraphicsEllipseItem, QToolTip, QLabel, QGraphicsSceneHoverEvent
 )
 from matplotlib.path import Path as MplPath
-
+import math
 from .selection_bus import SelectionBus
 from .session_model import SessionModel
 from .similarity import SIM_METRIC       # kept for non‑cosine fallback
@@ -52,8 +52,6 @@ def _resolve_overlaps(positions: np.ndarray, radii: np.ndarray,
                                         iterations, strength)
 
     return pos_out32.astype(positions.dtype, copy=False)
-
-
 
 class _RecalcWorker(QtCore.QObject):
     imageEmbeddingReady = Signal(str, dict)
@@ -259,6 +257,18 @@ class SpatialViewQDock(QDockWidget):
         super().__init__("Hyperedge View", parent)
         self.bus = bus
 
+
+        self._highlight_anim_duration = 1000  # ms (1 second)
+        self._highlight_anim_steps = 20
+        
+        self._highlight_timer = QTimer(self)
+        self._highlight_timer.setInterval(self._highlight_anim_duration // self._highlight_anim_steps)
+        self._highlight_timer.timeout.connect(self._update_highlight_animation)
+        
+        self._animating_items = []
+        self._anim_step_count = 0
+
+
         # runtime
         self.session: SessionModel | None = None
         self.fa2_layout: SimpleNamespace | None = None
@@ -318,6 +328,36 @@ class SpatialViewQDock(QDockWidget):
 
         # Bus connections
         self.bus.edgesChanged.connect(self._on_edges)
+        self.bus.imagesChanged.connect(self._on_images)
+
+      
+    def _update_highlight_animation(self):
+        if self._anim_step_count <= 0 or not self._animating_items:
+            self._highlight_timer.stop()
+            self._animating_items = []
+            return
+
+        # Calculate progress (from 0.0 to 1.0) over the animation duration
+        progress = (self._highlight_anim_steps - self._anim_step_count) / self._highlight_anim_steps
+        
+        # Use a sine wave for a smooth pulse up and down: sin(pi * x)
+        pulse_factor = math.sin(math.pi * progress)
+        
+        # Define the pulse range
+        base_width = 8
+        peak_width = 20
+        current_width = base_width + (peak_width - base_width) * pulse_factor
+        
+        # Use a solid line for the animation; it looks cleaner
+        anim_pen = pg.mkPen('w', width=current_width, style=Qt.SolidLine)
+
+        for item in self._animating_items:
+            item.setPen(anim_pen)
+
+        self._anim_step_count -= 1
+
+    
+
 
     def eventFilter(self, obj, event: QEvent) -> bool:
         # For resizing the minimap
@@ -769,6 +809,53 @@ class SpatialViewQDock(QDockWidget):
         if len(names) == 1:
             self._radial_layout_cache = self._compute_radial_layout(names[0])
         self._update_image_layer()
+
+      
+    def _on_images(self, idxs: list[int]):
+        if not self.session:
+            return
+
+        # Stop any previous animation cleanly
+        if self._highlight_timer.isActive():
+            self._highlight_timer.stop()
+            # Restore the pen on previously animating items before starting a new one
+            for item in self._animating_items:
+                # This assumes you have a way to know its original/final pen
+                # The logic below handles this cleanly anyway
+                pass
+            self._animating_items = []
+
+
+        edges_to_highlight = {e for i in idxs for e in self.session.image_mapping.get(i, [])}
+        
+        # The final, static highlight pen
+        final_pen = pg.mkPen('w', width=8, style=Qt.DashLine)
+        
+        items_to_animate = []
+        for name, ell in self.hyperedgeItems.items():
+            col = self.color_map.get(name, '#AAAAAA')
+            if name in edges_to_highlight:
+                # --- This is the key change ---
+                # 1. Set the FINAL style immediately.
+                ell.setPen(final_pen) 
+                ell.setBrush(pg.mkBrush(col)) # Or a highlight brush
+                # 2. Add the item to our animation list.
+                items_to_animate.append(ell)
+            else:
+                # Reset non-highlighted nodes
+                ell.setPen(pg.mkPen(col))
+                ell.setBrush(pg.mkBrush(col))
+
+        # Now, start the animation on the collected items
+        if items_to_animate:
+            self._animating_items = items_to_animate
+            self._anim_step_count = self._highlight_anim_steps
+            self._highlight_timer.start()
+
+        self._selected_nodes = {(e, i) for i in idxs for e in self.session.image_mapping.get(i, [])}
+        self._update_selected_overlay()
+
+    
 
     def _on_hyperedge_modified(self, name: str):
         if not self.session:

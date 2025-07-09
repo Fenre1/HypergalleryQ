@@ -180,7 +180,8 @@ class ImageGridDock(QDockWidget):
 
         self.view.doubleClicked.connect(self._on_double_clicked)
 
-        self.bus.imagesChanged.connect(self.update_images)
+        self._ignore_bus_images = False
+        self.bus.imagesChanged.connect(self._on_bus_images)
         self.bus.edgesChanged.connect(self._remember_edges)
 
 
@@ -226,6 +227,7 @@ class ImageGridDock(QDockWidget):
             use_full_images=self.use_full_images,
         )
         self.view.setModel(model)
+        self.view.selectionModel().selectionChanged.connect(self._on_selection_changed)
 
     def _remember_edges(self, names: list[str]):
         self._selected_edges = names
@@ -248,6 +250,21 @@ class ImageGridDock(QDockWidget):
             return
         img_idx = model._indexes[row]
         show_image_metadata(self.session, img_idx, self)
+
+    def _on_selection_changed(self, *_):
+        model = self.view.model()
+        if not isinstance(model, ImageListModel):
+            return
+        sel = self.view.selectionModel().selectedRows()
+        idxs = [model._indexes[i.row()] for i in sel]
+        self._ignore_bus_images = True
+        self.bus.set_images(sorted(set(idxs)))
+
+    def _on_bus_images(self, idxs: list[int]):
+        if self._ignore_bus_images:
+            self._ignore_bus_images = False
+            return
+        self.update_images(idxs)
 
             # ------------------------------------------------------------------
     def show_overview(self, triplets: dict[str, tuple[int | None, ...]], session: SessionModel):
