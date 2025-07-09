@@ -274,11 +274,28 @@ class ImageGridDock(QDockWidget):
             for pos, idx in enumerate(imgs[:6]):
                 container = top if pos < 3 else bottom
                 lbl_img = QLabel()
+                lbl_img.setFixedSize(self.thumb_size, self.thumb_size)
                 if idx is not None:
                     pix = QPixmap(session.im_list[idx])
                     if not pix.isNull():
-                        pix = pix.scaled(self.thumb_size, self.thumb_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                        pix = pix.scaled(
+                            self.thumb_size,
+                            self.thumb_size,
+                            Qt.KeepAspectRatio,
+                            Qt.SmoothTransformation,
+                        )
                     lbl_img.setPixmap(pix)
+
+                style = ""
+                if pos < 3:
+                    style = "background-color: #ccffcc; border: 2px solid green;"
+                elif pos < 5:
+                    style = "background-color: orange;"
+                elif pos == 5:
+                    style = "background-color: red;"
+                if style:
+                    lbl_img.setStyleSheet(style)
+
                 container.addWidget(lbl_img)
             v.addLayout(top)
             v.addLayout(bottom)
