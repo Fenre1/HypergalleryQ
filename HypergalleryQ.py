@@ -1108,11 +1108,13 @@ class MainWin(QMainWindow):
         self._skip_reset_timer.start(100)
 
     def _on_item_changed(self, item: QStandardItem):
-        if item.column() != 0 or item.hasChildren(): return
+        if item.column() != 0 or item.hasChildren(): 
+            return
         parent = item.parent()
         old_name, new_name = item.data(Qt.UserRole), item.text().strip()
         self.model.rename_edge(old_name, new_name)
-        if parent is not None: self._update_group_similarity(parent)
+        if parent is not None: 
+            self._update_group_similarity(parent)
 
     def _invalidate_similarity_column(self, name_item: QStandardItem):
         row = name_item.row()
@@ -1120,7 +1122,9 @@ class MainWin(QMainWindow):
         sim_item.setData(None, Qt.UserRole); sim_item.setData("", Qt.DisplayRole)
 
     def _update_bus_images(self, names: list[str]):
-        if not self.model: self.bus.set_images([]); return
+        if not self.model: 
+            self.bus.set_images([])
+            return
         idxs = set().union(*(self.model.hyperedges.get(n, set()) for n in names))
         self.bus.set_images(sorted(idxs))
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PyQt5.QtWidgets import (
     QListView, QDockWidget, QWidget, QLabel, QGridLayout, QHBoxLayout,
-    QVBoxLayout, QFrame, QScrollArea
+    QVBoxLayout, QFrame, QScrollArea, QCheckBox
 )
 from PyQt5.QtGui import QPixmap, QIcon, QImage, QPainter, QPen, QColor
 from PyQt5.QtCore import (
@@ -65,13 +65,20 @@ class ImageListModel(QAbstractListModel):
 
     requestThumb = Signal(int)              # idx → worker
 
-    def __init__(self, session: SessionModel, idxs: list[int], thumb_size: int = 128, parent=None, highlight: list[int] | None = None, use_full_images: bool = False):
+    def __init__(self, session: SessionModel, idxs: list[int], thumb_size: int = 128, parent=None,
+                 highlight: dict[int, QColor] | list[int] | set[int] | None = None,
+                 use_full_images: bool = False):
         super().__init__(parent)
         self._session = session
         self._indexes = idxs
         self._thumb = thumb_size
         self._preload = 64
-        self._highlight = set(highlight or [])
+        if isinstance(highlight, dict):
+            self._highlight = highlight
+        elif highlight:
+            self._highlight = {i: QColor("red") for i in highlight}
+        else:
+            self._highlight = {}
         self._use_full = use_full_images
 
         self._pixmaps: dict[int, QPixmap] = {}
@@ -107,8 +114,9 @@ class ImageListModel(QAbstractListModel):
             if pix is None:
                 self._request_range(index.row())
                 pix = self._placeholder
-            if idx in self._highlight:
-                pix = self._add_border(pix)
+            color = self._highlight.get(idx)
+            if color:
+                pix = self._add_border(pix, color)
             return QIcon(pix)
         return None
 
@@ -173,8 +181,24 @@ class ImageGridDock(QDockWidget):
         self.view.setLayoutMode(QListView.Batched)
         self.view.setBatchSize(64)
 
+        self.hide_selected_cb = QCheckBox("Hide selected-edge images")
+        self.hide_modified_cb = QCheckBox("Hide modified-edge images")
+        self.hide_selected_cb.toggled.connect(lambda *_: self.update_images(self._current_indices, sort=False))
+        self.hide_modified_cb.toggled.connect(lambda *_: self.update_images(self._current_indices, sort=False))
+
+        container = QWidget()
+        lay = QVBoxLayout(container)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.hide_selected_cb)
+        lay.addWidget(self.hide_modified_cb)
+        lay.addWidget(self.view)
+
+        self._container = container
+
         self._overview_widget: QScrollArea | None = None
         self._mode = "grid"  # or "overview"
+
+        self.setWidget(self._container)
 
         self.setWidget(self.view)
 
@@ -217,13 +241,42 @@ class ImageGridDock(QDockWidget):
                 sims = SIM_METRIC(ref.reshape(1, -1), feats)[0]
                 idxs = [i for _, i in sorted(zip(sims, idxs), reverse=True)]
 
-        self._current_indices = list(idxs)
+        # determine highlight colors
+        highlight_map: dict[int, QColor] = {}
+        if highlight:
+            for idx in highlight:
+                highlight_map[idx] = QColor("red")
+
+        if self.session and self._selected_edges:
+            selected_imgs = set().union(*(self.session.hyperedges.get(e, set()) for e in self._selected_edges))
+        else:
+            selected_imgs = set()
+        modified_status = {"Modified", "Renamed", "Renamed and modified"}
+        modified_edges = [e for e, meta in self.session.status_map.items() if meta.get("status") in modified_status]
+        modified_imgs = set().union(*(self.session.hyperedges.get(e, set()) for e in modified_edges)) - selected_imgs
+
+        hide_selected = getattr(self, "hide_selected_cb", None)
+        hide_modified = getattr(self, "hide_modified_cb", None)
+
+        filtered = []
+        for idx in idxs:
+            if idx in selected_imgs:
+                highlight_map.setdefault(idx, QColor("green"))
+                if hide_selected and hide_selected.isChecked():
+                    continue
+            elif idx in modified_imgs:
+                highlight_map.setdefault(idx, QColor("orange"))
+                if hide_modified and hide_modified.isChecked():
+                    continue
+            filtered.append(idx)
+
+        self._current_indices = list(filtered)
         model = ImageListModel(
             self.session,
-            idxs,
+            filtered,
             self.thumb_size,
             self,
-            highlight=highlight,
+            highlight=highlight_map,
             use_full_images=self.use_full_images,
         )
         self.view.setModel(model)
@@ -335,7 +388,7 @@ class ImageGridDock(QDockWidget):
     def show_grid(self):
         if self._mode != "grid":
             self._mode = "grid"
-            self.setWidget(self.view)
+            self.setWidget(self._container)
             if self._overview_widget is not None:
                 self._overview_widget.deleteLater()
                 self._overview_widget = None
