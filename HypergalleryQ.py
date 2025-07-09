@@ -28,7 +28,7 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox,
     QAbstractItemView,
     QLineEdit,
-)
+) 
 from PyQt5.QtGui import (
     QStandardItem,
     QStandardItemModel,
