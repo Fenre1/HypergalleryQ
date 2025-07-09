@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (
 )
 from matplotlib.path import Path as MplPath
 import math
+
 from .selection_bus import SelectionBus
 from .session_model import SessionModel
 from .similarity import SIM_METRIC       # kept for non‑cosine fallback
@@ -52,6 +53,8 @@ def _resolve_overlaps(positions: np.ndarray, radii: np.ndarray,
                                         iterations, strength)
 
     return pos_out32.astype(positions.dtype, copy=False)
+
+
 
 class _RecalcWorker(QtCore.QObject):
     imageEmbeddingReady = Signal(str, dict)
@@ -257,7 +260,6 @@ class SpatialViewQDock(QDockWidget):
         super().__init__("Hyperedge View", parent)
         self.bus = bus
 
-
         self._highlight_anim_duration = 1000  # ms (1 second)
         self._highlight_anim_steps = 20
         
@@ -267,8 +269,6 @@ class SpatialViewQDock(QDockWidget):
         
         self._animating_items = []
         self._anim_step_count = 0
-
-
         # runtime
         self.session: SessionModel | None = None
         self.fa2_layout: SimpleNamespace | None = None
@@ -329,35 +329,6 @@ class SpatialViewQDock(QDockWidget):
         # Bus connections
         self.bus.edgesChanged.connect(self._on_edges)
         self.bus.imagesChanged.connect(self._on_images)
-
-      
-    def _update_highlight_animation(self):
-        if self._anim_step_count <= 0 or not self._animating_items:
-            self._highlight_timer.stop()
-            self._animating_items = []
-            return
-
-        # Calculate progress (from 0.0 to 1.0) over the animation duration
-        progress = (self._highlight_anim_steps - self._anim_step_count) / self._highlight_anim_steps
-        
-        # Use a sine wave for a smooth pulse up and down: sin(pi * x)
-        pulse_factor = math.sin(math.pi * progress)
-        
-        # Define the pulse range
-        base_width = 8
-        peak_width = 20
-        current_width = base_width + (peak_width - base_width) * pulse_factor
-        
-        # Use a solid line for the animation; it looks cleaner
-        anim_pen = pg.mkPen('w', width=current_width, style=Qt.SolidLine)
-
-        for item in self._animating_items:
-            item.setPen(anim_pen)
-
-        self._anim_step_count -= 1
-
-    
-
 
     def eventFilter(self, obj, event: QEvent) -> bool:
         # For resizing the minimap
@@ -616,7 +587,33 @@ class SpatialViewQDock(QDockWidget):
         html = f'<img src="{url}" width="{THUMB_SIZE}" height="{THUMB_SIZE}">'
         self.tooltip_manager.show(screen_pos, html)
 
+      
+    def _update_highlight_animation(self):
+        if self._anim_step_count <= 0 or not self._animating_items:
+            self._highlight_timer.stop()
+            self._animating_items = []
+            return
 
+        # Calculate progress (from 0.0 to 1.0) over the animation duration
+        progress = (self._highlight_anim_steps - self._anim_step_count) / self._highlight_anim_steps
+        
+        # Use a sine wave for a smooth pulse up and down: sin(pi * x)
+        pulse_factor = math.sin(math.pi * progress)
+        
+        # Define the pulse range
+        base_width = 8
+        peak_width = 20
+        current_width = base_width + (peak_width - base_width) * pulse_factor
+        
+        # Use a solid line for the animation; it looks cleaner
+        anim_pen = pg.mkPen('w', width=current_width, style=Qt.SolidLine)
+
+        for item in self._animating_items:
+            item.setPen(anim_pen)
+
+        self._anim_step_count -= 1
+
+    
     # ============================================================================ #
     # Other methods (unchanged)                                                    #
     # ============================================================================ #
@@ -818,28 +815,25 @@ class SpatialViewQDock(QDockWidget):
         # Stop any previous animation cleanly
         if self._highlight_timer.isActive():
             self._highlight_timer.stop()
-            # Restore the pen on previously animating items before starting a new one
             for item in self._animating_items:
-                # This assumes you have a way to know its original/final pen
-                # The logic below handles this cleanly anyway
                 pass
             self._animating_items = []
 
-
         edges_to_highlight = {e for i in idxs for e in self.session.image_mapping.get(i, [])}
-        
-        # The final, static highlight pen
-        final_pen = pg.mkPen('w', width=8, style=Qt.DashLine)
-        
+
+        # Create a pen that will scale with the view
+        final_pen = QPen(pg.mkColor('w'))
+        final_pen.setWidthF(0.2)  # Using setWidthF for floating-point precision
+        final_pen.setCosmetic(False)  # This makes the pen scale with zoom
+        final_pen.setStyle(Qt.DashLine)
+
         items_to_animate = []
         for name, ell in self.hyperedgeItems.items():
             col = self.color_map.get(name, '#AAAAAA')
             if name in edges_to_highlight:
-                # --- This is the key change ---
-                # 1. Set the FINAL style immediately.
-                ell.setPen(final_pen) 
-                ell.setBrush(pg.mkBrush(col)) # Or a highlight brush
-                # 2. Add the item to our animation list.
+                # Set the FINAL style immediately
+                ell.setPen(final_pen)
+                ell.setBrush(pg.mkBrush(col))
                 items_to_animate.append(ell)
             else:
                 # Reset non-highlighted nodes
@@ -854,6 +848,7 @@ class SpatialViewQDock(QDockWidget):
 
         self._selected_nodes = {(e, i) for i in idxs for e in self.session.image_mapping.get(i, [])}
         self._update_selected_overlay()
+
 
     
 
