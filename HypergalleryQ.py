@@ -1108,12 +1108,15 @@ class MainWin(QMainWindow):
         self._skip_reset_timer.start(100)
 
     def _on_item_changed(self, item: QStandardItem):
-        if item.column() != 0 or item.hasChildren(): 
+        if item.column() != 0 or item.hasChildren():
             return
         parent = item.parent()
         old_name, new_name = item.data(Qt.UserRole), item.text().strip()
-        self.model.rename_edge(old_name, new_name)
-        if parent is not None: 
+        if not self.model.rename_edge(old_name, new_name):
+            item.setText(old_name)
+            return
+        item.setData(new_name, Qt.UserRole)
+        if parent is not None:
             self._update_group_similarity(parent)
 
     def _invalidate_similarity_column(self, name_item: QStandardItem):

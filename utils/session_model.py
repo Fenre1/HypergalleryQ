@@ -287,6 +287,8 @@ class SessionModel(QObject):
         self.overview_triplets = None
         self.edgeRenamed.emit(old, new)
         self.similarityDirty.emit()
+        self.layoutChanged.emit()
+        self.hyperedgeModified.emit(new)
         
         return True
 
@@ -372,7 +374,7 @@ class SessionModel(QObject):
             else:
                 self.hyperedge_avg_features[edge] = np.zeros(self.features.shape[1])
             self._update_edit_status(edge, modified=True)
-            
+
         if changed:
             self.overview_triplets = None
             self.layoutChanged.emit()
