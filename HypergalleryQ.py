@@ -37,7 +37,14 @@ from PyQt5.QtGui import (
     QIcon,
     QPixmap,
 )
-from PyQt5.QtCore import Qt, QSignalBlocker, QObject, pyqtSignal as Signal, QTimer
+from PyQt5.QtCore import (
+    Qt,
+    QSignalBlocker,
+    QObject,
+    pyqtSignal as Signal,
+    QTimer,
+    QSortFilterProxyModel,
+)
 
 from utils.data_loader import (
     DATA_DIRECTORY, get_h5_files_in_directory, load_session_data
@@ -199,6 +206,22 @@ class HyperEdgeTree(QTreeView):
                  for idx in self.selectionModel().selectedRows(0)]
         self.bus.set_edges(names)
 
+
+class TreeFilterProxyModel(QSortFilterProxyModel):
+    """Proxy model to filter hyperedge tree items."""
+
+    def filterAcceptsRow(self, source_row: int, source_parent) -> bool:  # type: ignore[override]
+        if super().filterAcceptsRow(source_row, source_parent):
+            return True
+
+        model = self.sourceModel()
+        index = model.index(source_row, 0, source_parent)
+        for r in range(model.rowCount(index)):
+            if self.filterAcceptsRow(r, index):
+                return True
+        return False
+
+
 # ---------- Qt helpers -----------------------------------------------------
 def _make_item(text: str = "", value=None, editable: bool = False):
     it = QStandardItem(text)
@@ -338,6 +361,20 @@ def build_row_data(groups, model):
 
 
 class MainWin(QMainWindow):
+    def _source_model(self):
+        model = self.tree.model()
+        return model.sourceModel() if isinstance(model, QSortFilterProxyModel) else model
+
+    def _source_index(self, index):
+        model = self.tree.model()
+        return model.mapToSource(index) if isinstance(model, QSortFilterProxyModel) else index
+
+    def _item_from_index(self, index):
+        src_model = self._source_model()
+        src_index = self._source_index(index)
+        return src_model.itemFromIndex(src_index)
+
+
     def _vector_for(self, name: str) -> np.ndarray | None:
         avg = self.model.hyperedge_avg_features
         if name in avg:
@@ -374,9 +411,14 @@ class MainWin(QMainWindow):
         }
 
         model = self.tree.model()
-        self._update_similarity_items(model.invisibleRootItem(), sim_map)
-        self._update_intersection_items(model.invisibleRootItem(), inter_map)
-        model.sort(SIM_COL, Qt.DescendingOrder)
+        root = (
+            model.sourceModel().invisibleRootItem()
+            if isinstance(model, QSortFilterProxyModel)
+            else model.invisibleRootItem()
+        )
+        self._update_similarity_items(root, sim_map)
+        self._update_intersection_items(root, inter_map)
+        self._source_model().sort(SIM_COL, Qt.DescendingOrder)
 
     def _update_similarity_items(self, parent: QStandardItem, sim_map):
         for r in range(parent.rowCount()):
@@ -449,8 +491,22 @@ class MainWin(QMainWindow):
 
         # --- List Tree ---
         self.tree = HyperEdgeTree(self.bus)
+        self.tree_proxy = TreeFilterProxyModel(self)
+        self.tree_proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
+        self.tree_proxy.setFilterKeyColumn(0)
+
+        self.tree_filter = QLineEdit()
+        self.tree_filter.setPlaceholderText("Filter hyperedges…")
+        self.tree_filter.textChanged.connect(self.tree_proxy.setFilterFixedString)
+
+        tree_container = QWidget()
+        tree_layout = QVBoxLayout(tree_container)
+        tree_layout.setContentsMargins(0, 0, 0, 0)
+        tree_layout.addWidget(self.tree_filter)
+        tree_layout.addWidget(self.tree)
+
         self.tree_dock = QDockWidget("List tree", self)
-        self.tree_dock.setWidget(self.tree)
+        self.tree_dock.setWidget(tree_container)
 
         # --- Buttons / Tools Dock ---
         self.toolbar_dock = QDockWidget("Buttons", self)
@@ -628,7 +684,7 @@ class MainWin(QMainWindow):
             QMessageBox.information(self, "No Selection", "Select a hyperedge in the tree first.")
             return
 
-        item = model.itemFromIndex(sel[0])
+        item = self._item_from_index(sel[0])
         if item.hasChildren():
             QMessageBox.information(self, "Invalid Selection", "Please select a single hyperedge, not a group.")
             return
@@ -712,7 +768,7 @@ class MainWin(QMainWindow):
             QMessageBox.information(self, "No Selection", "Select a hyperedge in the tree first.")
             return
 
-        item = model.itemFromIndex(sel[0])
+        item = self._item_from_index(sel[0])
         if item.hasChildren():
             QMessageBox.information(self, "Invalid Selection", "Please select a single hyperedge, not a group.")
             return
@@ -1088,7 +1144,8 @@ class MainWin(QMainWindow):
         ]
         model = build_qmodel(rows, headers)
         model.itemChanged.connect(self._on_item_changed)
-        self.tree.setModel(model)
+        self.tree_proxy.setSourceModel(model)
+        self.tree.setModel(self.tree_proxy)
         self.tree.selectionModel().selectionChanged.connect(self.tree._send_bus_update)
         self.tree.expandAll()
 
