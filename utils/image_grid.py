@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QPixmap, QIcon, QImage, QPainter, QPen, QColor
 from PyQt5.QtCore import (
     Qt, QAbstractListModel, QModelIndex, QSize, QObject, QThread,
-    pyqtSignal as Signal, QEvent
+    pyqtSignal as Signal, QEvent, QTimer
 )
 from pathlib import Path
 
@@ -193,6 +193,14 @@ class ImageGridDock(QDockWidget):
         self.cluster_slider.setValue(0)  # start at finest
         self.cluster_slider_label_fine = QLabel("Fine")
         self.cluster_slider_label_coarse = QLabel("Coarse")
+
+        self._cluster_timer = QTimer(self)
+        self._cluster_timer.setInterval(500)
+        self._cluster_timer.setSingleShot(True)
+        self._cluster_timer.timeout.connect(self._on_cluster_slider)
+        self.cluster_slider.valueChanged.connect(
+            lambda *_: self._cluster_timer.start(500)
+        )
 
 
         self.hide_selected_cb = QCheckBox("Hide selected-edge images")
