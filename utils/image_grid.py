@@ -189,8 +189,6 @@ class ImageGridDock(QDockWidget):
         container = QWidget()
         lay = QVBoxLayout(container)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.addWidget(self.hide_selected_cb)
-        lay.addWidget(self.hide_modified_cb)
         lay.addWidget(self.view)
 
         self._container = container
@@ -200,7 +198,7 @@ class ImageGridDock(QDockWidget):
 
         self.setWidget(self._container)
 
-        self.setWidget(self.view)
+        # self.setWidget(self.view)
 
         self.view.doubleClicked.connect(self._on_double_clicked)
 
@@ -223,7 +221,13 @@ class ImageGridDock(QDockWidget):
         self.update_images([])
 
     # ------------------------------------------------------------------
-    def update_images(self, idxs: list[int], highlight: list[int] | None = None, sort: bool = True):
+    def update_images(
+        self,
+        idxs: list[int],
+        highlight: list[int] | None = None,
+        sort: bool = True,
+        query: bool = False,
+    ) -> None:
         if self.session is None:
             self.view.setModel(None)
             return
@@ -242,21 +246,35 @@ class ImageGridDock(QDockWidget):
                 idxs = [i for _, i in sorted(zip(sims, idxs), reverse=True)]
 
         # determine highlight colors
+        is_query = bool(highlight) or query
         highlight_map: dict[int, QColor] = {}
         if highlight:
             for idx in highlight:
                 highlight_map[idx] = QColor("red")
 
-        if self.session and self._selected_edges:
-            selected_imgs = set().union(*(self.session.hyperedges.get(e, set()) for e in self._selected_edges))
+        if is_query:
+            if self.session and self._selected_edges:
+                selected_imgs = set().union(
+                    *(self.session.hyperedges.get(e, set()) for e in self._selected_edges)
+                )
+            else:
+                selected_imgs = set()
+            modified_status = {"Modified", "Renamed", "Renamed and modified"}
+            modified_edges = [
+                e
+                for e, meta in self.session.status_map.items()
+                if meta.get("status") in modified_status
+            ]
+            modified_imgs = set().union(
+                *(self.session.hyperedges.get(e, set()) for e in modified_edges)
+            ) - selected_imgs
+
+            hide_selected = getattr(self, "hide_selected_cb", None)
+            hide_modified = getattr(self, "hide_modified_cb", None)
         else:
             selected_imgs = set()
-        modified_status = {"Modified", "Renamed", "Renamed and modified"}
-        modified_edges = [e for e, meta in self.session.status_map.items() if meta.get("status") in modified_status]
-        modified_imgs = set().union(*(self.session.hyperedges.get(e, set()) for e in modified_edges)) - selected_imgs
-
-        hide_selected = getattr(self, "hide_selected_cb", None)
-        hide_modified = getattr(self, "hide_modified_cb", None)
+            modified_imgs = set()
+            hide_selected = hide_modified = None
 
         filtered = []
         for idx in idxs:
@@ -281,6 +299,7 @@ class ImageGridDock(QDockWidget):
         )
         self.view.setModel(model)
         self.view.selectionModel().selectionChanged.connect(self._on_selection_changed)
+
 
     def _remember_edges(self, names: list[str]):
         self._selected_edges = names

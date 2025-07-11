@@ -173,7 +173,7 @@ class ImageMetadataDialog(QDialog):
         while win and not hasattr(win, "image_grid"):
             win = win.parent()
         if win and hasattr(win, "image_grid"):
-            win.image_grid.update_images(list(ranked), sort=False)
+            win.image_grid.update_images(list(ranked), sort=False, query=True)
 
 
 def show_image_metadata(session, idx: int, parent=None):

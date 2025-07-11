@@ -61,6 +61,13 @@ class SessionModel(QObject):
                 thumbnail_data = [p.decode("utf-8") if isinstance(p, bytes) else str(p)
                                   for p in hdf["thumbnail_relative_paths"][:]]
 
+            metadata_df: pd.DataFrame | None = None
+            if "metadata" in hdf:
+                meta_json = hdf["metadata"][()]
+                if isinstance(meta_json, bytes):
+                    meta_json = meta_json.decode("utf-8")
+                metadata_df = pd.read_json(meta_json, orient="table")
+
         return cls(
             im_list,
             df_edges,
@@ -72,6 +79,7 @@ class SessionModel(QObject):
             thumbnail_data=thumbnail_data,
             thumbnails_are_embedded=thumbnails_embedded,
             edge_origins=edge_orig,
+            metadata=metadata_df,
         )
 
     def save_h5(self, path: Path | None = None) -> None:
@@ -113,6 +121,9 @@ class SessionModel(QObject):
                     grp.create_dataset(edge, data=arr, dtype="f4")
             hdf.attrs["thumbnails_are_embedded"] = self.thumbnails_are_embedded
 
+            meta_json = self.metadata.to_json(orient="table")
+            hdf.create_dataset("metadata", data=np.string_(meta_json), dtype=dt)
+
             if self.thumbnail_data:
                 if self.thumbnails_are_embedded:
                     dt_vlen = h5py.vlen_dtype(np.uint8)
@@ -139,7 +150,8 @@ class SessionModel(QObject):
                  image_umap: Optional[Dict[str, Dict[int, np.ndarray]]] = None,
                  thumbnail_data: Optional[List[bytes] | List[str]] = None,
                  thumbnails_are_embedded: bool = True,
-                 edge_origins: Optional[List[str]] | None = None):
+                 edge_origins: Optional[List[str]] | None = None,
+                 metadata: pd.DataFrame | None = None):
         super().__init__()
         self.im_list  = im_list                              # list[str]
         self.cat_list = list(df_edges.columns)               # list[str]
@@ -153,8 +165,8 @@ class SessionModel(QObject):
         self.edge_origins = edge_origins or {name: "swin" for name in self.cat_list}
 
                 # Collect EXIF metadata for all images
-        self.metadata = self._extract_image_metadata(im_list)
-
+        self.metadata = metadata if metadata is not None else self._extract_image_metadata(im_list)
+        
         self.status_map = {n: {"uuid": str(uuid.uuid4()), "status": "Original"}
                            for n in self.cat_list}
         cmap_hues = max(len(self.cat_list), 16)

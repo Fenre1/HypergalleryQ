@@ -566,11 +566,15 @@ class MainWin(QMainWindow):
         toolbar_layout.addWidget(self.text_query)
         toolbar_layout.addWidget(self.btn_rank_text)
 
+
+        self.image_grid = ImageGridDock(self.bus, self)
+        toolbar_layout.addWidget(self.image_grid.hide_selected_cb)
+        toolbar_layout.addWidget(self.image_grid.hide_modified_cb)
+
         toolbar_layout.addStretch()
         self.toolbar_dock.setWidget(toolbar_container)
 
         # --- Image Grid ---
-        self.image_grid = ImageGridDock(self.bus, self)
         self.image_grid.setObjectName("ImageGridDock") # Use object name for clarity
         self.image_grid.labelDoubleClicked.connect(lambda name: self.bus.set_edges([name]))
         # --- Spatial View ---
@@ -754,7 +758,9 @@ class MainWin(QMainWindow):
         ranked = np.argsort(sims)[::-1]
         ranked = [i for i in ranked if i not in sel_idxs][:500]
         final_idxs = sel_idxs + ranked
-        self.image_grid.update_images(final_idxs, highlight=sel_idxs, sort=False)
+        self.image_grid.update_images(
+            final_idxs, highlight=sel_idxs, sort=False, query=True
+        )
 
     def rank_selected_hyperedge(self):
         """Rank all images by similarity to the selected hyperedge."""
@@ -784,8 +790,7 @@ class MainWin(QMainWindow):
         ranked = np.argsort(sims)[::-1]
         exclude = self.model.hyperedges[name]
         ranked = [i for i in ranked if i not in exclude][:500]
-        self.image_grid.update_images(ranked, sort=False)
-
+        self.image_grid.update_images(ranked, sort=False, query=True)
 
     def rank_image_file(self):
         """Rank all session images against a user chosen image file."""
@@ -813,7 +818,7 @@ class MainWin(QMainWindow):
         feats = self.model.features
         sims = SIM_METRIC(vec.reshape(1, -1), feats)[0]
         ranked = np.argsort(sims)[::-1][:500]
-        self.image_grid.update_images(list(ranked), sort=False)
+        self.image_grid.update_images(list(ranked), sort=False, query=True)
 
     def rank_clipboard_image(self):
         """Rank images by similarity to the image currently in the clipboard."""
@@ -850,8 +855,7 @@ class MainWin(QMainWindow):
         feats = self.model.features
         sims = SIM_METRIC(feat.reshape(1, -1), feats)[0]
         ranked = np.argsort(sims)[::-1][:500]
-        self.image_grid.update_images(ranked, sort=False)
-
+        self.image_grid.update_images(ranked, sort=False, query=True)
 
     def rank_text_query(self):
         """Rank images by similarity to a text query using OpenCLIP."""
@@ -871,7 +875,7 @@ class MainWin(QMainWindow):
         feats = self.model.openclip_features
         sims = SIM_METRIC(vec.reshape(1, -1), feats)[0]
         ranked = np.argsort(sims)[::-1][:500]
-        self.image_grid.update_images(list(ranked), sort=False)
+        self.image_grid.update_images(list(ranked), sort=False, query=True)
 
     def show_overview(self):
         """Display triplet overview on the image grid."""
