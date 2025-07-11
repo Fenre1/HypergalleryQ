@@ -1207,10 +1207,16 @@ class MainWin(QMainWindow):
         sim_item.setData(None, Qt.UserRole); sim_item.setData("", Qt.DisplayRole)
 
     def _update_bus_images(self, names: list[str]):
-        if not self.model: 
+        if not self.model:
             self.bus.set_images([])
             return
-        idxs = set().union(*(self.model.hyperedges.get(n, set()) for n in names))
+        idxs = set()
+        for name in names:
+            if name in self.model.hyperedges:
+                idxs.update(self.model.hyperedges.get(name, set()))
+            elif hasattr(self, "groups") and name in self.groups:
+                for child in self.groups[name]:
+                    idxs.update(self.model.hyperedges.get(child, set()))
         self.bus.set_images(sorted(idxs))
 
     def regroup(self):
@@ -1236,7 +1242,7 @@ class MainWin(QMainWindow):
         self.tree_proxy.setSourceModel(model)
         self.tree.setModel(self.tree_proxy)
         self.tree.selectionModel().selectionChanged.connect(self.tree._send_bus_update)
-        self.tree.expandAll()
+        self.tree.collapseAll()
 
         if hasattr(self, 'matrix_dock'): 
             self.matrix_dock.update_matrix()
