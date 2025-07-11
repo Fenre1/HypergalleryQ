@@ -57,6 +57,7 @@ from utils.hyperedge_matrix2 import HyperedgeMatrixDock
 from utils.spatial_viewQv4 import SpatialViewQDock
 from utils.feature_extraction import Swinv2LargeFeatureExtractor, OpenClipFeatureExtractor
 from utils.file_utils import get_image_files
+from utils.metadata_overview import show_metadata_overview
 from clustering.temi_clustering import temi_cluster
 
 try:
@@ -552,6 +553,8 @@ class MainWin(QMainWindow):
         self.btn_rank_text = QPushButton("Rank by text")
         self.btn_rank_text.clicked.connect(self.rank_text_query)
 
+        self.btn_meta_overview = QPushButton("Metadata overview")
+        self.btn_meta_overview.clicked.connect(self.show_metadata_overview)
 
         toolbar_layout.addWidget(self.btn_sim)
         toolbar_layout.addWidget(self.btn_add_hyperedge)
@@ -565,6 +568,7 @@ class MainWin(QMainWindow):
         toolbar_layout.addWidget(self.btn_overview)
         toolbar_layout.addWidget(self.text_query)
         toolbar_layout.addWidget(self.btn_rank_text)
+        toolbar_layout.addWidget(self.btn_meta_overview)
 
 
         self.image_grid = ImageGridDock(self.bus, self)
@@ -886,7 +890,12 @@ class MainWin(QMainWindow):
             self._overview_triplets = self._compute_overview_triplets()
         self.image_grid.show_overview(self._overview_triplets, self.model)
 
-
+    def show_metadata_overview(self):
+        """Show a summary of all metadata in a popup window."""
+        if not self.model:
+            QMessageBox.warning(self, "No Session", "Please load a session first.")
+            return
+        show_metadata_overview(self.model, self)
     # ------------------------------------------------------------------
 
 
