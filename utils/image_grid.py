@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from PyQt5.QtWidgets import (
     QListView, QDockWidget, QWidget, QLabel, QGridLayout, QHBoxLayout,
-    QVBoxLayout, QFrame, QScrollArea, QCheckBox, QSlider
+    QVBoxLayout, QFrame, QScrollArea, QCheckBox, QSlider, QApplication, 
+    QStyledItemDelegate
 )
 from PyQt5.QtGui import QPixmap, QIcon, QImage, QPainter, QPen, QColor
 from PyQt5.QtCore import (
     Qt, QAbstractListModel, QModelIndex, QSize, QObject, QThread,
-    pyqtSignal as Signal, QEvent, QTimer
+    pyqtSignal as Signal, QEvent, QTimer, QRect
 )
 from pathlib import Path
 
@@ -18,6 +19,79 @@ from .image_popup import show_image_metadata
 
 from sklearn.cluster import AgglomerativeClustering
 import numpy as np
+
+
+class _ClusterDelegate(QStyledItemDelegate):
+    """
+    Paints a small ⊞/⊟ button on the representative image (pos==0).
+    Emits toggleRequested(index) if that button is clicked.
+    """
+
+    toggleRequested = Signal(QModelIndex)          # emitted when user clicks plus/minus
+
+    def __init__(self, row_info: list[tuple[int, int]], expanded: set[int], parent=None):
+        super().__init__(parent)
+        self._row_info = row_info                  # [(cluster_idx, position-within-cluster), ...]
+        self._expanded = expanded
+
+        self._btn_side = 14                        # pixel size of the overlay circle
+        self._btn_margin = 2                       # distance from top‑right corner
+
+    # ---------------- painting -------------------------------------------------
+    def paint(self, painter, option, index):
+        row = index.row()
+        if row >= len(self._row_info):
+            return
+        cluster_idx, pos = self._row_info[row]
+        if cluster_idx in self._expanded and pos > 0:
+            painter.fillRect(option.rect, QColor(250, 250, 240))
+        super().paint(painter, option, index)
+        if pos != 0:
+            return
+
+        r = option.rect
+        s = self._btn_side
+        btn_rect = QRect(r.right() - s - self._btn_margin,
+                         r.top()   + self._btn_margin,
+                         s, s)
+
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.black)
+        painter.setBrush(Qt.white)
+        painter.drawEllipse(btn_rect)
+
+        # Draw + or – sign
+        cx, cy = btn_rect.center().x(), btn_rect.center().y()
+        painter.drawLine(btn_rect.left()+3, cy, btn_rect.right()-3, cy)
+        if cluster_idx not in self._expanded:
+            painter.drawLine(cx, btn_rect.top()+3, cx, btn_rect.bottom()-3)
+
+    # ---------------- click handling ------------------------------------------
+    def editorEvent(self, event, model, option, index):
+        if (event.type() == QEvent.MouseButtonRelease and
+                event.button() == Qt.LeftButton):
+
+            row = index.row()
+            if row >= len(self._row_info):
+                return False
+
+            cluster_idx, pos = self._row_info[row]
+            if pos != 0:                                # not a rep → nothing to toggle
+                return False
+
+            # same geometry we used in paint()
+            r = option.rect
+            s = self._btn_side
+            btn_rect = QRect(r.right() - s - self._btn_margin,
+                             r.top()   + self._btn_margin,
+                             s, s)
+            if btn_rect.contains(event.pos()):
+                self.toggleRequested.emit(index)        # swallow the event
+                return True
+
+        # otherwise let the default selection machinery run
+        return super().editorEvent(event, model, option, index)
+
 
 class _ClickableLabel(QLabel):
     """Label used for emitting a signal on double click."""
@@ -69,7 +143,8 @@ class ImageListModel(QAbstractListModel):
     def __init__(self, session: SessionModel, idxs: list[int], thumb_size: int = 128, parent=None,
                  highlight: dict[int, QColor] | list[int] | set[int] | None = None,
                  use_full_images: bool = False,
-                 labels: list[str] | None = None):
+                 labels: list[str] | None = None,
+                 separators: set[int] | None = None):
         super().__init__(parent)
         self._session = session
         self._indexes = idxs
@@ -83,6 +158,7 @@ class ImageListModel(QAbstractListModel):
             self._highlight = {}
         self._use_full = use_full_images
         self._labels = labels
+        self._separators = separators or set()
 
         self._pixmaps: dict[int, QPixmap] = {}
         self._index_map = {idx: row for row, idx in enumerate(self._indexes)}
@@ -120,6 +196,8 @@ class ImageListModel(QAbstractListModel):
             color = self._highlight.get(idx)
             if color:
                 pix = self._add_border(pix, color)
+            if index.row() in self._separators:
+                pix = self._add_vline(pix)
             return QIcon(pix)
         if role == Qt.DisplayRole and self._labels:
             if 0 <= index.row() < len(self._labels):
@@ -153,6 +231,21 @@ class ImageListModel(QAbstractListModel):
         painter.drawRect(width // 2, width // 2, pix.width() - width, pix.height() - width)
         painter.end()
         return bordered
+
+    def _add_vline(self, pix: QPixmap, color: QColor = QColor("black"), width: int = 3) -> QPixmap:
+        if pix.isNull():
+            return pix
+        lined = QPixmap(pix.size())
+        lined.fill(Qt.transparent)
+        painter = QPainter(lined)
+        painter.drawPixmap(0, 0, pix)
+        pen = QPen(color)
+        pen.setWidth(width)
+        painter.setPen(pen)
+        x = pix.width() - width // 2
+        painter.drawLine(x, 0, x, pix.height())
+        painter.end()
+        return lined
 
     def _request_range(self, row: int):
         start = max(0, row - self._preload)
@@ -223,7 +316,17 @@ class ImageGridDock(QDockWidget):
         self._container = container
 
         self._overview_widget: QScrollArea | None = None
-        self._mode = "grid"  # or "overview"
+        self._mode = "grid" 
+
+        self._cluster_source_indices: list[int] | None = None
+        self._clusters: list[tuple[int, list[int]]] = []
+        self._expanded_clusters: set[int] = set()
+        self._row_info: list[tuple[int, int]] = []
+        # self._cluster_click_connected = False
+        # self._click_timer = QTimer(self)
+        # self._click_timer.setSingleShot(True)
+        # self._click_timer.timeout.connect(self._on_cluster_click_timeout)
+        # self._pending_click_row: int | None = None
 
         self.setWidget(self._container)
 
@@ -257,6 +360,7 @@ class ImageGridDock(QDockWidget):
         sort: bool = True,
         query: bool = False,
         labels: list[str] | None = None,
+        separators: set[int] | None = None,
     ) -> None:
         if self.session is None:
             self.view.setModel(None)
@@ -327,9 +431,17 @@ class ImageGridDock(QDockWidget):
             highlight=highlight_map,
             use_full_images=self.use_full_images,
             labels=labels,
+            separators=separators,
         )
         self.view.setModel(model)
         self.view.selectionModel().selectionChanged.connect(self._on_selection_changed)
+
+        # if self._cluster_click_connected:
+        #     try:
+        #         self.view.clicked.disconnect(self._on_view_clicked)
+        #     except Exception:
+        #         pass
+        #     self._cluster_click_connected = False
 
 
     def _remember_edges(self, names: list[str]):
@@ -353,6 +465,7 @@ class ImageGridDock(QDockWidget):
             return
         img_idx = model._indexes[row]
         show_image_metadata(self.session, img_idx, self)
+
 
     def _on_selection_changed(self, *_):
         model = self.view.model()
@@ -386,18 +499,17 @@ class ImageGridDock(QDockWidget):
         if n == 0:
             self.update_images([])
             return
+
         slider_val = self.cluster_slider.value()
         n_clusters = max(1, int(n * (100 - slider_val) / 100))
+
+        clusters: list[tuple[int, list[int]]] = []
         if n_clusters >= n:
-            reps = idxs
-            labels = ["1" for _ in reps]
+            clusters = [(i, [i]) for i in idxs]
         else:
             feats = self.session.features[idxs]
             clust = AgglomerativeClustering(n_clusters=n_clusters, linkage="ward")
             labels_arr = clust.fit_predict(feats)
-            reps = []
-            labels = []
-            sizes = []
             for lbl in np.unique(labels_arr):
                 mask = labels_arr == lbl
                 cluster_indices = [idxs[i] for i in range(n) if mask[i]]
@@ -405,14 +517,88 @@ class ImageGridDock(QDockWidget):
                 avg = cluster_feats.mean(axis=0, keepdims=True)
                 sims = SIM_METRIC(avg, cluster_feats)[0]
                 best = cluster_indices[int(np.argmax(sims))]
-                reps.append(best)
-                labels.append(str(len(cluster_indices)))
-                sizes.append(len(cluster_indices))
-            order = np.argsort(sizes)[::-1]
-            reps = [reps[i] for i in order]
-            labels = [labels[i] for i in order]
-        self.update_images(reps, sort=False, query=False, labels=labels)
+                clusters.append((best, cluster_indices))
+            clusters.sort(key=lambda c: len(c[1]), reverse=True)
 
+        self._clusters = clusters
+        self._expanded_clusters = set()
+        self._build_cluster_view()
+
+    def _build_cluster_view(self) -> None:
+        indices: list[int] = []
+        labels: list[str] = []
+        self._row_info = []
+        for i, (rep, cluster) in enumerate(self._clusters):
+            expanded = i in self._expanded_clusters
+            if expanded:
+                for j, idx in enumerate(cluster):
+                    indices.append(idx)
+                    self._row_info.append((i, j))
+                    if j == 0:
+                        labels.append(f"{len(cluster)}-")
+                    else:
+                        labels.append("")
+            else:
+                indices.append(rep)
+                self._row_info.append((i, 0))
+                label = str(len(cluster))
+                if len(cluster) > 1:
+                    label += "+"
+                labels.append(label)
+        separators: set[int] = set()
+        row = 0
+        for i, (_, cluster) in enumerate(self._clusters):
+            if i in self._expanded_clusters and i < len(self._clusters) - 1:
+                row += len(cluster) - 1
+                separators.add(row)
+                row += 1
+            else:
+                row += 1
+        self.update_images(indices, sort=False, query=False,
+                           labels=labels, separators=separators)
+
+        delegate = _ClusterDelegate(self._row_info,
+                                    self._expanded_clusters,
+                                    self.view)
+        delegate.toggleRequested.connect(self._on_cluster_clicked)
+        self.view.setItemDelegate(delegate)
+        
+
+        # self.update_images(indices, sort=False, query=False, labels=labels, separators=separators)
+        # try:
+        #     self.view.clicked.disconnect(self._on_view_clicked)
+        # except Exception:
+        #     pass
+        # self.view.clicked.connect(self._on_view_clicked)
+        # self._cluster_click_connected = True
+
+
+    def _on_cluster_clicked(self, index: QModelIndex) -> None:
+        if not self._clusters:
+            return
+        row = index.row()
+        if row < 0 or row >= len(self._row_info):
+            return
+        cluster_idx, pos = self._row_info[row]
+        cluster = self._clusters[cluster_idx][1]
+        if len(cluster) <= 1 or pos != 0:
+            return
+        if cluster_idx in self._expanded_clusters:
+            self._expanded_clusters.remove(cluster_idx)
+        else:
+            self._expanded_clusters.add(cluster_idx)
+        self._build_cluster_view()
+
+    # def _on_view_clicked(self, index: QModelIndex) -> None:
+    #     self._pending_click_row = index.row()
+    #     self._click_timer.start(QApplication.instance().doubleClickInterval())
+
+    # def _on_cluster_click_timeout(self) -> None:
+    #     if self._pending_click_row is None:
+    #         return
+    #     model_index = self.view.model().index(self._pending_click_row)
+    #     self._on_cluster_clicked(model_index)
+    #     self._pending_click_row = None
 
             # ------------------------------------------------------------------
     def show_overview(self, triplets: dict[str, tuple[int | None, ...]], session: SessionModel):
