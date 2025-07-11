@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PyQt5.QtWidgets import (
     QListView, QDockWidget, QWidget, QLabel, QGridLayout, QHBoxLayout,
-    QVBoxLayout, QFrame, QScrollArea, QCheckBox
+    QVBoxLayout, QFrame, QScrollArea, QCheckBox, QSlider
 )
 from PyQt5.QtGui import QPixmap, QIcon, QImage, QPainter, QPen, QColor
 from PyQt5.QtCore import (
@@ -16,7 +16,8 @@ from .session_model import SessionModel
 from .similarity import SIM_METRIC
 from .image_popup import show_image_metadata
 
-
+from sklearn.cluster import AgglomerativeClustering
+import numpy as np
 
 class _ClickableLabel(QLabel):
     """Label used for emitting a signal on double click."""
@@ -67,7 +68,8 @@ class ImageListModel(QAbstractListModel):
 
     def __init__(self, session: SessionModel, idxs: list[int], thumb_size: int = 128, parent=None,
                  highlight: dict[int, QColor] | list[int] | set[int] | None = None,
-                 use_full_images: bool = False):
+                 use_full_images: bool = False,
+                 labels: list[str] | None = None):
         super().__init__(parent)
         self._session = session
         self._indexes = idxs
@@ -80,6 +82,7 @@ class ImageListModel(QAbstractListModel):
         else:
             self._highlight = {}
         self._use_full = use_full_images
+        self._labels = labels
 
         self._pixmaps: dict[int, QPixmap] = {}
         self._index_map = {idx: row for row, idx in enumerate(self._indexes)}
@@ -118,6 +121,9 @@ class ImageListModel(QAbstractListModel):
             if color:
                 pix = self._add_border(pix, color)
             return QIcon(pix)
+        if role == Qt.DisplayRole and self._labels:
+            if 0 <= index.row() < len(self._labels):
+                return self._labels[index.row()]
         return None
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlags:  # type: ignore[override]
@@ -181,6 +187,14 @@ class ImageGridDock(QDockWidget):
         self.view.setLayoutMode(QListView.Batched)
         self.view.setBatchSize(64)
 
+        self.cluster_slider = QSlider(Qt.Horizontal)
+        self.cluster_slider.setMinimum(0)
+        self.cluster_slider.setMaximum(100)
+        self.cluster_slider.setValue(0)  # start at finest
+        self.cluster_slider_label_fine = QLabel("Fine")
+        self.cluster_slider_label_coarse = QLabel("Coarse")
+
+
         self.hide_selected_cb = QCheckBox("Hide selected-edge images")
         self.hide_modified_cb = QCheckBox("Hide modified-edge images")
         self.hide_selected_cb.toggled.connect(lambda *_: self.update_images(self._current_indices, sort=False))
@@ -189,6 +203,13 @@ class ImageGridDock(QDockWidget):
         container = QWidget()
         lay = QVBoxLayout(container)
         lay.setContentsMargins(0, 0, 0, 0)
+
+        slider_row = QHBoxLayout()
+        slider_row.addWidget(self.cluster_slider_label_fine)
+        slider_row.addWidget(self.cluster_slider)
+        slider_row.addWidget(self.cluster_slider_label_coarse)
+        lay.addLayout(slider_row)
+
         lay.addWidget(self.view)
 
         self._container = container
@@ -227,6 +248,7 @@ class ImageGridDock(QDockWidget):
         highlight: list[int] | None = None,
         sort: bool = True,
         query: bool = False,
+        labels: list[str] | None = None,
     ) -> None:
         if self.session is None:
             self.view.setModel(None)
@@ -296,6 +318,7 @@ class ImageGridDock(QDockWidget):
             self,
             highlight=highlight_map,
             use_full_images=self.use_full_images,
+            labels=labels,
         )
         self.view.setModel(model)
         self.view.selectionModel().selectionChanged.connect(self._on_selection_changed)
@@ -336,7 +359,52 @@ class ImageGridDock(QDockWidget):
         if self._ignore_bus_images:
             self._ignore_bus_images = False
             return
-        self.update_images(idxs)
+        if len(self._selected_edges) == 1:
+            self._cluster_source_indices = list(idxs)
+            self._show_clusters()
+        else:
+            self._cluster_source_indices = None
+            self.update_images(idxs)
+
+    def _on_cluster_slider(self, *_):
+        if self._cluster_source_indices is not None:
+            self._show_clusters()
+
+    def _show_clusters(self):
+        if not self.session or self._cluster_source_indices is None:
+            return
+        idxs = self._cluster_source_indices
+        n = len(idxs)
+        if n == 0:
+            self.update_images([])
+            return
+        slider_val = self.cluster_slider.value()
+        n_clusters = max(1, int(n * (100 - slider_val) / 100))
+        if n_clusters >= n:
+            reps = idxs
+            labels = ["1" for _ in reps]
+        else:
+            feats = self.session.features[idxs]
+            clust = AgglomerativeClustering(n_clusters=n_clusters, linkage="ward")
+            labels_arr = clust.fit_predict(feats)
+            reps = []
+            labels = []
+            sizes = []
+            for lbl in np.unique(labels_arr):
+                mask = labels_arr == lbl
+                cluster_indices = [idxs[i] for i in range(n) if mask[i]]
+                cluster_feats = feats[mask]
+                avg = cluster_feats.mean(axis=0, keepdims=True)
+                sims = SIM_METRIC(avg, cluster_feats)[0]
+                best = cluster_indices[int(np.argmax(sims))]
+                reps.append(best)
+                labels.append(str(len(cluster_indices)))
+                sizes.append(len(cluster_indices))
+            order = np.argsort(sizes)[::-1]
+            reps = [reps[i] for i in order]
+            labels = [labels[i] for i in order]
+        self.update_images(reps, sort=False, query=False, labels=labels)
+
 
             # ------------------------------------------------------------------
     def show_overview(self, triplets: dict[str, tuple[int | None, ...]], session: SessionModel):
