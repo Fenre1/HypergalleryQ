@@ -1,5 +1,12 @@
 import pandas as pd
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QTableWidget, QTableWidgetItem, QLabel
+from PyQt5.QtWidgets import (
+    QDialog,
+    QVBoxLayout,
+    QTableWidget,
+    QTableWidgetItem,
+    QLabel,
+    QPushButton,
+)
 from PyQt5.QtCore import Qt
 
 
@@ -31,16 +38,38 @@ def _summarize_column(series: pd.Series) -> tuple[int, int, str]:
 
 
 class MetadataOverviewDialog(QDialog):
-    def __init__(self, metadata: pd.DataFrame, parent=None):
+    def __init__(self, session, parent=None):
         super().__init__(parent)
+        self._session = session
         self.setWindowTitle("Metadata Overview")
         layout = QVBoxLayout(self)
         self.table = QTableWidget()
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Item", "Valid Values", "Unique Values", "Range/Type"])
+        self.table.setHorizontalHeaderLabels([
+            "Item",
+            "Valid Values",
+            "Unique Values",
+            "Range/Type",
+        ])
         self.table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self.table)
-        self._populate(metadata)
+        self.btn_add = QPushButton("Add Hyperedges")
+        self.btn_add.clicked.connect(self._on_add)
+        layout.addWidget(self.btn_add)
+        self._populate(session.metadata)
+
+    def _on_add(self) -> None:
+        row = self.table.currentRow()
+        if row < 0:
+            return
+        item = self.table.item(row, 0)
+        if not item:
+            return
+        col = item.text()
+        parent = self.parent()
+        if parent and hasattr(parent, "add_metadata_hyperedges"):
+            parent.add_metadata_hyperedges(col)
 
     def _populate(self, metadata: pd.DataFrame) -> None:
         row = 0
@@ -57,5 +86,5 @@ class MetadataOverviewDialog(QDialog):
 
 
 def show_metadata_overview(session, parent=None):
-    dlg = MetadataOverviewDialog(session.metadata, parent=parent)
+    dlg = MetadataOverviewDialog(session, parent=parent)
     dlg.exec_()

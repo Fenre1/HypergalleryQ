@@ -7,7 +7,7 @@ from pathlib import Path
 import io
 import torch
 from PIL import Image, ImageGrab
-
+import pyqtgraph as pg
 from PyQt5.QtWidgets import (
     QApplication,
     QTreeView,
@@ -54,12 +54,12 @@ from utils.session_model import SessionModel
 from utils.image_grid import ImageGridDock
 from utils.hyperedge_matrix2 import HyperedgeMatrixDock
 # from utils.spatial_viewQv3 import SpatialViewQDock
-from utils.spatial_viewQv4 import SpatialViewQDock
+from utils.spatial_viewQv4 import SpatialViewQDock, HyperedgeItem
 from utils.feature_extraction import Swinv2LargeFeatureExtractor, OpenClipFeatureExtractor
 from utils.file_utils import get_image_files
 from utils.metadata_overview import show_metadata_overview
 from clustering.temi_clustering import temi_cluster
-
+import pyqtgraph as pg
 try:
     import darkdetect
     SYSTEM_DARK_MODE = darkdetect.isDark()
@@ -896,6 +896,75 @@ class MainWin(QMainWindow):
             QMessageBox.warning(self, "No Session", "Please load a session first.")
             return
         show_metadata_overview(self.model, self)
+
+
+    def add_metadata_hyperedges(self, column: str) -> None:
+        """Create hyperedges from a metadata column."""
+        if not self.model:
+            QMessageBox.warning(self, "No Session", "Please load a session first.")
+            return
+        if column not in self.model.metadata.columns:
+            QMessageBox.warning(self, "Unknown Metadata", f"No metadata column '{column}'.")
+            return
+
+        series = self.model.metadata[column]
+        strs = series.astype(str)
+        valid_mask = series.notna() & strs.str.strip().ne("") & ~strs.str.lower().isin(["none", "nan"])
+        if column in self.model.hyperedges:
+            QMessageBox.warning(self, "Duplicate Hyperedge", f"Hyperedge '{column}' already exists.")
+            return
+
+        self._skip_next_layout = True
+        self.model.add_empty_hyperedge(column)
+        self.model.edge_origins[column] = "Metadata"
+        self.model.edge_colors[column] = "#000000"
+        self.model.add_images_to_hyperedge(column, series[valid_mask].index.tolist())
+
+        categorical = True
+        valid_values = strs[valid_mask].tolist()
+        if valid_values:
+            try:
+                [float(v) for v in valid_values]
+                categorical = False
+            except Exception:
+                categorical = True
+        sub_edges = []
+        if categorical:
+            unique_vals = sorted({str(v) for v in strs[valid_mask]})
+            for val in unique_vals:
+                name = f"{val} {column}"
+                self.model.add_empty_hyperedge(name)
+                self.model.edge_origins[name] = "Metadata"
+                self.model.edge_colors[name] = "#808080"
+                mask = valid_mask & (strs == val)
+                self.model.add_images_to_hyperedge(name, series[mask].index.tolist())
+                sub_edges.append(name)
+
+        if hasattr(self, "spatial_dock") and self.spatial_dock.fa2_layout:
+            fa = self.spatial_dock.fa2_layout
+            pos = np.array(list(fa.positions.values()))
+            max_x = pos[:, 0].max() if pos.size else 0.0
+            max_y = pos[:, 1].max() if pos.size else 0.0
+            new_pos = np.array([max_x * 1.1, max_y])
+            all_edges = [column] + sub_edges
+            for name in all_edges:
+                size = max(np.sqrt(len(self.model.hyperedges[name])) * self.spatial_dock.NODE_SIZE_SCALER,
+                           self.spatial_dock.MIN_HYPEREDGE_DIAMETER)
+                fa.node_sizes = np.append(fa.node_sizes, size)
+                fa.names.append(name)
+                fa.positions[name] = new_pos.copy()
+                self.spatial_dock.edge_index[name] = len(fa.names) - 1
+                ell = HyperedgeItem(name, QRectF(-size/2, -size/2, size, size))
+                col = "#000000" if name == column else "#808080"
+                ell.setPen(pg.mkPen(col))
+                ell.setBrush(pg.mkBrush(col))
+                self.spatial_dock.view.addItem(ell)
+                ell.setPos(*new_pos)
+                self.spatial_dock.hyperedgeItems[name] = ell
+            self.spatial_dock._refresh_edges()
+            self.spatial_dock._update_image_layer()
+        self._skip_next_layout = False
+
     # ------------------------------------------------------------------
 
 
