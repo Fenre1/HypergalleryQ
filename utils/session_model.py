@@ -46,6 +46,7 @@ class SessionModel(QObject):
                         image_umap[edge] = {}
 
             openclip_feats = hdf["openclip_features"][()] if "openclip_features" in hdf else None
+            places365_feats = hdf["places365_features"][()] if "places365_features" in hdf else None
 
             if "edge_origins" in hdf:
                 origin_raw = hdf["edge_origins"][()]
@@ -74,6 +75,7 @@ class SessionModel(QObject):
             features,
             path,
             openclip_features=openclip_feats,
+            places365_features=places365_feats,
             umap_embedding=umap_emb,
             image_umap=image_umap,
             thumbnail_data=thumbnail_data,
@@ -112,6 +114,8 @@ class SessionModel(QObject):
             hdf.create_dataset("features", data=self.features, dtype="f4")
             if self.openclip_features is not None:
                 hdf.create_dataset("openclip_features", data=self.openclip_features, dtype="f4")
+            if self.places365_features is not None:
+                hdf.create_dataset("places365_features", data=self.places365_features, dtype="f4")                
             if self.umap_embedding is not None:
                 hdf.create_dataset("umap_embedding", data=self.umap_embedding, dtype="f4")
             if getattr(self, "image_umap", None):
@@ -146,6 +150,7 @@ class SessionModel(QObject):
                  h5_path: Path,
                  *,
                  openclip_features: np.ndarray | None = None,
+                 places365_features: np.ndarray | None = None,
                  umap_embedding: np.ndarray | None = None,
                  image_umap: Optional[Dict[str, Dict[int, np.ndarray]]] = None,
                  thumbnail_data: Optional[List[bytes] | List[str]] = None,
@@ -160,6 +165,7 @@ class SessionModel(QObject):
 
         self.features = features                             # np.ndarray (N×D)
         self.openclip_features = openclip_features
+        self.places365_features = places365_features        
         self.hyperedge_avg_features = self._calculate_hyperedge_avg_features(features)
 
         self.edge_origins = edge_origins or {name: "swin" for name in self.cat_list}
