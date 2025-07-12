@@ -7,7 +7,7 @@ from torch.utils.data import Dataset, DataLoader
 import open_clip
 #'swinv2_large_window12to24_192to384'
 class ImageFileDataset(Dataset):
-    """
+    """ 
     A PyTorch Dataset for loading and transforming images given a list of file paths.
     """
     def __init__(self, file_list, transform):
@@ -128,3 +128,99 @@ class OpenClipFeatureExtractor:
         with torch.no_grad():
             feats = self.model.encode_text(tokens)
         return feats.cpu().numpy()
+    
+
+## to incorporate and clean up
+import os
+import urllib.request
+import tarfile
+import torch
+import timm
+from pathlib import Path
+
+_PLACES_URL = (
+    "http://places2.csail.mit.edu/models_places365/resnet152_places365.pth.tar"
+)
+
+def _download_places365(checkpoint_dir: str | Path = "~/.cache/places365") -> Path:
+    """Download the official PyTorch checkpoint if it is not present."""
+    checkpoint_dir = Path(checkpoint_dir).expanduser()
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    ckpt_path = checkpoint_dir / "resnet152_places365.pth.tar"
+    if not ckpt_path.exists():
+        print("Downloading ResNet‑152 Places365 weights …")
+        urllib.request.urlretrieve(_PLACES_URL, ckpt_path)
+    return ckpt_path
+
+
+class ResNet152Places365FeatureExtractor:
+    """
+    Feature extractor that produces the 2048‑D global average‑pooled features
+    of ResNet‑152 trained on Places365.
+    Call it exactly like your other extractors.
+    """
+
+    def __init__(self, batch_size: int = 32, checkpoint_path: str | Path | None = None):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.batch_size = batch_size
+
+        # 1. Build an **architecture‑only** ResNet‑152 *without* the FC layer
+        self.model = timm.create_model("resnet152", pretrained=False, num_classes=0)
+        self.model.to(self.device)
+
+        # 2. Load Places365 weights
+        ckpt_path = (
+            Path(checkpoint_path)
+            if checkpoint_path is not None
+            else _download_places365()
+        )
+        checkpoint = torch.load(
+            ckpt_path, map_location="cpu", encoding="latin1"  # <- legacy pickle
+        )
+        state = checkpoint.get("state_dict", checkpoint)
+        # Strip `module.` that existed when DataParallel was standard
+        state = {k.replace("module.", ""): v for k, v in state.items()}
+        # Drop the original FC weights because we removed the FC layer
+        state = {k: v for k, v in state.items() if not k.startswith("fc.")}
+        missing, unexpected = self.model.load_state_dict(state, strict=False)
+        assert not unexpected, unexpected  # should be empty
+        self.model.eval()
+
+        # 3. Use the transform that MIT’s demo uses (Resize 256 → CenterCrop 224)
+        #    You can swap this for timm’s convenience factory if you like.
+        self.transform = timm.data.transforms_factory.create_transform(
+            input_size=(3, 224, 224),  # 224×224 crop
+            interpolation="bicubic",
+            crop_pct=224 / 256,
+        )
+
+    # -------- identical public API to your other extractors --------
+    def extract_features(self, file_list: list[str]) -> "np.ndarray":
+        from torch.utils.data import DataLoader
+        import numpy as np
+        from PIL import Image
+
+        class _DS(torch.utils.data.Dataset):
+            def __init__(self, files, tfm):
+                self.files, self.t = files, tfm
+
+            def __len__(self): return len(self.files)
+
+            def __getitem__(self, idx):
+                img = Image.open(self.files[idx]).convert("RGB")
+                return self.t(img)
+
+        loader = DataLoader(
+            _DS(file_list, self.transform),
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=0,
+        )
+
+        feats = []
+        with torch.no_grad():
+            for x in loader:
+                x = x.to(self.device)
+                feats.append(self.model(x).cpu().numpy())
+        return np.vstack(feats)
