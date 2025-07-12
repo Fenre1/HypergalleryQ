@@ -1,3 +1,8 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
 import numpy as np
 import torch
 import timm
@@ -5,6 +10,13 @@ from PIL import Image
 import timm.data
 from torch.utils.data import Dataset, DataLoader
 import open_clip
+import urllib.request
+
+
+MODEL_DIR = Path(__file__).resolve().parent.parent / "models"
+MODEL_DIR.mkdir(exist_ok=True)
+os.environ.setdefault("TORCH_HOME", str(MODEL_DIR))
+
 #'swinv2_large_window12to24_192to384'
 class ImageFileDataset(Dataset):
     """ 
@@ -130,19 +142,11 @@ class OpenClipFeatureExtractor:
         return feats.cpu().numpy()
     
 
-## to incorporate and clean up
-import os
-import urllib.request
-import tarfile
-import torch
-import timm
-from pathlib import Path
-
 _PLACES_URL = (
     "http://places2.csail.mit.edu/models_places365/resnet152_places365.pth.tar"
 )
 
-def _download_places365(checkpoint_dir: str | Path = "~/.cache/places365") -> Path:
+def _download_places365(checkpoint_dir: str | Path = MODEL_DIR / "places365") -> Path:
     """Download the official PyTorch checkpoint if it is not present."""
     checkpoint_dir = Path(checkpoint_dir).expanduser()
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -155,11 +159,6 @@ def _download_places365(checkpoint_dir: str | Path = "~/.cache/places365") -> Pa
 
 
 class ResNet152Places365FeatureExtractor:
-    """
-    Feature extractor that produces the 2048‑D global average‑pooled features
-    of ResNet‑152 trained on Places365.
-    Call it exactly like your other extractors.
-    """
 
     def __init__(self, batch_size: int = 32, checkpoint_path: str | Path | None = None):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -196,23 +195,10 @@ class ResNet152Places365FeatureExtractor:
         )
 
     # -------- identical public API to your other extractors --------
-    def extract_features(self, file_list: list[str]) -> "np.ndarray":
-        from torch.utils.data import DataLoader
-        import numpy as np
-        from PIL import Image
-
-        class _DS(torch.utils.data.Dataset):
-            def __init__(self, files, tfm):
-                self.files, self.t = files, tfm
-
-            def __len__(self): return len(self.files)
-
-            def __getitem__(self, idx):
-                img = Image.open(self.files[idx]).convert("RGB")
-                return self.t(img)
-
+    def extract_features(self, file_list: list[str]) -> np.ndarray:
+        dataset = ImageFileDataset(file_list, self.transform)
         loader = DataLoader(
-            _DS(file_list, self.transform),
+            dataset,
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=0,
