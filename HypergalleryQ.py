@@ -58,7 +58,7 @@ from utils.spatial_viewQv4 import SpatialViewQDock, HyperedgeItem
 from utils.feature_extraction import (
     Swinv2LargeFeatureExtractor,
     OpenClipFeatureExtractor,
-    ResNet152Places365FeatureExtractor,
+    DenseNet161Places365FeatureExtractor,
 )
 from utils.file_utils import get_image_files
 from utils.metadata_overview import show_metadata_overview
@@ -1028,7 +1028,7 @@ class MainWin(QMainWindow):
             features = extractor.extract_features(files)
             oc_extractor = OpenClipFeatureExtractor()
             oc_features = oc_extractor.extract_features(files)
-            plc_extractor = ResNet152Places365FeatureExtractor()
+            plc_extractor = DenseNet161Places365FeatureExtractor()
             plc_features = plc_extractor.extract_features(files)
             matrix, _ = temi_cluster(features, out_dim=n_edges, threshold=thr)
             oc_matrix, _ = temi_cluster(oc_features, out_dim=n_edges, threshold=thr)
@@ -1125,7 +1125,7 @@ class MainWin(QMainWindow):
                 oc_extractor = OpenClipFeatureExtractor()
                 self.model.openclip_features = oc_extractor.extract_features(self.model.im_list)
             if self.model.places365_features is None:
-                plc_extractor = ResNet152Places365FeatureExtractor()
+                plc_extractor = DenseNet161Places365FeatureExtractor()
                 self.model.places365_features = plc_extractor.extract_features(self.model.im_list)                
             if all(orig != "openclip" for orig in self.model.edge_origins.values()):
                 n_edges = len(self.model.cat_list)

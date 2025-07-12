@@ -11,6 +11,9 @@ import timm.data
 from torch.utils.data import Dataset, DataLoader
 import open_clip
 import urllib.request
+from typing import List
+import re
+
 
 
 MODEL_DIR = Path(__file__).resolve().parent.parent / "models"
@@ -143,70 +146,81 @@ class OpenClipFeatureExtractor:
     
 
 _PLACES_URL = (
-    "http://places2.csail.mit.edu/models_places365/resnet152_places365.pth.tar"
+    "http://places2.csail.mit.edu/models_places365/densenet161_places365.pth.tar"
 )
 
 def _download_places365(checkpoint_dir: str | Path = MODEL_DIR / "places365") -> Path:
-    """Download the official PyTorch checkpoint if it is not present."""
     checkpoint_dir = Path(checkpoint_dir).expanduser()
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-
-    ckpt_path = checkpoint_dir / "resnet152_places365.pth.tar"
+    ckpt_path = checkpoint_dir / "densenet161_places365.pth.tar"
     if not ckpt_path.exists():
-        print("Downloading ResNet‑152 Places365 weights …")
+        print("Downloading DenseNet_161 Places365 weights …")
         urllib.request.urlretrieve(_PLACES_URL, ckpt_path)
     return ckpt_path
 
 
-class ResNet152Places365FeatureExtractor:
 
-    def __init__(self, batch_size: int = 32, checkpoint_path: str | Path | None = None):
+
+_LEGACY_PATTERN = re.compile(r"\.(norm|relu|conv)\.(\d+)")     # ".norm.1" → ".norm1"
+
+def _remap_legacy_keys(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """Convert PyTorch‑0.2 DenseNet key style to modern style."""
+    new_state = {}
+    for k, v in state_dict.items():
+        k = k.replace("module.", "")                           # DataParallel prefix
+        k = _LEGACY_PATTERN.sub(lambda m: f".{m.group(1)}{m.group(2)}", k)
+        new_state[k] = v
+    return new_state
+
+class DenseNet161Places365FeatureExtractor:
+    """Return 2208‑D global‑pooled features of DenseNet‑161 Places365."""
+
+    def __init__(
+        self,
+        batch_size: int = 32,
+        checkpoint_path: str | Path | None = None,
+        *,
+        num_workers: int = 0,
+    ):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.batch_size = batch_size
+        self.batch_size, self.num_workers = batch_size, num_workers
 
-        # 1. Build an **architecture‑only** ResNet‑152 *without* the FC layer
-        self.model = timm.create_model("resnet152", pretrained=False, num_classes=0)
-        self.model.to(self.device)
+        # 1. Architecture **without** classifier
+        self.model = timm.create_model("densenet161", pretrained=False, num_classes=0)
+        self.model.to(self.device).eval()
 
-        # 2. Load Places365 weights
+        # 2. Load & remap legacy weights
         ckpt_path = (
-            Path(checkpoint_path)
-            if checkpoint_path is not None
-            else _download_places365()
+            Path(checkpoint_path) if checkpoint_path else _download_places365()
         )
-        checkpoint = torch.load(
-            ckpt_path, map_location="cpu", encoding="latin1"  # <- legacy pickle
-        )
-        state = checkpoint.get("state_dict", checkpoint)
-        # Strip `module.` that existed when DataParallel was standard
-        state = {k.replace("module.", ""): v for k, v in state.items()}
-        # Drop the original FC weights because we removed the FC layer
-        state = {k: v for k, v in state.items() if not k.startswith("fc.")}
+        raw_ckpt = torch.load(ckpt_path, map_location="cpu", encoding="latin1")
+        state = raw_ckpt.get("state_dict", raw_ckpt)
+        state = _remap_legacy_keys(state)
+
+        # Drop the original classifier (fully‑connected) layer
+        state = {k: v for k, v in state.items() if not k.startswith("classifier.")}
         missing, unexpected = self.model.load_state_dict(state, strict=False)
-        assert not unexpected, unexpected  # should be empty
-        self.model.eval()
+        assert not unexpected, f"Unexpected keys: {unexpected}"     # must be empty
+        # 'missing' only contains 'classifier.weight/bias' – expected
 
-        # 3. Use the transform that MIT’s demo uses (Resize 256 → CenterCrop 224)
-        #    You can swap this for timm’s convenience factory if you like.
+        # 3. Default Places365 transform (256 → centre‑crop 224)
         self.transform = timm.data.transforms_factory.create_transform(
-            input_size=(3, 224, 224),  # 224×224 crop
-            interpolation="bicubic",
-            crop_pct=224 / 256,
+            input_size=(3, 224, 224), interpolation="bicubic", crop_pct=224 / 256
         )
 
-    # -------- identical public API to your other extractors --------
-    def extract_features(self, file_list: list[str]) -> np.ndarray:
-        dataset = ImageFileDataset(file_list, self.transform)
+    # ------------------------------------------------------------------
+    # 4.  Public API (same signature as your other extractors)
+    # ------------------------------------------------------------------
+    def extract_features(self, file_list: List[str]) -> np.ndarray:
         loader = DataLoader(
-            dataset,
+            ImageFileDataset(file_list, self.transform),
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=0,
+            num_workers=self.num_workers,
         )
-
         feats = []
         with torch.no_grad():
-            for x in loader:
-                x = x.to(self.device)
-                feats.append(self.model(x).cpu().numpy())
+            for imgs in loader:
+                feats.append(self.model(imgs.to(self.device)).cpu().numpy())
         return np.vstack(feats)
+
