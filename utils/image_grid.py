@@ -335,6 +335,7 @@ class ImageGridDock(QDockWidget):
         self.view.doubleClicked.connect(self._on_double_clicked)
 
         self._ignore_bus_images = False
+        self._highlight_next: dict[int, QColor] | None = None        
         self.bus.imagesChanged.connect(self._on_bus_images)
         self.bus.edgesChanged.connect(self._remember_edges)
 
@@ -356,7 +357,7 @@ class ImageGridDock(QDockWidget):
     def update_images(
         self,
         idxs: list[int],
-        highlight: list[int] | None = None,
+        highlight: list[int] | dict[int, QColor] | None = None,
         sort: bool = True,
         query: bool = False,
         labels: list[str] | None = None,
@@ -382,7 +383,9 @@ class ImageGridDock(QDockWidget):
         # determine highlight colors
         is_query = bool(highlight) or query
         highlight_map: dict[int, QColor] = {}
-        if highlight:
+        if isinstance(highlight, dict):
+            highlight_map.update(highlight)
+        elif highlight:
             for idx in highlight:
                 highlight_map[idx] = QColor("red")
 
@@ -480,12 +483,14 @@ class ImageGridDock(QDockWidget):
         if self._ignore_bus_images:
             self._ignore_bus_images = False
             return
+        highlight = getattr(self, "_highlight_next", None)
+        self._highlight_next = None        
         if len(self._selected_edges) == 1:
             self._cluster_source_indices = list(idxs)
             self._show_clusters()
         else:
             self._cluster_source_indices = None
-            self.update_images(idxs)
+            self.update_images(idxs, highlight=highlight)
 
     def _on_cluster_slider(self, *_):
         if self._cluster_source_indices is not None:

@@ -125,7 +125,10 @@ class SessionModel(QObject):
                     grp.create_dataset(edge, data=arr, dtype="f4")
             hdf.attrs["thumbnails_are_embedded"] = self.thumbnails_are_embedded
 
-            meta_json = self.metadata.to_json(orient="table")
+            try:
+                meta_json = self.metadata.to_json(orient="table")
+            except RecursionError:
+                meta_json = self.metadata.astype(str).to_json(orient="table")
             hdf.create_dataset("metadata", data=np.string_(meta_json), dtype=dt)
 
             if self.thumbnail_data:

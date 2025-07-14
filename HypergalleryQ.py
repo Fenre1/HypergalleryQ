@@ -52,6 +52,7 @@ from utils.data_loader import (
 from utils.selection_bus import SelectionBus
 from utils.session_model import SessionModel
 from utils.image_grid import ImageGridDock
+from utils.overlap_list_dock import OverlapListDock
 from utils.hyperedge_matrix2 import HyperedgeMatrixDock
 # from utils.spatial_viewQv3 import SpatialViewQDock
 from utils.spatial_viewQv4 import SpatialViewQDock, HyperedgeItem
@@ -576,6 +577,8 @@ class MainWin(QMainWindow):
 
 
         self.image_grid = ImageGridDock(self.bus, self)
+        self.overlap_dock = OverlapListDock(self.bus, self.image_grid, self)
+        self.overlap_dock.setObjectName("OverlapListDock")        
         toolbar_layout.addWidget(self.image_grid.hide_selected_cb)
         toolbar_layout.addWidget(self.image_grid.hide_modified_cb)
 
@@ -614,7 +617,8 @@ class MainWin(QMainWindow):
 
         # 3. Add the "Image grid" to the right area. It will take up the remaining space.
         self.addDockWidget(Qt.RightDockWidgetArea, self.image_grid)
-
+        self.addDockWidget(Qt.RightDockWidgetArea, self.overlap_dock)
+        self.splitDockWidget(self.image_grid, self.overlap_dock, Qt.Horizontal)
         # 4. Add the "Spatial view" below the "Image grid".
         self.addDockWidget(Qt.RightDockWidgetArea, self.spatial_dock)
 
@@ -622,7 +626,8 @@ class MainWin(QMainWindow):
         self.splitDockWidget(self.spatial_dock, self.matrix_dock, Qt.Horizontal)
 
         # Optional: Set initial relative sizes of the docks
-        self.resizeDocks([self.tree_dock, self.image_grid], [300, 900], Qt.Horizontal)
+        self.resizeDocks([self.tree_dock, self.image_grid], [300, 850], Qt.Horizontal)
+        self.resizeDocks([self.image_grid, self.overlap_dock], [700, 200], Qt.Horizontal)
         self.resizeDocks([self.tree_dock, self.toolbar_dock], [550, 250], Qt.Vertical)
         self.resizeDocks([self.spatial_dock, self.matrix_dock], [450, 450], Qt.Horizontal)
 
@@ -1093,6 +1098,7 @@ class MainWin(QMainWindow):
         self.image_grid.set_model(self.model)
         self.image_grid.set_use_full_images(True)
         self.thumb_toggle_act.setChecked(True)
+        self.overlap_dock.set_model(self.model)        
         self.matrix_dock.set_model(self.model)
         self.spatial_dock.set_model(self.model)
         self.regroup()
@@ -1165,6 +1171,7 @@ class MainWin(QMainWindow):
         else:
             self.image_grid.set_use_full_images(True)
             self.thumb_toggle_act.setChecked(True)
+        self.overlap_dock.set_model(self.model)            
         self.matrix_dock.set_model(self.model)
         self.spatial_dock.set_model(self.model)
         self.regroup()
