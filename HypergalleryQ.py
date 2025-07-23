@@ -952,7 +952,7 @@ class MainWin(QMainWindow):
         self._skip_next_layout = True
         self.model.add_empty_hyperedge(column)
         self.model.edge_origins[column] = "Metadata"
-        self.model.edge_colors[column] = "#000000"
+        # self.model.edge_colors[column] = "#000000"
         self.model.add_images_to_hyperedge(column, series[valid_mask].index.tolist())
 
         categorical = True
@@ -970,7 +970,7 @@ class MainWin(QMainWindow):
                 name = f"{val} {column}"
                 self.model.add_empty_hyperedge(name)
                 self.model.edge_origins[name] = "Metadata"
-                self.model.edge_colors[name] = "#808080"
+                # self.model.edge_colors[name] = "#808080"
                 mask = valid_mask & (strs == val)
                 self.model.add_images_to_hyperedge(name, series[mask].index.tolist())
                 sub_edges.append(name)
@@ -990,7 +990,8 @@ class MainWin(QMainWindow):
                 fa.positions[name] = new_pos.copy()
                 self.spatial_dock.edge_index[name] = len(fa.names) - 1
                 ell = HyperedgeItem(name, QRectF(-size/2, -size/2, size, size))
-                col = "#000000" if name == column else "#808080"
+                # col = "#000000" if name == column else "#808080"
+                col = self.model.edge_colors.get(name, "#000000")
                 ell.setPen(pg.mkPen(col))
                 ell.setBrush(pg.mkBrush(col))
                 self.spatial_dock.view.addItem(ell)

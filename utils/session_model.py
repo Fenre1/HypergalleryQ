@@ -9,9 +9,19 @@ from typing import Dict, List, Set, Iterable, Optional
 from PIL import Image, ExifTags
 import io
 from PyQt5.QtCore import QObject, pyqtSignal as Signal
-from .similarity import SIM_METRIC
+from PyQt5.QtGui import QColor
 import pyqtgraph as pg
+from .similarity import SIM_METRIC
 
+def generate_n_colors(n: int, saturation: int = 150, value: int = 230) -> list[str]:
+    """Return ``n`` distinct HSV colors converted to hex RGB strings."""
+    colors: list[str] = []
+    for i in range(max(n, 1)):
+        hue = int(360 * i / n) if n else 0
+        color = QColor()
+        color.setHsv(hue, saturation, value)
+        colors.append(color.name())
+    return colors
 
 class SessionModel(QObject):
     # ─── signals any view can subscribe to ──────────────────────────────
@@ -214,9 +224,14 @@ class SessionModel(QObject):
         
         self.status_map = {n: {"uuid": str(uuid.uuid4()), "status": "Original"}
                            for n in self.cat_list}
-        cmap_hues = max(len(self.cat_list), 16)
+        # cmap_hues = max(len(self.cat_list), 16)
+        # self.edge_colors = {
+        #     name: pg.mkColor(pg.intColor(i, hues=cmap_hues)).name()
+        #     for i, name in enumerate(self.cat_list)
+        # }
+        colors = generate_n_colors(len(self.cat_list))
         self.edge_colors = {
-            name: pg.mkColor(pg.intColor(i, hues=cmap_hues)).name()
+            name: colors[i % len(colors)]
             for i, name in enumerate(self.cat_list)
         }
         self.edge_origins = {
@@ -369,6 +384,7 @@ class SessionModel(QObject):
         # 5. Add a status entry for the new edge
         self.status_map[name] = {"uuid": str(uuid.uuid4()), "status": "New"}
         self.edge_origins[name] = "New"
+        self.edge_colors[name] = generate_n_colors(len(self.edge_colors) + 1)[-1]
 
         idx = len(self.edge_colors)
         cmap_hues = max(idx + 1, 16)
@@ -464,8 +480,9 @@ class SessionModel(QObject):
             n_features = self.features.shape[1]
             self.hyperedge_avg_features[orphan_name] = np.zeros(n_features)
             self.status_map[orphan_name] = {"uuid": str(uuid.uuid4()), "status": "Orphaned"}
-            cmap_hues = max(len(self.cat_list), 16)
-            self.edge_colors[orphan_name] = pg.mkColor(pg.intColor(len(self.edge_colors), hues=cmap_hues)).name()
+            # cmap_hues = max(len(self.cat_list), 16)
+            # self.edge_colors[orphan_name] = pg.mkColor(pg.intColor(len(self.edge_colors), hues=cmap_hues)).name()
+            self.edge_colors[orphan_name] = generate_n_colors(len(self.edge_colors) + 1)[-1]
             self.edge_origins[orphan_name] = "system"
 
         for idx in members:
@@ -586,11 +603,14 @@ class SessionModel(QObject):
             name: {"uuid": str(uuid.uuid4()), "status": status}
             for name in self.cat_list
         }
-        cmap_hues = max(len(self.cat_list), 16)
-        self.edge_colors = {
-            name: pg.mkColor(pg.intColor(i, hues=cmap_hues)).name()
-            for i, name in enumerate(self.cat_list)
-        }
+        # cmap_hues = max(len(self.cat_list), 16)
+        # self.edge_colors = {
+        #     name: pg.mkColor(pg.intColor(i, hues=cmap_hues)).name()
+        #     for i, name in enumerate(self.cat_list)
+        # }
+        colors = generate_n_colors(len(self.cat_list))
+        self.edge_colors = {name: colors[i % len(colors)] for i, name in enumerate(self.cat_list)}
+
         self.overview_triplets = None
         self.layoutChanged.emit()
         self.similarityDirty.emit()
@@ -622,10 +642,11 @@ class SessionModel(QObject):
             )
             status = "Original" if origin == "places365" else "Cluster"
             self.status_map[name] = {"uuid": str(uuid.uuid4()), "status": status}
-            cmap_hues = max(len(self.cat_list), 16)
-            self.edge_colors[name] = pg.mkColor(
-                pg.intColor(len(self.edge_colors), hues=cmap_hues)
-            ).name()
+            # cmap_hues = max(len(self.cat_list), 16)
+            # self.edge_colors[name] = pg.mkColor(
+            #     pg.intColor(len(self.edge_colors), hues=cmap_hues)
+            # ).name()
+            self.edge_colors[name] = generate_n_colors(len(self.edge_colors) + 1)[-1]
             self.edge_origins[name] = origin
 
         self.overview_triplets = None
