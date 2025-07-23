@@ -197,6 +197,37 @@ class NewSessionDialog(QDialog):
         return int(self.edge_edit.text()), float(self.thr_edit.text())
 
 
+class ReconstructDialog(QDialog):
+    """Dialog to set parameters for hypergraph reconstruction."""
+
+    def __init__(self, current_edges: int, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Reconstruct Hypergraph")
+
+        layout = QVBoxLayout(self)
+        info = QLabel(
+            "Recalculate the clustering using the existing features."
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        layout.addWidget(QLabel("Number of hyperedges:"))
+        self.edge_edit = QLineEdit(str(current_edges))
+        layout.addWidget(self.edge_edit)
+
+        layout.addWidget(QLabel("Threshold for hypergraph generation:"))
+        self.thr_edit = QLineEdit("0.5")
+        layout.addWidget(self.thr_edit)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def parameters(self) -> tuple[int, float]:
+        return int(self.edge_edit.text()), float(self.thr_edit.text())
+
+
 class HyperEdgeTree(QTreeView):
     """Navigator tree that lists meta-groups and individual hyper-edges."""
     def __init__(self, bus: SelectionBus, parent=None):
@@ -670,7 +701,10 @@ class MainWin(QMainWindow):
         new_act = QAction("&New Session…", self, triggered=self.new_session)
         save_act = QAction("&Save", self, triggered=self.save_session)
         save_as_act = QAction("Save &As…", self, triggered=self.save_session_as)
-        
+
+        reconstruct_act = QAction("Reconstruct Hypergraph…", self,
+                                   triggered=self.reconstruct_hypergraph)
+
         self.thumb_toggle_act = QAction("Use Full Images", self, checkable=True)
         self.thumb_toggle_act.toggled.connect(self.toggle_full_images)
 
@@ -680,6 +714,7 @@ class MainWin(QMainWindow):
         file_menu.addAction(save_act)
         file_menu.addAction(save_as_act)
         file_menu.addAction(self.thumb_toggle_act)
+        file_menu.addAction(reconstruct_act)        
         # self.menuBar().addMenu("&File").addAction(open_act)
 
         self.model = None
@@ -1241,6 +1276,111 @@ class MainWin(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Save Error", str(e))
 
+    def reconstruct_hypergraph(self):
+        """Re-run clustering using existing features."""
+        if not self.model:
+            QMessageBox.warning(self, "No Session", "Please load a session first.")
+            return
+
+        dlg = ReconstructDialog(len(self.model.cat_list), self)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+        try:
+            n_edges, thr = dlg.parameters()
+        except Exception:
+            QMessageBox.warning(self, "Invalid Input", "Enter valid numbers.")
+            return
+
+        app = QApplication.instance()
+        if app:
+            app.setOverrideCursor(Qt.WaitCursor)
+        try:
+            features = self.model.features
+            oc_feats = self.model.openclip_features
+            plc_feats = self.model.places365_features
+
+            matrix, _ = temi_cluster(features, out_dim=n_edges, threshold=thr)
+            oc_matrix = None
+            if oc_feats is not None:
+                oc_matrix, _ = temi_cluster(oc_feats, out_dim=n_edges, threshold=thr)
+            plc_matrix = None
+            if plc_feats is not None:
+                plc_matrix, _ = temi_cluster(plc_feats, out_dim=n_edges, threshold=thr)
+
+            empty_cols = np.where(matrix.sum(axis=0) == 0)[0]
+            if len(empty_cols) > 0:
+                matrix = np.delete(matrix, empty_cols, axis=1)
+                QMessageBox.information(
+                    self,
+                    "Empty Hyperedges Removed",
+                    f"{len(empty_cols)} empty hyperedges were removed after clustering."
+                )
+            if oc_matrix is not None:
+                oc_empty = np.where(oc_matrix.sum(axis=0) == 0)[0]
+                if len(oc_empty) > 0:
+                    oc_matrix = np.delete(oc_matrix, oc_empty, axis=1)
+            if plc_matrix is not None:
+                plc_empty = np.where(plc_matrix.sum(axis=0) == 0)[0]
+                if len(plc_empty) > 0:
+                    plc_matrix = np.delete(plc_matrix, plc_empty, axis=1)
+        except Exception as e:
+            if app:
+                app.restoreOverrideCursor()
+            QMessageBox.critical(self, "Reconstruction Error", str(e))
+            return
+        if app:
+            app.restoreOverrideCursor()
+
+        df = pd.DataFrame(matrix.astype(int), columns=[f"edge_{i}" for i in range(matrix.shape[1])])
+
+        try:
+            self.model.layoutChanged.disconnect(self.regroup)
+        except Exception:
+            pass
+        try:
+            self.model.layoutChanged.disconnect(self._on_layout_changed)
+        except Exception:
+            pass
+        try:
+            self.model.hyperedgeModified.disconnect(self._on_model_hyperedge_modified)
+        except Exception:
+            pass
+
+        self.model = SessionModel(
+            self.model.im_list,
+            df,
+            features,
+            self.model.h5_path,
+            openclip_features=oc_feats,
+            places365_features=plc_feats,
+            thumbnail_data=self.model.thumbnail_data,
+            thumbnails_are_embedded=self.model.thumbnails_are_embedded,
+            metadata=self.model.metadata,
+        )
+
+        if oc_matrix is not None and oc_matrix.size:
+            self.model.append_clustering_matrix(oc_matrix, origin="openclip", prefix="clip")
+        if plc_matrix is not None and plc_matrix.size:
+            self.model.append_clustering_matrix(plc_matrix, origin="places365", prefix="plc365")
+
+        self.model.layoutChanged.connect(self.regroup)
+        self._overview_triplets = None
+        self.model.layoutChanged.connect(self._on_layout_changed)
+        self.model.hyperedgeModified.connect(self._on_model_hyperedge_modified)
+
+        self.image_grid.set_model(self.model)
+        if self.model.thumbnail_data:
+            self.image_grid.set_use_full_images(False)
+            self.thumb_toggle_act.setChecked(False)
+        else:
+            self.image_grid.set_use_full_images(True)
+            self.thumb_toggle_act.setChecked(True)
+        self.overlap_dock.set_model(self.model)
+        self.matrix_dock.set_model(self.model)
+        self.spatial_dock.set_model(self.model)
+        self.regroup()
+
+
     def _on_layout_changed(self):
         self._overview_triplets = None
         if self._layout_timer.isActive():
@@ -1364,7 +1504,7 @@ class MainWin(QMainWindow):
         sim_map = self.model.similarity_map(ref)
         if not sim_map:
             return
-
+ 
         max_v = max(sim_map.values())
         min_v = min(sim_map.values())
         denom = max(max_v - min_v, 1e-6)
