@@ -24,11 +24,14 @@ class SessionModel(QObject):
     @classmethod
     def load_h5(cls, path: Path) -> "SessionModel":
         with h5py.File(path, "r") as hdf:
-            im_list = [x.decode() if isinstance(x, bytes) else x
-                       for x in hdf["file_list"][()]]
+            im_list = [
+                x.decode() if isinstance(x, bytes) else x for x in hdf["file_list"][()]
+            ]
             matrix = hdf["clustering_results"][()]
             cat_raw = (
-                hdf["catList"][()] if "catList" in hdf else [f"edge_{i}" for i in range(matrix.shape[1])]
+                hdf["catList"][()]
+                if "catList" in hdf
+                else [f"edge_{i}" for i in range(matrix.shape[1])]
             )
             cat_list = [x.decode() if isinstance(x, bytes) else x for x in cat_raw]
             df_edges = pd.DataFrame(matrix, columns=cat_list)
@@ -41,26 +44,42 @@ class SessionModel(QObject):
                 for edge in grp:
                     data = grp[edge][()]
                     if data.size > 0:
-                        image_umap[edge] = {int(i): data[idx, 1:] for idx, i in enumerate(data[:, 0].astype(int))}
+                        image_umap[edge] = {
+                            int(i): data[idx, 1:]
+                            for idx, i in enumerate(data[:, 0].astype(int))
+                        }
                     else:
                         image_umap[edge] = {}
 
-            openclip_feats = hdf["openclip_features"][()] if "openclip_features" in hdf else None
-            places365_feats = hdf["places365_features"][()] if "places365_features" in hdf else None
+            openclip_feats = (
+                hdf["openclip_features"][()] if "openclip_features" in hdf else None
+            )
+            places365_feats = (
+                hdf["places365_features"][()] if "places365_features" in hdf else None
+            )
 
             if "edge_origins" in hdf:
                 origin_raw = hdf["edge_origins"][()]
-                edge_orig = [o.decode() if isinstance(o, bytes) else str(o) for o in origin_raw]
+                edge_orig = [
+                    o.decode() if isinstance(o, bytes) else str(o) for o in origin_raw
+                ]
             else:
-                edge_orig = ["Loaded"] * len(cat_list)
+                edge_orig = ["swinv2"] * len(cat_list)
+
+            # Backwards compatibility: older sessions may use "Loaded" as origin
+            edge_orig = ["swinv2" if o == "Loaded" else o for o in edge_orig]
 
             thumbnails_embedded = hdf.attrs.get("thumbnails_are_embedded", True)
             thumbnail_data: Optional[List[bytes] | List[str]] = None
             if thumbnails_embedded and "thumbnail_data_embedded" in hdf:
-                thumbnail_data = [arr.tobytes() for arr in hdf["thumbnail_data_embedded"][:]]
+                thumbnail_data = [
+                    arr.tobytes() for arr in hdf["thumbnail_data_embedded"][:]
+                ]
             elif not thumbnails_embedded and "thumbnail_relative_paths" in hdf:
-                thumbnail_data = [p.decode("utf-8") if isinstance(p, bytes) else str(p)
-                                  for p in hdf["thumbnail_relative_paths"][:]]
+                thumbnail_data = [
+                    p.decode("utf-8") if isinstance(p, bytes) else str(p)
+                    for p in hdf["thumbnail_relative_paths"][:]
+                ]
 
             metadata_df: pd.DataFrame | None = None
             if "metadata" in hdf:
@@ -83,6 +102,7 @@ class SessionModel(QObject):
             edge_origins=edge_orig,
             metadata=metadata_df,
         )
+
 
     def save_h5(self, path: Path | None = None) -> None:
         """Write current session state to an HDF5 file."""
@@ -108,20 +128,32 @@ class SessionModel(QObject):
             )
             hdf.create_dataset(
                 "edge_origins",
-                data=np.array([self.edge_origins.get(n, "swin") for n in self.cat_list], dtype=object),
+                data=np.array(
+                    [self.edge_origins.get(n, "swinv2") for n in self.cat_list],
+                    dtype=object,
+                ),
                 dtype=dt,
             )
             hdf.create_dataset("features", data=self.features, dtype="f4")
             if self.openclip_features is not None:
-                hdf.create_dataset("openclip_features", data=self.openclip_features, dtype="f4")
+                hdf.create_dataset(
+                    "openclip_features", data=self.openclip_features, dtype="f4"
+                )
             if self.places365_features is not None:
-                hdf.create_dataset("places365_features", data=self.places365_features, dtype="f4")                
+                hdf.create_dataset(
+                    "places365_features", data=self.places365_features, dtype="f4"
+                )
             if self.umap_embedding is not None:
-                hdf.create_dataset("umap_embedding", data=self.umap_embedding, dtype="f4")
+                hdf.create_dataset(
+                    "umap_embedding", data=self.umap_embedding, dtype="f4"
+                )
             if getattr(self, "image_umap", None):
                 grp = hdf.create_group("image_umap")
                 for edge, mapping in self.image_umap.items():
-                    arr = np.array([[idx, vec[0], vec[1]] for idx, vec in mapping.items()], dtype="f4")
+                    arr = np.array(
+                        [[idx, vec[0], vec[1]] for idx, vec in mapping.items()],
+                        dtype="f4",
+                    )
                     grp.create_dataset(edge, data=arr, dtype="f4")
             hdf.attrs["thumbnails_are_embedded"] = self.thumbnails_are_embedded
 
@@ -134,8 +166,12 @@ class SessionModel(QObject):
             if self.thumbnail_data:
                 if self.thumbnails_are_embedded:
                     dt_vlen = h5py.vlen_dtype(np.uint8)
-                    arrs = [np.frombuffer(b, dtype=np.uint8) for b in self.thumbnail_data]
-                    hdf.create_dataset("thumbnail_data_embedded", data=arrs, dtype=dt_vlen)
+                    arrs = [
+                        np.frombuffer(b, dtype=np.uint8) for b in self.thumbnail_data
+                    ]
+                    hdf.create_dataset(
+                        "thumbnail_data_embedded", data=arrs, dtype=dt_vlen
+                    )
                 else:
                     hdf.create_dataset(
                         "thumbnail_relative_paths",
@@ -465,8 +501,8 @@ class SessionModel(QObject):
         if ref is None:
             return {}
         names = list(self.hyperedge_avg_features)
-        mat   = np.stack([self.hyperedge_avg_features[n] for n in names])
-        sims  = SIM_METRIC(ref.reshape(1, -1), mat)[0]
+        mat = np.stack([self.hyperedge_avg_features[n] for n in names])
+        sims = SIM_METRIC(ref.reshape(1, -1), mat)[0]
         return dict(zip(names, sims))
     
     def similarity_std(self, name: str) -> float | None:
@@ -524,21 +560,30 @@ class SessionModel(QObject):
         self.overview_triplets = res
         return res
 
-    def apply_clustering_matrix(self, matrix: np.ndarray, *, prefix: str = "edge", origin: str = "swin") -> None:
+    def apply_clustering_matrix(
+        self, matrix: np.ndarray, *, prefix: str = "edge", origin: str = "swinv2"
+    ) -> None:
         """Replace current hyperedges with clustering results."""
         if matrix.ndim != 2:
             raise ValueError("clustering matrix must be 2D")
 
-        df_edges = pd.DataFrame(matrix.astype(int),
-                                columns=[f"{prefix}_{i}" for i in range(matrix.shape[1])])
+        df_edges = pd.DataFrame(
+            matrix.astype(int),
+            columns=[f"{prefix}_{i}" for i in range(matrix.shape[1])],
+        )
         self.df_edges = df_edges
         self.cat_list = list(df_edges.columns)
         self.edge_origins = {name: origin for name in self.cat_list}
 
-        self.hyperedges, self.image_mapping = self._prepare_hypergraph_structures(df_edges)
-        self.hyperedge_avg_features = self._calculate_hyperedge_avg_features(self.features)
+        self.hyperedges, self.image_mapping = self._prepare_hypergraph_structures(
+            df_edges
+        )
+        self.hyperedge_avg_features = self._calculate_hyperedge_avg_features(
+            self.features
+        )
+        status = "Original" if origin == "places365" else "Cluster"
         self.status_map = {
-            name: {"uuid": str(uuid.uuid4()), "status": "Cluster"}
+            name: {"uuid": str(uuid.uuid4()), "status": status}
             for name in self.cat_list
         }
         cmap_hues = max(len(self.cat_list), 16)
@@ -550,7 +595,9 @@ class SessionModel(QObject):
         self.layoutChanged.emit()
         self.similarityDirty.emit()
 
-    def append_clustering_matrix(self, matrix: np.ndarray, *, prefix: str = "edge", origin: str = "swin") -> None:
+    def append_clustering_matrix(
+        self, matrix: np.ndarray, *, prefix: str = "edge", origin: str = "swinv2"
+    ) -> None:
         """Append new hyperedges from a clustering matrix."""
         if matrix.ndim != 2:
             raise ValueError("clustering matrix must be 2D")
@@ -569,11 +616,16 @@ class SessionModel(QObject):
             for idx in idxs:
                 self.image_mapping.setdefault(idx, set()).add(name)
             self.hyperedge_avg_features[name] = (
-                self.features[list(idxs)].mean(axis=0) if idxs else np.zeros(self.features.shape[1])
+                self.features[list(idxs)].mean(axis=0)
+                if idxs
+                else np.zeros(self.features.shape[1])
             )
-            self.status_map[name] = {"uuid": str(uuid.uuid4()), "status": "Cluster"}
+            status = "Original" if origin == "places365" else "Cluster"
+            self.status_map[name] = {"uuid": str(uuid.uuid4()), "status": status}
             cmap_hues = max(len(self.cat_list), 16)
-            self.edge_colors[name] = pg.mkColor(pg.intColor(len(self.edge_colors), hues=cmap_hues)).name()
+            self.edge_colors[name] = pg.mkColor(
+                pg.intColor(len(self.edge_colors), hues=cmap_hues)
+            ).name()
             self.edge_origins[name] = origin
 
         self.overview_triplets = None
