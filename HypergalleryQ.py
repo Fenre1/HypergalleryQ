@@ -28,6 +28,7 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox,
     QAbstractItemView,
     QLineEdit,
+    QGroupBox
 ) 
 from PyQt5.QtGui import (
     QStandardItem,
@@ -601,6 +602,12 @@ class MainWin(QMainWindow):
         toolbar_layout.addWidget(self.btn_color_status)
         toolbar_layout.addWidget(self.btn_color_origin)
         toolbar_layout.addWidget(self.btn_color_similarity)
+
+        self.legend_box = QGroupBox("Legend")
+        self.legend_layout = QVBoxLayout(self.legend_box)
+        self.legend_layout.setContentsMargins(4, 4, 4, 4)
+        self.legend_box.hide()
+        toolbar_layout.addWidget(self.legend_box)
 
         self.image_grid = ImageGridDock(self.bus, self)
         self.overlap_dock = OverlapListDock(self.bus, self.image_grid, self)
@@ -1295,6 +1302,20 @@ class MainWin(QMainWindow):
         if names:
             self._last_edge = names[0]
 
+    def _show_legend(self, mapping: dict[str, str]):
+        while self.legend_layout.count():
+            item = self.legend_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        for label, color in mapping.items():
+            lab = QLabel(f"<span style='color:{color}'>■</span> {label}")
+            self.legend_layout.addWidget(lab)
+        self.legend_box.show()
+
+    def _hide_legend(self):
+        self.legend_box.hide()
+
+
     # ------------------------------------------------------------------
     def color_edges_default(self):
         """Color hyperedge nodes with the session's stored colors."""
@@ -1302,6 +1323,9 @@ class MainWin(QMainWindow):
             return
         self.spatial_dock.update_colors(self.model.edge_colors)
         self.spatial_dock.hide_legend()
+        self._hide_legend()
+
+
 
     def color_edges_by_status(self):
         """Color hyperedges based on their edit status."""
@@ -1313,6 +1337,7 @@ class MainWin(QMainWindow):
         mapping = {name: colors[self.model.status_map[name]["status"]] for name in self.model.hyperedges}
         self.spatial_dock.update_colors(mapping)
         self.spatial_dock.show_legend(colors)
+        self._show_legend(colors)
 
     def color_edges_by_origin(self):
         """Color hyperedges based on their origin."""
@@ -1324,7 +1349,7 @@ class MainWin(QMainWindow):
         mapping = {name: colors[self.model.edge_origins.get(name, "") ] for name in self.model.hyperedges}
         self.spatial_dock.update_colors(mapping)
         self.spatial_dock.show_legend(colors)
-
+        self._show_legend(colors)
 
     def color_edges_by_similarity(self):
         """Color hyperedges by similarity to the selected or last edge."""
@@ -1360,7 +1385,7 @@ class MainWin(QMainWindow):
 
         self.spatial_dock.update_colors(cmap)
         self.spatial_dock.hide_legend()
-
+        self._hide_legend()
 
     def regroup(self):
         if not self.model: return

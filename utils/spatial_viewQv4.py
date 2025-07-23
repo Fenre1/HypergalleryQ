@@ -340,11 +340,11 @@ class SpatialViewQDock(QDockWidget):
         self.bus.imagesChanged.connect(self._on_images)
 
     def eventFilter(self, obj, event: QEvent) -> bool:
-        # For resizing the minimap
+
         if obj is self.plot and event.type() == QEvent.Resize:
             self._pos_minimap()
+            self._pos_legend()
 
-        # REFACTORED: Central hover event handling
         if obj is self.plot.scene():
             if event.type() == QEvent.GraphicsSceneMouseMove:
                 self._update_tooltip(event)
