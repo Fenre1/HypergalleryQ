@@ -307,7 +307,6 @@ def calculate_similarity_matrix(vecs):
 
 
 def perform_hierarchical_grouping(model, thresh=0.8):
-    print('start hch grouping')
     vecs   = model.hyperedge_avg_features.copy()
     comp   = {k: [k] for k in vecs}
     counts = {k: 1     for k in vecs}
@@ -325,7 +324,6 @@ def perform_hierarchical_grouping(model, thresh=0.8):
         comp[new] = comp.pop(row) + comp.pop(col)
         counts[new] = c1 + c2
         vecs.pop(row), vecs.pop(col)
-    print('end hch grouping')
     return comp
 
 
@@ -384,6 +382,7 @@ class MainWin(QMainWindow):
 
     def _vector_for(self, name: str) -> np.ndarray | None:
         avg = self.model.hyperedge_avg_features
+        for key in avg:
         if name in avg:
             return avg[name][None, :]
 
@@ -402,6 +401,11 @@ class MainWin(QMainWindow):
                 return
             ref_name = sel[0].data(Qt.DisplayRole)
 
+        if ref_name == False:
+            sel = self.tree.selectionModel().selectedRows(0)
+            if not sel:
+                return
+            ref_name = sel[0].data(Qt.DisplayRole)            
         ref_vec = self._vector_for(ref_name)
         if ref_vec is None:
             QMessageBox.warning(self, "No features", f"No feature vector for “{ref_name}”.")
@@ -1260,6 +1264,12 @@ class MainWin(QMainWindow):
             item.setText(old_name)
             return
         item.setData(new_name, Qt.UserRole)
+        if hasattr(self, "groups"):
+            for g, children in self.groups.items():
+                for idx, child in enumerate(children):
+                    if child == old_name:
+                        children[idx] = new_name
+                        break
         if parent is not None:
             self._update_group_similarity(parent)
 
@@ -1326,19 +1336,30 @@ class MainWin(QMainWindow):
         sim_map = self.model.similarity_map(ref)
         if not sim_map:
             return
+
         max_v = max(sim_map.values())
         min_v = min(sim_map.values())
         denom = max(max_v - min_v, 1e-6)
+
+        def interpolate_grey_to_red(norm):
+            """Returns a QColor name from grey to red based on normalized similarity."""
+            # Grey: (150, 150, 150), Red: (255, 0, 0)
+            r = int(150 + norm * (255 - 150))
+            g = int(150 - norm * 150)
+            b = int(150 - norm * 150)
+            return QColor(r, g, b).name()
+
         cmap = {}
         for name, val in sim_map.items():
             norm = (val - min_v) / denom
-            col = pg.mkColor(pg.intColor(int(norm * 255), hues=256)).name()
+            col = interpolate_grey_to_red(norm)
             cmap[name] = col
+
         self.spatial_dock.update_colors(cmap)
         self.spatial_dock.hide_legend()
 
+
     def regroup(self):
-        print('start regroup')
         if not self.model: return
         thr = self.slider.value() / 100
         self.label.setText(f"Grouping threshold: {thr:.2f}")
@@ -1364,7 +1385,6 @@ class MainWin(QMainWindow):
 
         if hasattr(self, 'matrix_dock'): 
             self.matrix_dock.update_matrix()
-        print('end regroup')
 
 
     def _update_group_similarity(self, group_item: QStandardItem):
