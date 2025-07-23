@@ -464,9 +464,8 @@ class SpatialViewQDock(QDockWidget):
                 idx = list(session.hyperedges[edge])
                 self._centroid_sim[edge] = self._features_norm[idx] @ c if idx else np.array([])
 
-                if len(idx) >= 2:
-                    print('umap4')
-                    neigh = min(15, len(idx))
+                if len(idx) >= 3:
+                    neigh = min(15, len(idx) - 1)
                     emb = umap.UMAP(
                         n_components=2,
                         random_state=42,
@@ -476,6 +475,9 @@ class SpatialViewQDock(QDockWidget):
                     m = np.max(np.linalg.norm(emb, axis=1))
                     if m > 0:
                         emb = emb / m
+                    self._image_umap[edge] = {i: emb[k] for k, i in enumerate(idx)}
+                elif len(idx) == 2:
+                    emb = np.array([[-1.0, 0.0], [1.0, 0.0]], dtype=np.float32)
                     self._image_umap[edge] = {i: emb[k] for k, i in enumerate(idx)}
                 elif len(idx) == 1:
                     self._image_umap[edge] = {idx[0]: np.zeros(2)}
@@ -493,6 +495,7 @@ class SpatialViewQDock(QDockWidget):
         self._update_mini_scatter()
         self._update_minimap_view()
         self._pos_minimap()
+
 
     # ============================================================================ #
     # Tooltip Logic (REFACTORED and CENTRALIZED)                                   #
