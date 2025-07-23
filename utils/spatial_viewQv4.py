@@ -375,16 +375,24 @@ class SpatialViewQDock(QDockWidget):
             ell.setBrush(pg.mkBrush(col))
 
     def show_legend(self, mapping: dict[str, str]):
+        print('tuut legend')
         """Display a legend for the given mapping of labels to colors."""
+        # Show immediately so _pos_legend can reposition correctly when switching
+        # directly between different color modes.
+        self.legend.show()  # ensure visible before positioning
         while self.legend_layout.count():
             item = self.legend_layout.takeAt(0)
+            print('item',item)
             if item.widget():
                 item.widget().deleteLater()
         for label, color in mapping.items():
+            print('labne', label, color)
             lab = QLabel(f"<span style='color:{color}'>■</span> {label}")
             self.legend_layout.addWidget(lab)
         self.legend.show()
         self._pos_legend()
+
+
 
     def hide_legend(self):
         self.legend.hide()

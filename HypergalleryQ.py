@@ -51,7 +51,7 @@ from utils.data_loader import (
     DATA_DIRECTORY, get_h5_files_in_directory, load_session_data
 )
 from utils.selection_bus import SelectionBus
-from utils.session_model import SessionModel
+from utils.session_model import SessionModel, generate_n_colors
 from utils.image_grid import ImageGridDock
 from utils.overlap_list_dock import OverlapListDock
 from utils.hyperedge_matrix2 import HyperedgeMatrixDock
@@ -1308,7 +1308,8 @@ class MainWin(QMainWindow):
         if not self.model:
             return
         statuses = sorted({meta.get("status", "") for meta in self.model.status_map.values()})
-        colors = {s: pg.mkColor(pg.intColor(i, hues=len(statuses))).name() for i, s in enumerate(statuses)}
+        color_list = generate_n_colors(len(statuses))
+        colors = {s: color_list[i % len(color_list)] for i, s in enumerate(statuses)}
         mapping = {name: colors[self.model.status_map[name]["status"]] for name in self.model.hyperedges}
         self.spatial_dock.update_colors(mapping)
         self.spatial_dock.show_legend(colors)
@@ -1318,10 +1319,12 @@ class MainWin(QMainWindow):
         if not self.model:
             return
         origins = sorted(set(self.model.edge_origins.values()))
-        colors = {o: pg.mkColor(pg.intColor(i, hues=len(origins))).name() for i, o in enumerate(origins)}
+        color_list = generate_n_colors(len(origins))
+        colors = {o: color_list[i % len(color_list)] for i, o in enumerate(origins)}
         mapping = {name: colors[self.model.edge_origins.get(name, "") ] for name in self.model.hyperedges}
         self.spatial_dock.update_colors(mapping)
         self.spatial_dock.show_legend(colors)
+
 
     def color_edges_by_similarity(self):
         """Color hyperedges by similarity to the selected or last edge."""
