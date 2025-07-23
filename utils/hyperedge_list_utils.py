@@ -1,7 +1,7 @@
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import pandas as pd
-
+import uuid
 
 def calculate_similarity_matrix(vecs):
     names = list(vecs)

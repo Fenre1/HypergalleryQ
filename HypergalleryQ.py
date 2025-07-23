@@ -44,6 +44,7 @@ from PyQt5.QtCore import (
     pyqtSignal as Signal,
     QTimer,
     QSortFilterProxyModel,
+    QRectF
 )
 
 from utils.data_loader import (

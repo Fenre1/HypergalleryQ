@@ -369,7 +369,13 @@ class ImageGridDock(QDockWidget):
         if self._mode == "overview":
             # switching back to normal grid mode
             self.show_grid()
-
+        if query:
+            self._cluster_source_indices = None
+            self._clusters = []
+            self._expanded_clusters.clear()
+            self._row_info = []
+            self.view.setItemDelegate(QStyledItemDelegate(self.view))
+            self.setWindowTitle("Query results")
         if sort and idxs and self._selected_edges:
             vecs = [self.session.hyperedge_avg_features[e]
                     for e in self._selected_edges
@@ -490,6 +496,10 @@ class ImageGridDock(QDockWidget):
             self._show_clusters()
         else:
             self._cluster_source_indices = None
+            self._clusters = []
+            self._expanded_clusters.clear()
+            self._row_info = []
+            self.view.setItemDelegate(QStyledItemDelegate(self.view))
             self.update_images(idxs, highlight=highlight)
 
     def _on_cluster_slider(self, *_):
