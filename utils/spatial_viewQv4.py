@@ -326,6 +326,12 @@ class SpatialViewQDock(QDockWidget):
         self.plot.installEventFilter(self) # For resize
 
         self.tooltip_manager = TooltipManager(self.plot)
+        
+        self.legend = QWidget(self.plot)
+        self.legend.setStyleSheet("background-color: rgba(30,30,30,200); color: white;")
+        self.legend_layout = QVBoxLayout(self.legend)
+        self.legend_layout.setContentsMargins(4, 4, 4, 4)
+        self.legend.hide()
 
         self.setWidget(w); self._pos_minimap()
 
@@ -350,7 +356,38 @@ class SpatialViewQDock(QDockWidget):
     def _pos_minimap(self):
         pw,mm=self.plot.size(),self.minimap.size()
         self.minimap.move(pw.width()-mm.width()-10,10); self.minimap.raise_()
+    
+    def _pos_legend(self):
+        if self.legend.isHidden():
+            return
+        pw = self.plot.size()
+        self.legend.adjustSize()
+        self.legend.move(10, pw.height() - self.legend.height() - 10)
+        self.legend.raise_()
 
+    # ------------------------------------------------------------------
+    def update_colors(self, mapping: dict[str, str]):
+        """Update colors of hyperedge nodes."""
+        self.color_map = mapping.copy()
+        for name, ell in self.hyperedgeItems.items():
+            col = self.color_map.get(name, '#AAAAAA')
+            ell.setPen(pg.mkPen(col))
+            ell.setBrush(pg.mkBrush(col))
+
+    def show_legend(self, mapping: dict[str, str]):
+        """Display a legend for the given mapping of labels to colors."""
+        while self.legend_layout.count():
+            item = self.legend_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        for label, color in mapping.items():
+            lab = QLabel(f"<span style='color:{color}'>■</span> {label}")
+            self.legend_layout.addWidget(lab)
+        self.legend.show()
+        self._pos_legend()
+
+    def hide_legend(self):
+        self.legend.hide()
     # ============================================================================ #
     # Session / model setup (No changes here, kept for context)                    #
     # ============================================================================ #
@@ -637,7 +674,8 @@ class SpatialViewQDock(QDockWidget):
         if self.minimap_scatter:
             self.minimap.plotItem.removeItem(self.minimap_scatter)
         self.minimap_scatter=None
-
+        self.legend.hide()
+        
     def _refresh_edges(self):
         if not self.fa2_layout: return
         for name,ell in self.hyperedgeItems.items():

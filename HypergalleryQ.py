@@ -393,13 +393,14 @@ class MainWin(QMainWindow):
                 return np.mean(child_vecs, axis=0, keepdims=True)
         return None
 
-    def compute_similarity(self):
-        if not self.model: 
+    def compute_similarity(self, ref_name: str | None = None):
+        if not self.model:
             return
-        sel = self.tree.selectionModel().selectedRows(0)
-        if not sel: 
-            return
-        ref_name = sel[0].data(Qt.DisplayRole)
+        if ref_name is None:
+            sel = self.tree.selectionModel().selectedRows(0)
+            if not sel:
+                return
+            ref_name = sel[0].data(Qt.DisplayRole)
 
         ref_vec = self._vector_for(ref_name)
         if ref_vec is None:
@@ -426,6 +427,8 @@ class MainWin(QMainWindow):
         self._update_similarity_items(root, sim_map)
         self._update_intersection_items(root, inter_map)
         self._source_model().sort(SIM_COL, Qt.DescendingOrder)
+        self._similarity_ref = ref_name
+        self._similarity_computed = True
 
     def _update_similarity_items(self, parent: QStandardItem, sim_map):
         for r in range(parent.rowCount()):
@@ -482,8 +485,12 @@ class MainWin(QMainWindow):
         self.temi_results = {}
         self.bus = SelectionBus()
         self.bus.edgesChanged.connect(self._update_bus_images)
-        self.bus.edgesChanged.connect(print)
+        #self.bus.edgesChanged.connect(print)
+        self.bus.edgesChanged.connect(self._remember_last_edge)
 
+        self._last_edge = None
+        self._similarity_ref = None
+        self._similarity_computed = False
         # Track layout changes vs. hyperedge modifications
         self._skip_next_layout = False
         self._layout_timer = QTimer(self)
@@ -562,6 +569,18 @@ class MainWin(QMainWindow):
         self.btn_meta_overview = QPushButton("Metadata overview")
         self.btn_meta_overview.clicked.connect(self.show_metadata_overview)
 
+        self.btn_color_default = QPushButton("Colorize (edge)")
+        self.btn_color_default.clicked.connect(self.color_edges_default)
+
+        self.btn_color_status = QPushButton("Colorize by status")
+        self.btn_color_status.clicked.connect(self.color_edges_by_status)
+
+        self.btn_color_origin = QPushButton("Colorize by origin")
+        self.btn_color_origin.clicked.connect(self.color_edges_by_origin)
+
+        self.btn_color_similarity = QPushButton("Colorize by similarity")
+        self.btn_color_similarity.clicked.connect(self.color_edges_by_similarity)
+
         toolbar_layout.addWidget(self.btn_sim)
         toolbar_layout.addWidget(self.btn_add_hyperedge)
         toolbar_layout.addWidget(self.btn_del_hyperedge)
@@ -575,7 +594,10 @@ class MainWin(QMainWindow):
         toolbar_layout.addWidget(self.text_query)
         toolbar_layout.addWidget(self.btn_rank_text)
         toolbar_layout.addWidget(self.btn_meta_overview)
-
+        toolbar_layout.addWidget(self.btn_color_default)
+        toolbar_layout.addWidget(self.btn_color_status)
+        toolbar_layout.addWidget(self.btn_color_origin)
+        toolbar_layout.addWidget(self.btn_color_similarity)
 
         self.image_grid = ImageGridDock(self.bus, self)
         self.overlap_dock = OverlapListDock(self.bus, self.image_grid, self)
@@ -1258,6 +1280,62 @@ class MainWin(QMainWindow):
                 for child in self.groups[name]:
                     idxs.update(self.model.hyperedges.get(child, set()))
         self.bus.set_images(sorted(idxs))
+
+    def _remember_last_edge(self, names: list[str]):
+        if names:
+            self._last_edge = names[0]
+
+    # ------------------------------------------------------------------
+    def color_edges_default(self):
+        """Color hyperedge nodes with the session's stored colors."""
+        if not self.model:
+            return
+        self.spatial_dock.update_colors(self.model.edge_colors)
+        self.spatial_dock.hide_legend()
+
+    def color_edges_by_status(self):
+        """Color hyperedges based on their edit status."""
+        if not self.model:
+            return
+        statuses = sorted({meta.get("status", "") for meta in self.model.status_map.values()})
+        colors = {s: pg.mkColor(pg.intColor(i, hues=len(statuses))).name() for i, s in enumerate(statuses)}
+        mapping = {name: colors[self.model.status_map[name]["status"]] for name in self.model.hyperedges}
+        self.spatial_dock.update_colors(mapping)
+        self.spatial_dock.show_legend(colors)
+
+    def color_edges_by_origin(self):
+        """Color hyperedges based on their origin."""
+        if not self.model:
+            return
+        origins = sorted(set(self.model.edge_origins.values()))
+        colors = {o: pg.mkColor(pg.intColor(i, hues=len(origins))).name() for i, o in enumerate(origins)}
+        mapping = {name: colors[self.model.edge_origins.get(name, "") ] for name in self.model.hyperedges}
+        self.spatial_dock.update_colors(mapping)
+        self.spatial_dock.show_legend(colors)
+
+    def color_edges_by_similarity(self):
+        """Color hyperedges by similarity to the selected or last edge."""
+        if not self.model:
+            return
+        sel = self.tree.selectionModel().selectedRows(0)
+        ref = sel[0].data(Qt.DisplayRole) if sel else self._last_edge
+        if not ref:
+            return
+        if not self._similarity_computed or self._similarity_ref != ref:
+            self.compute_similarity(ref)
+        sim_map = self.model.similarity_map(ref)
+        if not sim_map:
+            return
+        max_v = max(sim_map.values())
+        min_v = min(sim_map.values())
+        denom = max(max_v - min_v, 1e-6)
+        cmap = {}
+        for name, val in sim_map.items():
+            norm = (val - min_v) / denom
+            col = pg.mkColor(pg.intColor(int(norm * 255), hues=256)).name()
+            cmap[name] = col
+        self.spatial_dock.update_colors(cmap)
+        self.spatial_dock.hide_legend()
 
     def regroup(self):
         print('start regroup')
