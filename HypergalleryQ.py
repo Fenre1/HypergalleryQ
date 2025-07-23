@@ -382,7 +382,6 @@ class MainWin(QMainWindow):
 
     def _vector_for(self, name: str) -> np.ndarray | None:
         avg = self.model.hyperedge_avg_features
-        for key in avg:
         if name in avg:
             return avg[name][None, :]
 
