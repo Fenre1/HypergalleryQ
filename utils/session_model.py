@@ -235,7 +235,7 @@ class SessionModel(QObject):
             for i, name in enumerate(self.cat_list)
         }
         self.edge_origins = {
-            name: (edge_origins[i] if edge_origins and i < len(edge_origins) else "Loaded")
+            name: (edge_origins[i] if edge_origins and i < len(edge_origins) else "swinv2")
             for i, name in enumerate(self.cat_list)
         }
         self.umap_embedding = umap_embedding
@@ -598,7 +598,7 @@ class SessionModel(QObject):
         self.hyperedge_avg_features = self._calculate_hyperedge_avg_features(
             self.features
         )
-        status = "Original" if origin == "places365" else "Cluster"
+        status = "Original" if origin == "places365" else "Origin"
         self.status_map = {
             name: {"uuid": str(uuid.uuid4()), "status": status}
             for name in self.cat_list
@@ -625,7 +625,9 @@ class SessionModel(QObject):
             raise ValueError("matrix row count must match number of images")
 
         start_idx = len(self.cat_list)
-        for i in range(matrix.shape[1]):
+        n_new = matrix.shape[1]
+        color_list = generate_n_colors(start_idx + n_new)
+        for i in range(n_new):
             name = f"{prefix}_{start_idx + i}"
             col = matrix[:, i].astype(int)
             self.df_edges[name] = col
@@ -640,13 +642,13 @@ class SessionModel(QObject):
                 if idxs
                 else np.zeros(self.features.shape[1])
             )
-            status = "Original" if origin == "places365" else "Cluster"
+            status = "Original" if origin == "places365" else "Origin"
             self.status_map[name] = {"uuid": str(uuid.uuid4()), "status": status}
             # cmap_hues = max(len(self.cat_list), 16)
             # self.edge_colors[name] = pg.mkColor(
             #     pg.intColor(len(self.edge_colors), hues=cmap_hues)
             # ).name()
-            self.edge_colors[name] = generate_n_colors(len(self.edge_colors) + 1)[-1]
+            self.edge_colors[name] = color_list[start_idx + i]
             self.edge_origins[name] = origin
 
         self.overview_triplets = None
