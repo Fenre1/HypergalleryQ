@@ -565,15 +565,18 @@ class SessionModel(QObject):
         return float(np.std(sims))
 
     # ------------------------------------------------------------------
-    def compute_overview_triplets(self) -> Dict[str, tuple[int | None, ...]]:
-        """Return and cache up to six representative image indices per edge."""
-        if self.overview_triplets is not None:
-            return self.overview_triplets
+    def overview_triplet_for(self, name: str) -> tuple[int | None, ...]:
+        """Return cached representative images for a single edge."""
+        if self.overview_triplets is None:
+            self.overview_triplets = {}
+        trip = self.overview_triplets.get(name)
+        if trip is not None:
+            return trip
 
-        res: Dict[str, tuple[int | None, ...]] = {}
-        for name, idxs in self.hyperedges.items():
-            if not idxs:
-                continue
+        idxs = self.hyperedges.get(name)
+        if not idxs:
+            trip = ()
+        else:
             idx_list = list(idxs)
             feats = self.features[idx_list]
             avg = self.hyperedge_avg_features[name].reshape(1, -1)
@@ -604,10 +607,22 @@ class SessionModel(QObject):
                 final.append(farthest)
             while len(final) < 6:
                 final.append(None)
-            res[name] = tuple(final[:6])
+            trip = tuple(final[:6])
 
-        self.overview_triplets = res
-        return res
+        self.overview_triplets[name] = trip
+        return trip
+
+    # ------------------------------------------------------------------
+    def compute_overview_triplets(self) -> Dict[str, tuple[int | None, ...]]:
+        """Return and cache up to six representative image indices per edge."""
+        if self.overview_triplets is None:
+            self.overview_triplets = {}
+
+        for name in self.hyperedges:
+            if name not in self.overview_triplets:
+                self.overview_triplets[name] = self.overview_triplet_for(name)
+
+        return self.overview_triplets
 
     def apply_clustering_matrix(
         self, matrix: np.ndarray, *, prefix: str = "edge", origin: str = "swinv2"
