@@ -29,8 +29,11 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox,
     QAbstractItemView,
     QLineEdit,
-    QGroupBox
-) 
+    QGroupBox,
+    QCheckBox,
+    QHBoxLayout
+)
+ 
 from PyQt5.QtGui import (
     QStandardItem,
     QStandardItemModel,
@@ -639,6 +642,18 @@ class MainWin(QMainWindow):
         self.btn_session_stats = QPushButton("Session stats")
         self.btn_session_stats.clicked.connect(self.show_session_stats)
 
+        # --- Spatial view limits ---
+        self.limit_images_cb = QCheckBox("Limit number of image nodes per hyperedge")
+        self.limit_images_edit = QLineEdit("10")
+        lim_img_row = QHBoxLayout(); lim_img_row.addWidget(self.limit_images_cb); lim_img_row.addWidget(self.limit_images_edit)
+        lim_img_w = QWidget(); lim_img_w.setLayout(lim_img_row)
+
+        self.limit_edges_cb = QCheckBox("Limit number of intersecting hyperedges")
+        self.limit_edges_edit = QLineEdit("10")
+        lim_edge_row = QHBoxLayout(); lim_edge_row.addWidget(self.limit_edges_cb); lim_edge_row.addWidget(self.limit_edges_edit)
+        lim_edge_w = QWidget(); lim_edge_row.setContentsMargins(0,0,0,0); lim_img_row.setContentsMargins(0,0,0,0); lim_edge_w.setLayout(lim_edge_row)
+
+
 
         toolbar_layout.addWidget(self.btn_sim)
         toolbar_layout.addWidget(self.btn_add_hyperedge)
@@ -658,6 +673,9 @@ class MainWin(QMainWindow):
         toolbar_layout.addWidget(self.btn_color_status)
         toolbar_layout.addWidget(self.btn_color_origin)
         toolbar_layout.addWidget(self.btn_color_similarity)
+        toolbar_layout.addWidget(lim_img_w)
+        toolbar_layout.addWidget(lim_edge_w)
+
 
         self.legend_box = QGroupBox("Legend")
         self.legend_layout = QVBoxLayout(self.legend_box)
@@ -680,6 +698,13 @@ class MainWin(QMainWindow):
         # --- Spatial View ---
         self.spatial_dock = SpatialViewQDock(self.bus, self)
         self.spatial_dock.setObjectName("SpatialViewDock")
+        self.limit_images_cb.toggled.connect(self._update_spatial_limits)
+        self.limit_images_edit.editingFinished.connect(self._update_spatial_limits)
+        self.limit_edges_cb.toggled.connect(self._update_spatial_limits)
+        self.limit_edges_edit.editingFinished.connect(self._update_spatial_limits)
+        self._update_spatial_limits()
+
+
 
         # --- Hyperedge Matrix ---
         self.matrix_dock = HyperedgeMatrixDock(self.bus, self)
@@ -1496,7 +1521,18 @@ class MainWin(QMainWindow):
 
     def _hide_legend(self):
         self.legend_box.hide()
-
+    
+    def _update_spatial_limits(self):
+        try:
+            img_val = int(self.limit_images_edit.text())
+        except ValueError:
+            img_val = 10
+        try:
+            edge_val = int(self.limit_edges_edit.text())
+        except ValueError:
+            edge_val = 10
+        self.spatial_dock.set_image_limit(self.limit_images_cb.isChecked(), img_val)
+        self.spatial_dock.set_intersection_limit(self.limit_edges_cb.isChecked(), edge_val)
 
     # ------------------------------------------------------------------
     def color_edges_default(self):

@@ -290,6 +290,15 @@ class SpatialViewQDock(QDockWidget):
         self.color_map: dict[str, str] = {}
         self._overview_triplets: dict[str, tuple[int | None, ...]] | None = None
 
+        self._current_edge: str | None = None
+
+        # limit settings
+        self.limit_images_enabled = False
+        self.limit_images_value = 10
+        self.limit_edges_enabled = False
+        self.limit_edges_value = 10
+
+
         # fast‑similarity pre‑computes
         self._features_norm: np.ndarray | None = None
         self._centroid_norm: dict[str, np.ndarray] = {}
@@ -398,6 +407,25 @@ class SpatialViewQDock(QDockWidget):
 
     def hide_legend(self):
         self.legend.hide()
+
+    def set_image_limit(self, enabled: bool, value: int):
+        self.limit_images_enabled = enabled
+        self.limit_images_value = value
+        self._radial_cache_by_edge.clear()
+        if self._current_edge:
+            self._radial_layout_cache = self._compute_radial_layout(self._current_edge)
+        self._update_image_layer()
+
+    def set_intersection_limit(self, enabled: bool, value: int):
+        self.limit_edges_enabled = enabled
+        self.limit_edges_value = value
+        self._radial_cache_by_edge.clear()
+        if self._current_edge:
+            self._radial_layout_cache = self._compute_radial_layout(self._current_edge)
+        self._update_image_layer()
+
+
+
     # ============================================================================ #
     # Session / model setup (No changes here, kept for context)                    #
     # ============================================================================ #
@@ -884,7 +912,8 @@ class SpatialViewQDock(QDockWidget):
             return self._radial_cache_by_edge[sel_name]
 
         session, layout = self.session, self.fa2_layout
-        if session is None or layout is None: return {}, []
+        if session is None or layout is None:
+            return {}, []
 
         offsets, links = {}, []
         if sel_name not in layout.names:
@@ -895,25 +924,69 @@ class SpatialViewQDock(QDockWidget):
             for n in layout.names
         }
 
-        sel_idx = list(session.hyperedges[sel_name])
-        if not sel_idx:
+        sel_full = session.hyperedges[sel_name]
+        if not sel_full:
             return {}, []
 
-        for idx in sel_idx:
+        if self.limit_images_enabled:
+            idx_list = list(sel_full)
+            feats = session.features[idx_list]
+            avg = session.hyperedge_avg_features[sel_name].reshape(1, -1)
+            sims = SIM_METRIC(avg, feats)[0]
+            order = np.argsort(sims)
+            n_top = self.limit_images_value // 2
+            n_bottom = self.limit_images_value - n_top
+            chosen = [idx_list[i] for i in order[::-1][:n_top]]
+            for i in order[:n_bottom]:
+                cand = idx_list[i]
+                if cand not in chosen:
+                    chosen.append(cand)
+                if len(chosen) >= self.limit_images_value:
+                    break
+            sel_display = set(chosen)
+        else:
+            sel_display = set(sel_full)
+
+        for idx in sel_display:
             vec = self._image_umap.get(sel_name, {}).get(idx, np.zeros(2))
             offsets[(sel_name, idx)] = vec * radius_map[sel_name]
 
-        for tgt in session.hyperedges:
-            if tgt == sel_name or tgt not in layout.names:
-                continue
-            shared = session.hyperedges[tgt] & session.hyperedges[sel_name]
-            if not shared:
-                continue
-            for idx in session.hyperedges[tgt]:
+        inter_counts = {
+            e: len(session.hyperedges[e] & sel_full)
+            for e in session.hyperedges
+            if e != sel_name and e in layout.names
+        }
+
+        if self.limit_edges_enabled:
+            top_edges = {
+                e for e, _ in sorted(inter_counts.items(), key=lambda x: x[1], reverse=True)[: self.limit_edges_value]
+            }
+        else:
+            top_edges = set(inter_counts)
+
+        for tgt in inter_counts:
+            shared_full = session.hyperedges[tgt] & sel_full
+            if self.limit_images_enabled:
+                shared = shared_full & sel_display
+                if not shared:
+                    continue
+            else:
+                shared = shared_full
+
+            show_all = (not self.limit_edges_enabled) or (tgt in top_edges)
+
+            for idx in shared:
                 vec = self._image_umap.get(tgt, {}).get(idx, np.zeros(2))
                 offsets[(tgt, idx)] = vec * radius_map[tgt]
-            for idx in shared:
                 links.append(((sel_name, idx), (tgt, idx)))
+
+            if show_all:
+                extras = session.hyperedges[tgt] - shared_full
+                if self.limit_images_enabled:
+                    extras = list(extras)[: self.limit_images_value]
+                for idx in extras:
+                    vec = self._image_umap.get(tgt, {}).get(idx, np.zeros(2))
+                    offsets[(tgt, idx)] = vec * radius_map[tgt]
 
         self._radial_cache_by_edge[sel_name] = (offsets, links)
         print('_compute_radial_layout', time.perf_counter() - start_timer15)
@@ -928,9 +1001,13 @@ class SpatialViewQDock(QDockWidget):
             col = self.color_map.get(name, '#AAAAAA')
             ell.setPen(pg.mkPen(col)); ell.setBrush(pg.mkBrush(col))
         self._selected_nodes.clear()
-        if len(names) == 1:            
+        if len(names) == 1:
+            self._current_edge = names[0]
             self._radial_layout_cache = self._compute_radial_layout(names[0])
             print('_on_edges',time.perf_counter() - start_timer7)
+        else:
+            self._current_edge = None
+            self._radial_layout_cache = None
         self._update_image_layer()
         print('_on_edges2',time.perf_counter() - start_timer7)
       
