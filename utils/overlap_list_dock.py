@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QPixmap, QColor
 from PyQt5.QtCore import Qt
-
+import time
 from .session_model import SessionModel
 from .selection_bus import SelectionBus
 from .image_grid import ImageGridDock
@@ -49,30 +49,40 @@ class OverlapListDock(QDockWidget):
 
     # ------------------------------------------------------------------
     def _update_list(self, idxs: Iterable[int]):
+        start_timer16 = time.perf_counter()        
         self.list_widget.clear()
         indices = set(idxs)
         if not indices:
             self._last_indices = set()
             return
-
+        print('_update_list1',time.perf_counter() - start_timer16)
         edge_counts: Dict[str, int] = {}
         for idx in indices:
             for edge in self.session.image_mapping.get(idx, set()):
                 edge_counts[edge] = edge_counts.get(edge, 0) + 1
-
+        print('_update_list2',time.perf_counter() - start_timer16)
         if not edge_counts:
             self._last_indices = indices
             return
-
+        print('_update_list3',time.perf_counter() - start_timer16)
         triplets = self.session.compute_overview_triplets()
+        print('_update_list4',time.perf_counter() - start_timer16)
+        xxx = 0
         for name, count in sorted(edge_counts.items(), key=lambda x: x[1], reverse=True):
+            
+            if xxx == 0:
+                print('_update_list4.1',time.perf_counter() - start_timer16)
             item = QListWidgetItem()
             item.setData(Qt.UserRole, name)
             widget = QWidget()
             layout = QHBoxLayout(widget)
             layout.setContentsMargins(2, 2, 2, 2)
             layout.addWidget(QLabel(f"{name} ({count})"))
+            if xxx == 0:
+                print('_update_list4.2',time.perf_counter() - start_timer16)
             imgs = triplets.get(name, ())
+            if xxx == 0:
+                print('_update_list4.3',time.perf_counter() - start_timer16)
             for idx in imgs[:6]:
                 lbl = QLabel()
                 lbl.setFixedSize(self.THUMB_SIZE, self.THUMB_SIZE)
@@ -87,11 +97,17 @@ class OverlapListDock(QDockWidget):
                         )
                         lbl.setPixmap(pix)
                 layout.addWidget(lbl)
+            if xxx == 0:
+                print('_update_list4.4',time.perf_counter() - start_timer16)
+            xxx = 1
             item.setSizeHint(widget.sizeHint())
             self.list_widget.addItem(item)
             self.list_widget.setItemWidget(item, widget)
-
+            if xxx == 0:
+                print('_update_list4.5',time.perf_counter() - start_timer16)
+        print('_update_list5',time.perf_counter() - start_timer16)
         self._last_indices = indices
+        print('_update_list6',time.perf_counter() - start_timer16)
 
     # ------------------------------------------------------------------
     def _on_double_clicked(self, item: QListWidgetItem):

@@ -23,6 +23,14 @@ def generate_n_colors(n: int, saturation: int = 150, value: int = 230) -> list[s
         colors.append(color.name())
     return colors
 
+def jaccard_similarity(a: Set[int], b: Set[int]) -> float:
+    """Return the Jaccard similarity between two sets."""
+    if not a and not b:
+        return 1.0
+    return len(a & b) / len(a | b)
+
+
+
 class SessionModel(QObject):
     # ─── signals any view can subscribe to ──────────────────────────────
     edgeRenamed      = Signal(str, str)      # old, new
@@ -508,6 +516,30 @@ class SessionModel(QObject):
         self.similarityDirty.emit()
         self.hyperedgeModified.emit(orphan_name)
         # self.hyperedgeModified.emit(name)
+
+    def prune_similar_edges(self, threshold: float) -> None:
+        """Remove supplementary hyperedges that are too similar."""
+        precedence = ["swinv2", "places365", "openclip"]
+        ordered_names = self.cat_list[:]
+        kept: list[str] = []
+        remove: list[str] = []
+        for origin in precedence:
+            for name in ordered_names:
+                if self.edge_origins.get(name) != origin or name in remove:
+                    continue
+                is_dup = False
+                for k in kept:
+                    if jaccard_similarity(self.hyperedges[name], self.hyperedges[k]) > threshold:
+                        is_dup = True
+                        break
+                if is_dup:
+                    remove.append(name)
+                else:
+                    kept.append(name)
+
+        for name in remove:
+            self.delete_hyperedge(name)
+
 
     # convenience read-only properties -----------------------------------
     def vector_for(self, name: str) -> np.ndarray | None:

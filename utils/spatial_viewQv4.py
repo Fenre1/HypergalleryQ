@@ -773,12 +773,15 @@ class SpatialViewQDock(QDockWidget):
         self.minimap_rect.setSize(QPointF(xr[1]-xr[0],yr[1]-yr[0]))
 
     def _update_image_layer(self):
+        start_time4 = time.perf_counter()
+        
+
         if self._radial_layout_cache is None:
             if self.image_scatter: self.image_scatter.hide()
             if self.link_curve: self.link_curve.hide()
             self.tooltip_manager.hide()
             return
-
+        print('_update_image_layer-4',time.perf_counter() - start_time4 )
         xr,_=self.view.viewRange()
         if (xr[1]-xr[0])>self.zoom_threshold:
             if self.image_scatter: self.image_scatter.hide()
@@ -801,7 +804,7 @@ class SpatialViewQDock(QDockWidget):
         # Hover events are now globally controlled, so no need to toggle them here
         if not self._should_show_image_tooltip() and not self._should_show_hyperedge_tooltip():
             self.tooltip_manager.hide()
-
+        print('_update_image_layer-3',time.perf_counter() - start_time4 )
         if self.link_curve is None:
             self.link_curve=pg.PlotCurveItem(pen=pg.mkPen(QColor(255,255,255,150),width=1))
             self.view.addItem(self.link_curve)
@@ -813,7 +816,7 @@ class SpatialViewQDock(QDockWidget):
         if self.selected_links is None:
             self.selected_links=pg.PlotCurveItem(pen=pg.mkPen(QColor(255,0,0,150),width=1))
             self.view.addItem(self.selected_links)
-
+        print('_update_image_layer-2',time.perf_counter() - start_time4 )
         rel,links=self._radial_layout_cache
         k_list=list(rel.keys())
         if not k_list:
@@ -821,13 +824,13 @@ class SpatialViewQDock(QDockWidget):
             self.selected_scatter.setData([],[]); self.selected_links.setData([],[])
             self._abs_pos_cache={}
             return
-
+        print('_update_image_layer-1',time.perf_counter() - start_time4 )
         offsets=np.array(list(rel.values()),dtype=float)
         centres=np.array([self.fa2_layout.positions[e] for e,_ in k_list])
         abs_pos=centres+offsets
         self.image_scatter.setData(pos=abs_pos, data=k_list)
         self._abs_pos_cache={k:p for k,p in zip(k_list,abs_pos)}
-
+        print('_update_image_layer0',time.perf_counter() - start_time4 )
         if links:
             pairs=np.empty((2*len(links),2),dtype=float)
             abs_dict=self._abs_pos_cache
@@ -836,10 +839,12 @@ class SpatialViewQDock(QDockWidget):
             self.link_curve.setData(pairs[:,0],pairs[:,1],connect='pairs')
         else:
             self.link_curve.setData([],[])
-
+        print('_update_image_layer',time.perf_counter() - start_time4 )
         self._update_selected_overlay()
+        print('_update_image_layer2',time.perf_counter() - start_time4 )
 
     def _update_selected_overlay(self):
+        start_timer6 = time.perf_counter() 
         if not self._selected_nodes or not self._radial_layout_cache:
             if self.selected_scatter: self.selected_scatter.setData([], [])
             if self.selected_links: self.selected_links.setData([], [])
@@ -847,9 +852,10 @@ class SpatialViewQDock(QDockWidget):
 
         abs_pos_cache = self._abs_pos_cache
         sel_pos = [abs_pos_cache[k] for k in self._selected_nodes if k in abs_pos_cache]
-
-        if self.selected_scatter: self.selected_scatter.setData(pos=np.array(sel_pos))
-
+        print('_update_selected_overlay',time.perf_counter() - start_timer6 )
+        if self.selected_scatter: 
+            self.selected_scatter.setData(pos=np.array(sel_pos))
+            print('_update_selected_overlay2',time.perf_counter() - start_timer6 )
         rel, links = self._radial_layout_cache
         pairs = []
         for a, b in links:
@@ -857,11 +863,14 @@ class SpatialViewQDock(QDockWidget):
                 if a in abs_pos_cache and b in abs_pos_cache:
                     pairs.append(abs_pos_cache[a])
                     pairs.append(abs_pos_cache[b])
+        print('_update_selected_overlay3',time.perf_counter() - start_timer6 )
         if pairs and self.selected_links:
             arr = np.array(pairs)
             self.selected_links.setData(arr[:,0], arr[:,1], connect='pairs')
+            print('_update_selected_overlay4',time.perf_counter() - start_timer6 )
         elif self.selected_links:
             self.selected_links.setData([], [])
+            print('_update_selected_overlay5',time.perf_counter() - start_timer6 )
 
     def _compute_overview_triplets(self) -> dict[str, tuple[int | None, ...]]:
         session = self.session
@@ -869,6 +878,8 @@ class SpatialViewQDock(QDockWidget):
         return session.compute_overview_triplets()
 
     def _compute_radial_layout(self, sel_name: str):
+        start_timer15 = time.perf_counter()
+        
         if sel_name in self._radial_cache_by_edge:
             return self._radial_cache_by_edge[sel_name]
 
@@ -905,21 +916,27 @@ class SpatialViewQDock(QDockWidget):
                 links.append(((sel_name, idx), (tgt, idx)))
 
         self._radial_cache_by_edge[sel_name] = (offsets, links)
+        print('_compute_radial_layout', time.perf_counter() - start_timer15)
         return offsets, links
 
 
 
     def _on_edges(self, names: list[str]):
+        start_timer7 = time.perf_counter()
+        
         for name, ell in self.hyperedgeItems.items():
             col = self.color_map.get(name, '#AAAAAA')
             ell.setPen(pg.mkPen(col)); ell.setBrush(pg.mkBrush(col))
         self._selected_nodes.clear()
-        if len(names) == 1:
+        if len(names) == 1:            
             self._radial_layout_cache = self._compute_radial_layout(names[0])
+            print('_on_edges',time.perf_counter() - start_timer7)
         self._update_image_layer()
-
+        print('_on_edges2',time.perf_counter() - start_timer7)
       
     def _on_images(self, idxs: list[int]):
+        start_timer5 = time.perf_counter()
+        
         if not self.session:
             return
 
@@ -955,11 +972,10 @@ class SpatialViewQDock(QDockWidget):
             self._highlight_timer.start()
 
         self._selected_nodes = {(e, i) for i in idxs for e in self.session.image_mapping.get(i, [])}
+        print('_on_images',time.perf_counter() - start_timer5)
         self._update_selected_overlay()
+        print('_on_images2',time.perf_counter() - start_timer5)
 
-
-
-    
 
     def _on_hyperedge_modified(self, name: str):
         if not self.session:
@@ -979,6 +995,7 @@ class SpatialViewQDock(QDockWidget):
         self._update_image_layer()
 
     def _on_worker_layout(self, layout: dict):
+        start_timer12 = time.perf_counter()        
         if not self.session:
             return
         names = list(layout)
@@ -988,7 +1005,7 @@ class SpatialViewQDock(QDockWidget):
         self.edge_index = {n: i for i, n in enumerate(names)}
         self._radial_cache_by_edge.clear()
         self._radial_layout_cache = None
-
+        print('_on_worker_layout',time.perf_counter() - start_timer12)
         for name in list(self.hyperedgeItems):
             if name not in layout:
                 self.view.removeItem(self.hyperedgeItems.pop(name))
@@ -1006,8 +1023,8 @@ class SpatialViewQDock(QDockWidget):
             x, y = positions[name]
             self.hyperedgeItems[name].setPos(x, y)
         self._refresh_edges()
+        print('_on_worker_layout2',time.perf_counter() - start_timer12)
         self._update_image_layer()
-
 
 
     def _on_click(self, ev):

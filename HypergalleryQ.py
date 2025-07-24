@@ -7,6 +7,7 @@ from pathlib import Path
 import io
 import torch
 from PIL import Image, ImageGrab
+import time
 import pyqtgraph as pg
 from PyQt5.QtWidgets import (
     QApplication,
@@ -64,6 +65,7 @@ from utils.feature_extraction import (
     DenseNet161Places365FeatureExtractor,
 )
 from utils.file_utils import get_image_files
+from utils.session_stats import show_session_stats
 from utils.metadata_overview import show_metadata_overview
 from clustering.temi_clustering import temi_cluster
 import pyqtgraph as pg
@@ -93,6 +95,7 @@ def apply_dark_palette(app: QApplication) -> None:
     app.setPalette(palette)
 
 THRESHOLD_DEFAULT = 0.8
+JACCARD_PRUNE_DEFAULT = 0.5
 ORIGIN_COL = 3
 SIM_COL = 4
 STDDEV_COL = 5
@@ -187,14 +190,22 @@ class NewSessionDialog(QDialog):
         thr_info.setWordWrap(True)
         layout.addWidget(thr_info)
 
+        layout.addWidget(QLabel("Duplicate removal Jaccard threshold:"))
+        self.jacc_edit = QLineEdit(str(JACCARD_PRUNE_DEFAULT))
+        layout.addWidget(self.jacc_edit)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText("Start generating hypergraph")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def parameters(self) -> tuple[int, float]:
-        return int(self.edge_edit.text()), float(self.thr_edit.text())
+    def parameters(self) -> tuple[int, float, float]:
+        return (
+            int(self.edge_edit.text()),
+            float(self.thr_edit.text()),
+            float(self.jacc_edit.text()),
+        )
 
 
 class ReconstructDialog(QDialog):
@@ -219,13 +230,22 @@ class ReconstructDialog(QDialog):
         self.thr_edit = QLineEdit("0.5")
         layout.addWidget(self.thr_edit)
 
+        layout.addWidget(QLabel("Duplicate removal Jaccard threshold:"))
+        self.jacc_edit = QLineEdit(str(JACCARD_PRUNE_DEFAULT))
+        layout.addWidget(self.jacc_edit)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def parameters(self) -> tuple[int, float]:
-        return int(self.edge_edit.text()), float(self.thr_edit.text())
+    def parameters(self) -> tuple[int, float, float]:
+        return (
+            int(self.edge_edit.text()),
+            float(self.thr_edit.text()),
+            float(self.jacc_edit.text()),
+        )
+
 
 
 class HyperEdgeTree(QTreeView):
@@ -616,6 +636,10 @@ class MainWin(QMainWindow):
         self.btn_color_similarity = QPushButton("Colorize by similarity")
         self.btn_color_similarity.clicked.connect(self.color_edges_by_similarity)
 
+        self.btn_session_stats = QPushButton("Session stats")
+        self.btn_session_stats.clicked.connect(self.show_session_stats)
+
+
         toolbar_layout.addWidget(self.btn_sim)
         toolbar_layout.addWidget(self.btn_add_hyperedge)
         toolbar_layout.addWidget(self.btn_del_hyperedge)
@@ -626,6 +650,7 @@ class MainWin(QMainWindow):
         toolbar_layout.addWidget(self.btn_rank_file)
         toolbar_layout.addWidget(self.btn_rank_clip)
         toolbar_layout.addWidget(self.btn_overview)
+        toolbar_layout.addWidget(self.btn_session_stats)
         toolbar_layout.addWidget(self.text_query)
         toolbar_layout.addWidget(self.btn_rank_text)
         toolbar_layout.addWidget(self.btn_meta_overview)
@@ -975,6 +1000,13 @@ class MainWin(QMainWindow):
         show_metadata_overview(self.model, self)
 
 
+    def show_session_stats(self):
+        """Show basic statistics about the current session."""
+        if not self.model:
+            QMessageBox.warning(self, "No Session", "Please load a session first.")
+            return
+        show_session_stats(self.model, self)
+
     def add_metadata_hyperedges(self, column: str) -> None:
         """Create hyperedges from a metadata column."""
         if not self.model:
@@ -1089,7 +1121,7 @@ class MainWin(QMainWindow):
         if dlg.exec_() != QDialog.Accepted:
             return
         try:
-            n_edges, thr = dlg.parameters()
+            n_edges, thr, prune_thr = dlg.parameters()
         except Exception:
             QMessageBox.warning(self, "Invalid Input", "Enter valid numbers.")
             return
@@ -1158,6 +1190,8 @@ class MainWin(QMainWindow):
             self.model.append_clustering_matrix(oc_matrix, origin="openclip", prefix="clip")
         if plc_matrix.size:
             self.model.append_clustering_matrix(plc_matrix, origin="places365", prefix="plc365")
+        self.model.prune_similar_edges(prune_thr)
+
 
         self.model.layoutChanged.connect(self.regroup)
         self._overview_triplets = None
@@ -1286,7 +1320,7 @@ class MainWin(QMainWindow):
         if dlg.exec_() != QDialog.Accepted:
             return
         try:
-            n_edges, thr = dlg.parameters()
+            n_edges, thr, prune_thr = dlg.parameters()
         except Exception:
             QMessageBox.warning(self, "Invalid Input", "Enter valid numbers.")
             return
@@ -1362,6 +1396,7 @@ class MainWin(QMainWindow):
             self.model.append_clustering_matrix(oc_matrix, origin="openclip", prefix="clip")
         if plc_matrix is not None and plc_matrix.size:
             self.model.append_clustering_matrix(plc_matrix, origin="places365", prefix="plc365")
+        self.model.prune_similar_edges(prune_thr)
 
         self.model.layoutChanged.connect(self.regroup)
         self._overview_triplets = None
@@ -1388,10 +1423,12 @@ class MainWin(QMainWindow):
         self._layout_timer.start(0)
 
     def _apply_layout_change(self):
+        start_timer13 = time.perf_counter()        
         if hasattr(self, "spatial_dock") and not self._skip_next_layout:
             self.spatial_dock.set_model(self.model)
         self.regroup()
         self._skip_next_layout = False
+        print('_apply_layout_change',time.perf_counter() - start_timer13)
 
     def toggle_full_images(self, flag: bool) -> None:
         self.image_grid.set_use_full_images(flag)
@@ -1426,9 +1463,12 @@ class MainWin(QMainWindow):
         sim_item.setData(None, Qt.UserRole); sim_item.setData("", Qt.DisplayRole)
 
     def _update_bus_images(self, names: list[str]):
+        start_timer14 = time.perf_counter()
+        
         if not self.model:
             self.bus.set_images([])
             return
+        print('_update_bus_images0', time.perf_counter() - start_timer14)
         idxs = set()
         for name in names:
             if name in self.model.hyperedges:
@@ -1436,7 +1476,9 @@ class MainWin(QMainWindow):
             elif hasattr(self, "groups") and name in self.groups:
                 for child in self.groups[name]:
                     idxs.update(self.model.hyperedges.get(child, set()))
+        print('_update_bus_images1', time.perf_counter() - start_timer14)
         self.bus.set_images(sorted(idxs))
+        print('_update_bus_images2', time.perf_counter() - start_timer14)
 
     def _remember_last_edge(self, names: list[str]):
         if names:
@@ -1464,8 +1506,6 @@ class MainWin(QMainWindow):
         self.spatial_dock.update_colors(self.model.edge_colors)
         self.spatial_dock.hide_legend()
         self._hide_legend()
-
-
 
     def color_edges_by_status(self):
         """Color hyperedges based on their edit status."""
@@ -1528,13 +1568,15 @@ class MainWin(QMainWindow):
         self._hide_legend()
 
     def regroup(self):
-        if not self.model: return
+        start_timer14 = time.perf_counter()
+        if not self.model: 
+            return
         thr = self.slider.value() / 100
         self.label.setText(f"Grouping threshold: {thr:.2f}")
 
         self.groups = rename_groups_sequentially(perform_hierarchical_grouping(self.model, thresh=thr))
         rows = build_row_data(self.groups, self.model)
-
+        print('regroup', time.perf_counter() - start_timer14)
         headers = [
             "Name",
             "Images",
@@ -1553,7 +1595,7 @@ class MainWin(QMainWindow):
 
         if hasattr(self, 'matrix_dock'): 
             self.matrix_dock.update_matrix()
-
+        print('regroup1', time.perf_counter() - start_timer14)
 
     def _update_group_similarity(self, group_item: QStandardItem):
         vals = [v for v in (group_item.child(r, SIM_COL).data(Qt.UserRole) for r in range(group_item.rowCount())) if v is not None]
