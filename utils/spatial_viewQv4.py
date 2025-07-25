@@ -75,8 +75,8 @@ def _resolve_overlaps_numba(pos, radii, iterations, strength):
 
 
 def _resolve_overlaps(positions: np.ndarray, radii: np.ndarray,
-                      iterations: int = 10000, strength: float = 2) -> np.ndarray:
-    """Resolve overlaps using the Numba accelerated kernel."""
+                      iterations: int = 10000, strength: float = 1.0) -> np.ndarray:
+
     pos32   = np.ascontiguousarray(positions, dtype=np.float32)
     radii32 = np.ascontiguousarray(radii,     dtype=np.float32)
 
@@ -127,16 +127,23 @@ class _RecalcWorker(QtCore.QObject):
             np.array([np.sqrt(len(session.hyperedges[n])) for n in edges]) * SpatialViewQDock.NODE_SIZE_SCALER,
             SpatialViewQDock.MIN_HYPEREDGE_DIAMETER,
         )
+        
         raw_scale = np.max(np.abs(initial_pos))
         if raw_scale == 0:
             raw_scale = 1.0
-        scale_factor = 10.0 / raw_scale
-        radii = (diameters / 2.0) / scale_factor
-        resolved = _resolve_overlaps(initial_pos, radii)
+        
+        # 1. Scale positions to the final coordinate space *before* resolving overlaps
+        pos_for_resolver = initial_pos * (10.0 / raw_scale)
+
+        # 2. Use radii that correspond to this final coordinate space
+        radii_for_resolver = diameters / 2.0
+
+        # 3. Resolve overlaps in this consistent space
+        resolved = _resolve_overlaps(pos_for_resolver, radii_for_resolver)
+        
+        # 4. The result is already at the correct scale, just center it
         pos = resolved - resolved.mean(axis=0)
-        scale = np.max(np.abs(pos))
-        if scale > 0:
-            pos = pos / scale * 10.0
+        # --- MODIFIED SECTION END ---
 
         layout = {n: (pos[i], diameters[i]) for i, n in enumerate(edges)}
         self.imageEmbeddingReady.emit(edge_name, mapping)
@@ -346,7 +353,11 @@ class SpatialViewQDock(QDockWidget):
         # GUI Setup
         self.view = LassoViewBox(); self.view.setBackgroundColor("#444444")
         self.view.sigRangeChanged.connect(self._update_minimap_view)
-        self.view.sigRangeChanged.connect(self._update_image_layer)
+        #self.view.sigRangeChanged.connect(self._update_image_layer)      
+        self.view.sigRangeChanged.connect(self._update_visibility_on_zoom)
+
+    
+
         self.view.sigLassoFinished.connect(self._on_lasso)
         self.plot = pg.PlotWidget(viewBox=self.view); self.plot.setBackground("#444444")
         self.plot.scene().sigMouseClicked.connect(self._on_click)
@@ -489,26 +500,31 @@ class SpatialViewQDock(QDockWidget):
 
         raw_scale = np.max(np.abs(initial_pos))
         if raw_scale == 0: raw_scale = 1.0
-        pos_scaling_factor = 10.0 / raw_scale
-        raw_radii = (final_diameters / 2.0) / pos_scaling_factor
-        resolved_pos = _resolve_overlaps(initial_pos, raw_radii)
+        
+        # 1. Scale positions to the final coordinate space *before* resolving overlaps
+        pos_for_resolver = initial_pos * (10.0 / raw_scale)
+        
+        # 2. Use radii that correspond to this final coordinate space
+        radii_for_resolver = final_diameters / 2.0
 
+        # 3. Resolve overlaps in this consistent space
+        resolved_pos = _resolve_overlaps(pos_for_resolver, radii_for_resolver)
+
+        # 4. The result is already at the correct scale, just center it
         pos = resolved_pos - resolved_pos.mean(axis=0)
-        scale = np.max(np.abs(pos))
-        if scale > 0:
-            pos = pos / scale * 10.0
+        # --- MODIFIED SECTION END ---
 
         self.edge_index = {n: i for i, n in enumerate(edges)}
-        self.fa2_layout = SimpleNamespace(names=edges, node_sizes=sizes,
+        self.fa2_layout = SimpleNamespace(names=edges, node_sizes=final_diameters,
                                           positions={n: p for n, p in zip(edges, pos)})
-        for name, size in zip(edges, sizes):
+        for name, size in zip(edges, final_diameters):
             r = size / 2
             # Use the simplified HyperedgeItem
             ell = HyperedgeItem(name, QtCore.QRectF(-r, -r, size, size))
             col = self.color_map.get(name, '#AAAAAA')
             ell.setPen(pg.mkPen(col)); ell.setBrush(pg.mkBrush(col))
             self.view.addItem(ell); self.hyperedgeItems[name] = ell
-
+            
         feats = session.features.astype(np.float32)
         norms = np.linalg.norm(feats, axis=1, keepdims=True); norms[norms == 0] = 1
         self._features_norm = feats / norms
@@ -829,24 +845,50 @@ class SpatialViewQDock(QDockWidget):
         self.minimap_rect.setPos(QPointF(xr[0],yr[0]))
         self.minimap_rect.setSize(QPointF(xr[1]-xr[0],yr[1]-yr[0]))
 
+
+    def _update_visibility_on_zoom(self):
+        """
+        A very fast function connected to sigRangeChanged.
+        It only toggles the visibility of items, it does not re-calculate them.
+        """
+        # Get the current horizontal view width
+        xr, _ = self.view.viewRange()
+        view_width = xr[1] - xr[0]
+
+        # Decide if the detailed view should be visible
+        is_visible = view_width <= self.zoom_threshold
+
+        # Toggle visibility (this is a very cheap operation)
+        if self.image_scatter:
+            self.image_scatter.setVisible(is_visible)
+        if self.link_curve:
+            self.link_curve.setVisible(is_visible)
+        
+        # Also hide the tooltip if we zoom out too far
+        if not is_visible:
+            self.tooltip_manager.hide()
+
+
+
     def _update_image_layer(self):
         start_time4 = time.perf_counter()
         
-
         if self._radial_layout_cache is None:
             if self.image_scatter: self.image_scatter.hide()
             if self.link_curve: self.link_curve.hide()
             self.tooltip_manager.hide()
             return
         print('_update_image_layer-4',time.perf_counter() - start_time4 )
-        xr,_=self.view.viewRange()
-        if (xr[1]-xr[0])>self.zoom_threshold:
-            if self.image_scatter: self.image_scatter.hide()
-            if self.link_curve: self.link_curve.hide()
-            self.tooltip_manager.hide()
-            return
-        if self.image_scatter: self.image_scatter.show()
-        if self.link_curve: self.link_curve.show()
+        # xr,_=self.view.viewRange()
+        # if (xr[1]-xr[0])>self.zoom_threshold:
+        #     if self.image_scatter: self.image_scatter.hide()
+        #     if self.link_curve: self.link_curve.hide()
+        #     self.tooltip_manager.hide()
+        #     return
+        if self.image_scatter: 
+            self.image_scatter.show()
+        if self.link_curve: 
+            self.link_curve.show()
 
         if self.image_scatter is None:
             # Use the simplified ImageScatterItem
@@ -862,17 +904,47 @@ class SpatialViewQDock(QDockWidget):
         if not self._should_show_image_tooltip() and not self._should_show_hyperedge_tooltip():
             self.tooltip_manager.hide()
         print('_update_image_layer-3',time.perf_counter() - start_time4 )
+
         if self.link_curve is None:
-            self.link_curve=pg.PlotCurveItem(pen=pg.mkPen(QColor(255,255,255,150),width=1))
+            self.link_curve = pg.PlotCurveItem(
+                pen=pg.mkPen(QColor(255, 255, 255, 150), width=1),
+                autoDownsample=True,  # Automatically adjust detail on zoom
+                downsample=10         # Downsample by a factor of 10 when zoomed out
+            )
             self.view.addItem(self.link_curve)
+
+
+
+        # if self.link_curve is None:
+        #     self.link_curve=pg.PlotCurveItem(pen=pg.mkPen(QColor(255,255,255,150),width=1))
+        #     # self.link_curve.setDownsampling(mode='peak') 
+        #     self.view.addItem(self.link_curve)
+            
         if self.selected_scatter is None:
-            self.selected_scatter=pg.ScatterPlotItem(size=8,symbol='o',pxMode=True,
-                                                     brush=pg.mkBrush('r'),pen=pg.mkPen('k'),
-                                                     useOpenGL=True)
+            self.selected_scatter = pg.ScatterPlotItem(size=8, symbol='o', pxMode=True,
+                                                        brush=pg.mkBrush('r'), pen=pg.mkPen('k'),
+                                                        useOpenGL=True)
             self.view.addItem(self.selected_scatter)
+
+
+
+            self.view.addItem(self.selected_scatter)
+
+
         if self.selected_links is None:
-            self.selected_links=pg.PlotCurveItem(pen=pg.mkPen(QColor(255,0,0,150),width=1))
+            self.selected_links = pg.PlotCurveItem(
+                pen=pg.mkPen(QColor(255, 0, 0, 150), width=1),
+                autoDownsample=True, # Also apply to the selection overlay
+                downsample=10
+            )
             self.view.addItem(self.selected_links)
+
+        # if self.selected_links is None:
+        #     self.selected_links=pg.PlotCurveItem(pen=pg.mkPen(QColor(255,0,0,150),width=1))
+        #     self.view.addItem(self.selected_links)
+
+
+
         print('_update_image_layer-2',time.perf_counter() - start_time4 )
         rel,links=self._radial_layout_cache
         k_list=list(rel.keys())
@@ -920,6 +992,9 @@ class SpatialViewQDock(QDockWidget):
                 if a in abs_pos_cache and b in abs_pos_cache:
                     pairs.append(abs_pos_cache[a])
                     pairs.append(abs_pos_cache[b])
+
+
+                    
         print('_update_selected_overlay3',time.perf_counter() - start_timer6 )
         if pairs and self.selected_links:
             arr = np.array(pairs)
