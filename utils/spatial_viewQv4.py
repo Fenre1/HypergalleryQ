@@ -101,17 +101,19 @@ class _RecalcWorker(QtCore.QObject):
         session = self.session
         if session is None:
             return
-        feats = session.features.astype(np.float32)
-        norms = np.linalg.norm(feats, axis=1, keepdims=True)
-        norms[norms == 0] = 1.0
-        feats_norm = feats / norms
+        # feats = session.features.astype(np.float32)
+        # norms = np.linalg.norm(feats, axis=1, keepdims=True)
+        # norms[norms == 0] = 1.0
+        # feats_norm = feats / norms
+        feats_norm = session.features_unit
+
 
         mapping: dict[int, np.ndarray] = {}
         if edge_name in session.hyperedges:
             idx = list(session.hyperedges[edge_name])
             if idx:
                 print('umap1')
-                emb = umap.UMAP(n_components=2, random_state=42).fit_transform(feats_norm[idx])
+                emb = umap.UMAP(n_components=2, random_state=42,n_jobs=-1).fit_transform(feats_norm[idx])
                 emb = emb - emb.mean(axis=0)
                 m = np.max(np.linalg.norm(emb, axis=1))
                 if m > 0:
@@ -120,7 +122,7 @@ class _RecalcWorker(QtCore.QObject):
 
         edges = list(session.hyperedges)
         edge_feats = np.stack([session.hyperedge_avg_features[e] for e in edges]).astype(np.float32)
-        reducer = umap.UMAP(n_components=2, random_state=42, min_dist=0.8)
+        reducer = umap.UMAP(n_components=2, random_state=42, min_dist=0.8, n_jobs=-1)
         print('umap2')
         initial_pos = reducer.fit_transform(edge_feats)
         diameters = np.maximum(
@@ -300,6 +302,8 @@ class SpatialViewQDock(QDockWidget):
     def __init__(self, bus: SelectionBus, parent=None):
         super().__init__("Hyperedge View", parent)
         self.bus = bus
+        self._layout_version: int | None = None   # current data version
+        self._rendered_version: int | None = None # last version sent to GPU
 
         self._highlight_anim_duration = 1000  # ms (1 second)
         self._highlight_anim_steps = 20
@@ -454,6 +458,8 @@ class SpatialViewQDock(QDockWidget):
         self._radial_cache_by_edge.clear()
         if self._current_edge:
             self._radial_layout_cache = self._compute_radial_layout(self._current_edge)
+            self._layout_version = (self._layout_version or 0) + 1
+
         self._update_image_layer()
 
     def set_intersection_limit(self, enabled: bool, value: int):
@@ -462,6 +468,8 @@ class SpatialViewQDock(QDockWidget):
         self._radial_cache_by_edge.clear()
         if self._current_edge:
             self._radial_layout_cache = self._compute_radial_layout(self._current_edge)
+            self._layout_version = (self._layout_version or 0) + 1
+
         self._update_image_layer()
 
 
@@ -480,6 +488,8 @@ class SpatialViewQDock(QDockWidget):
         self.fa2_layout = None
         self._radial_cache_by_edge = {}
         self._radial_layout_cache = None
+        self._layout_version = (self._layout_version or 0) + 1
+
         self._overview_triplets = None
         if session is None:
             return
@@ -490,7 +500,7 @@ class SpatialViewQDock(QDockWidget):
         sizes = np.maximum(np.array([np.sqrt(len(session.hyperedges[n])) for n in edges]) * self.NODE_SIZE_SCALER,
                            self.MIN_HYPEREDGE_DIAMETER)
         print('umap3')
-        reducer = umap.UMAP(n_components=2, random_state=42, min_dist=0.8)
+        reducer = umap.UMAP(n_components=2, random_state=42, min_dist=0.8, n_jobs=-1)
         initial_pos = reducer.fit_transform(edge_feats)
 
         final_diameters = np.maximum(
@@ -501,19 +511,10 @@ class SpatialViewQDock(QDockWidget):
         raw_scale = np.max(np.abs(initial_pos))
         if raw_scale == 0: raw_scale = 1.0
         
-        # 1. Scale positions to the final coordinate space *before* resolving overlaps
-        pos_for_resolver = initial_pos * (10.0 / raw_scale)
-        
-        # 2. Use radii that correspond to this final coordinate space
+        pos_for_resolver = initial_pos * (10.0 / raw_scale)        
         radii_for_resolver = final_diameters / 2.0
-
-        # 3. Resolve overlaps in this consistent space
         resolved_pos = _resolve_overlaps(pos_for_resolver, radii_for_resolver)
-
-        # 4. The result is already at the correct scale, just center it
         pos = resolved_pos - resolved_pos.mean(axis=0)
-        # --- MODIFIED SECTION END ---
-
         self.edge_index = {n: i for i, n in enumerate(edges)}
         self.fa2_layout = SimpleNamespace(names=edges, node_sizes=final_diameters,
                                           positions={n: p for n, p in zip(edges, pos)})
@@ -525,9 +526,7 @@ class SpatialViewQDock(QDockWidget):
             ell.setPen(pg.mkPen(col)); ell.setBrush(pg.mkBrush(col))
             self.view.addItem(ell); self.hyperedgeItems[name] = ell
             
-        feats = session.features.astype(np.float32)
-        norms = np.linalg.norm(feats, axis=1, keepdims=True); norms[norms == 0] = 1
-        self._features_norm = feats / norms
+        self._features_norm = session.features_unit
         self._centroid_norm.clear(); self._centroid_sim.clear()
         self._image_umap = session.image_umap or {}
 
@@ -872,7 +871,9 @@ class SpatialViewQDock(QDockWidget):
 
     def _update_image_layer(self):
         start_time4 = time.perf_counter()
-        
+        if self._layout_version == self._rendered_version:
+            return
+
         if self._radial_layout_cache is None:
             if self.image_scatter: self.image_scatter.hide()
             if self.link_curve: self.link_curve.hide()
@@ -1093,6 +1094,8 @@ class SpatialViewQDock(QDockWidget):
                     offsets[(tgt, idx)] = vec * radius_map[tgt]
 
         self._radial_cache_by_edge[sel_name] = (offsets, links)
+        self._layout_version = (self._layout_version or 0) + 1
+
         print('_compute_radial_layout', time.perf_counter() - start_timer15)
         return offsets, links
 
@@ -1108,10 +1111,14 @@ class SpatialViewQDock(QDockWidget):
         if len(names) == 1:
             self._current_edge = names[0]
             self._radial_layout_cache = self._compute_radial_layout(names[0])
+            self._layout_version = (self._layout_version or 0) + 1
+
             print('_on_edges',time.perf_counter() - start_timer7)
         else:
             self._current_edge = None
             self._radial_layout_cache = None
+            self._layout_version = (self._layout_version or 0) + 1
+
         self._update_image_layer()
         print('_on_edges2',time.perf_counter() - start_timer7)
       
@@ -1173,6 +1180,7 @@ class SpatialViewQDock(QDockWidget):
         self.session.image_umap[edge] = mapping
         self._radial_cache_by_edge.pop(edge, None)
         self._radial_layout_cache = None
+        self._layout_version = (self._layout_version or 0) + 1        
         self._update_image_layer()
 
     def _on_worker_layout(self, layout: dict):
@@ -1186,6 +1194,8 @@ class SpatialViewQDock(QDockWidget):
         self.edge_index = {n: i for i, n in enumerate(names)}
         self._radial_cache_by_edge.clear()
         self._radial_layout_cache = None
+        self._layout_version = (self._layout_version or 0) + 1
+
         print('_on_worker_layout',time.perf_counter() - start_timer12)
         for name in list(self.hyperedgeItems):
             if name not in layout:
@@ -1246,7 +1256,8 @@ class SpatialViewQDock(QDockWidget):
             self.bus.set_edges(sel_edges)
             return
 
-        if self._radial_layout_cache is None or not self._radial_layout_cache[0]: return
+        if self._radial_layout_cache is None or not self._radial_layout_cache[0]: 
+            return
         rel, _ = self._radial_layout_cache
         keys = list(rel.keys())
         centres = np.array([self.fa2_layout.positions[e] for e, _ in keys])

@@ -225,6 +225,11 @@ class SessionModel(QObject):
         self.places365_features = places365_features        
         self.hyperedge_avg_features = self._calculate_hyperedge_avg_features(features)
 
+        feats32 = self.features.astype(np.float32, copy=False)
+        norms = np.linalg.norm(feats32, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        self._features_unit = feats32 / norms
+
         self.edge_origins = edge_origins or {name: "swin" for name in self.cat_list}
 
                 # Collect EXIF metadata for all images
@@ -257,6 +262,11 @@ class SessionModel(QObject):
         self.overview_triplets: Dict[str, tuple[int | None, ...]] | None = None
         self.compute_overview_triplets()
 
+
+    @property
+    def features_unit(self) -> np.ndarray:
+        """Return precomputed unit-normalised feature vectors."""
+        return self._features_unit
 
     # ─── internal helpers (static) ──────────────────────────────────────
     @staticmethod
@@ -642,9 +652,8 @@ class SessionModel(QObject):
         self.hyperedges, self.image_mapping = self._prepare_hypergraph_structures(
             df_edges
         )
-        self.hyperedge_avg_features = self._calculate_hyperedge_avg_features(
-            self.features
-        )
+        self.hyperedge_avg_features = self._calculate_hyperedge_avg_features(self.features)
+
         status = "Original" if origin == "places365" else "Origin"
         self.status_map = {
             name: {"uuid": str(uuid.uuid4()), "status": status}
