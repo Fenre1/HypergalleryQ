@@ -24,29 +24,58 @@ from .similarity import SIM_METRIC       # kept for non‑cosine fallback
 
 THUMB_SIZE = 128
 
+# @nb.njit(fastmath=True, cache=True)
+# def _resolve_overlaps_numba(pos, radii, iterations, strength):
+#     n = pos.shape[0]
+#     for _ in range(iterations):
+#         for i in range(n - 1):
+#             for j in range(i + 1, n):
+#                 dx = pos[i, 0] - pos[j, 0]
+#                 dy = pos[i, 1] - pos[j, 1]
+#                 dist_sq = dx*dx + dy*dy
+#                 min_d   = radii[i] + radii[j]
+#                 if 1e-9 < dist_sq < min_d*min_d:
+#                     dist     = np.sqrt(dist_sq)
+#                     overlap  = (min_d - dist) * strength * 0.5
+#                     push_x   = dx / dist * overlap
+#                     push_y   = dy / dist * overlap
+#                     pos[i, 0] += push_x
+#                     pos[i, 1] += push_y
+#                     pos[j, 0] -= push_x
+#                     pos[j, 1] -= push_y
+#     return pos
+
+
 @nb.njit(fastmath=True, cache=True)
 def _resolve_overlaps_numba(pos, radii, iterations, strength):
     n = pos.shape[0]
-    for _ in range(iterations):
+    for itr in range(iterations):
+        moved = False
         for i in range(n - 1):
             for j in range(i + 1, n):
                 dx = pos[i, 0] - pos[j, 0]
                 dy = pos[i, 1] - pos[j, 1]
                 dist_sq = dx*dx + dy*dy
-                min_d   = radii[i] + radii[j]
+                min_d = radii[i] + radii[j]
                 if 1e-9 < dist_sq < min_d*min_d:
-                    dist     = np.sqrt(dist_sq)
-                    overlap  = (min_d - dist) * strength * 0.5
-                    push_x   = dx / dist * overlap
-                    push_y   = dy / dist * overlap
+                    dist = np.sqrt(dist_sq)
+                    overlap = (min_d - dist) * strength * 0.5
+                    push_x = dx / dist * overlap
+                    push_y = dy / dist * overlap
                     pos[i, 0] += push_x
                     pos[i, 1] += push_y
                     pos[j, 0] -= push_x
                     pos[j, 1] -= push_y
+                    moved = True
+        if not moved:
+            break
+    print('iter',itr)
     return pos
 
+
+
 def _resolve_overlaps(positions: np.ndarray, radii: np.ndarray,
-                      iterations: int = 100, strength: float = 0.7) -> np.ndarray:
+                      iterations: int = 10000, strength: float = 2) -> np.ndarray:
     """Resolve overlaps using the Numba accelerated kernel."""
     pos32   = np.ascontiguousarray(positions, dtype=np.float32)
     radii32 = np.ascontiguousarray(radii,     dtype=np.float32)
