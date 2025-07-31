@@ -31,7 +31,8 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QGroupBox,
     QCheckBox,
-    QHBoxLayout
+    QHBoxLayout,
+    QComboBox
 )
  
 from PyQt5.QtGui import (
@@ -71,6 +72,7 @@ from utils.file_utils import get_image_files
 from utils.session_stats import show_session_stats
 from utils.metadata_overview import show_metadata_overview
 from clustering.temi_clustering import temi_cluster
+from clustering.fuzzy_cmeans import fuzzy_cmeans_cluster
 import pyqtgraph as pg
 try:
     import darkdetect
@@ -197,19 +199,29 @@ class NewSessionDialog(QDialog):
         self.jacc_edit = QLineEdit(str(JACCARD_PRUNE_DEFAULT))
         layout.addWidget(self.jacc_edit)
 
+        layout.addWidget(QLabel("Clustering algorithm:"))
+        self.alg_combo = QComboBox()
+        self.alg_combo.addItems(["TEMI", "Fuzzy C-Means"])
+        layout.addWidget(self.alg_combo)
+
+        layout.addWidget(QLabel("Fuzzy C-Means m:"))
+        self.m_edit = QLineEdit("1.1")
+        layout.addWidget(self.m_edit)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText("Start generating hypergraph")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def parameters(self) -> tuple[int, float, float]:
+    def parameters(self) -> tuple[int, float, float, str, float]:
         return (
             int(self.edge_edit.text()),
             float(self.thr_edit.text()),
             float(self.jacc_edit.text()),
+            self.alg_combo.currentText(),
+            float(self.m_edit.text()),
         )
-
 
 class ReconstructDialog(QDialog):
     """Dialog to set parameters for hypergraph reconstruction."""
@@ -325,6 +337,8 @@ def _append_leaf(parent_or_model, rowdict):
     """Add one leaf row under either a QStandardItem (group) or the model root."""
     container = parent_or_model
     name_item = _make_item(rowdict["name"], rowdict["name"], editable=True)
+    name_item.setCheckable(True)
+    name_item.setCheckState(Qt.Checked)    
     color = rowdict.get("color")
     if color:
         pix = QPixmap(12, 12)
@@ -642,6 +656,9 @@ class MainWin(QMainWindow):
         self.btn_session_stats = QPushButton("Session stats")
         self.btn_session_stats.clicked.connect(self.show_session_stats)
 
+        self.btn_manage_visibility = QPushButton("Manage hidden hyperedges")
+        self.btn_manage_visibility.clicked.connect(self.choose_hidden_edges)
+
         # --- Spatial view limits ---
         self.limit_images_cb = QCheckBox("Limit number of image nodes per hyperedge")
         self.limit_images_edit = QLineEdit("10")
@@ -666,6 +683,7 @@ class MainWin(QMainWindow):
         toolbar_layout.addWidget(self.btn_rank_clip)
         toolbar_layout.addWidget(self.btn_overview)
         toolbar_layout.addWidget(self.btn_session_stats)
+        toolbar_layout.addWidget(self.btn_manage_visibility)        
         toolbar_layout.addWidget(self.text_query)
         toolbar_layout.addWidget(self.btn_rank_text)
         toolbar_layout.addWidget(self.btn_meta_overview)
@@ -1146,7 +1164,7 @@ class MainWin(QMainWindow):
         if dlg.exec_() != QDialog.Accepted:
             return
         try:
-            n_edges, thr, prune_thr = dlg.parameters()
+            n_edges, thr, prune_thr, algo, m_val = dlg.parameters()
         except Exception:
             QMessageBox.warning(self, "Invalid Input", "Enter valid numbers.")
             return
@@ -1161,10 +1179,14 @@ class MainWin(QMainWindow):
             oc_features = oc_extractor.extract_features(files)
             plc_extractor = DenseNet161Places365FeatureExtractor()
             plc_features = plc_extractor.extract_features(files)
-            matrix, _ = temi_cluster(features, out_dim=n_edges, threshold=thr)
-            oc_matrix, _ = temi_cluster(oc_features, out_dim=n_edges, threshold=thr)
-            plc_matrix, _ = temi_cluster(plc_features, out_dim=n_edges, threshold=thr)
-
+            if algo == "Fuzzy C-Means":
+                matrix, _ = fuzzy_cmeans_cluster(features, n_edges, thr, m_val)
+                oc_matrix, _ = fuzzy_cmeans_cluster(oc_features, n_edges, thr, m_val)
+                plc_matrix, _ = fuzzy_cmeans_cluster(plc_features, n_edges, thr, m_val)
+            else:
+                matrix, _ = temi_cluster(features, out_dim=n_edges, threshold=thr)
+                oc_matrix, _ = temi_cluster(oc_features, out_dim=n_edges, threshold=thr)
+                plc_matrix, _ = temi_cluster(plc_features, out_dim=n_edges, threshold=thr)
             empty_cols = np.where(matrix.sum(axis=0) == 0)[0]
             if len(empty_cols) > 0:
                 matrix = np.delete(matrix, empty_cols, axis=1)
@@ -1467,20 +1489,29 @@ class MainWin(QMainWindow):
     def _on_item_changed(self, item: QStandardItem):
         if item.column() != 0 or item.hasChildren():
             return
+
         parent = item.parent()
         old_name, new_name = item.data(Qt.UserRole), item.text().strip()
-        if not self.model.rename_edge(old_name, new_name):
-            item.setText(old_name)
-            return
-        item.setData(new_name, Qt.UserRole)
-        if hasattr(self, "groups"):
-            for g, children in self.groups.items():
-                for idx, child in enumerate(children):
-                    if child == old_name:
-                        children[idx] = new_name
-                        break
-        if parent is not None:
-            self._update_group_similarity(parent)
+
+        # --- Handle rename -------------------------------------------------
+        if old_name != new_name:
+            if not self.model.rename_edge(old_name, new_name):
+                item.setText(old_name)
+                return
+            item.setData(new_name, Qt.UserRole)
+            if hasattr(self, "groups"):
+                for g, children in self.groups.items():
+                    for idx, child in enumerate(children):
+                        if child == old_name:
+                            children[idx] = new_name
+                            break
+            if parent is not None:
+                self._update_group_similarity(parent)
+
+        # --- Handle visibility toggle -------------------------------------
+        if item.isCheckable():
+            visible = item.checkState() == Qt.Checked
+            self.spatial_dock.set_edge_visible(new_name, visible)
 
     def _invalidate_similarity_column(self, name_item: QStandardItem):
         row = name_item.row()
@@ -1533,6 +1564,36 @@ class MainWin(QMainWindow):
             edge_val = 10
         self.spatial_dock.set_image_limit(self.limit_images_cb.isChecked(), img_val)
         self.spatial_dock.set_intersection_limit(self.limit_edges_cb.isChecked(), edge_val)
+
+    def choose_hidden_edges(self):
+        if not self.model:
+            return
+
+        names = sorted(self.model.hyperedges)
+        dialog = _MultiSelectDialog(names, self)
+        hidden = self.spatial_dock.hidden_edges
+        for i in range(dialog.list.count()):
+            item = dialog.list.item(i)
+            if item.text() in hidden:
+                item.setSelected(True)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        to_hide = set(dialog.chosen())
+        src_model = self._source_model()
+        with QSignalBlocker(src_model):
+            root = src_model.invisibleRootItem()
+            for r in range(root.rowCount()):
+                it = root.child(r, 0)
+                if it.hasChildren():
+                    for c in range(it.rowCount()):
+                        leaf = it.child(c, 0)
+                        if leaf.isCheckable():
+                            leaf.setCheckState(Qt.Unchecked if leaf.text() in to_hide else Qt.Checked)
+                else:
+                    if it.isCheckable():
+                        it.setCheckState(Qt.Unchecked if it.text() in to_hide else Qt.Checked)
+        self.spatial_dock.set_hidden_edges(to_hide)
 
     # ------------------------------------------------------------------
     def color_edges_default(self):

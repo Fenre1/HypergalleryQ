@@ -328,6 +328,7 @@ class SpatialViewQDock(QDockWidget):
         self._abs_pos_cache: dict[tuple[str, int], np.ndarray] = {}
         self._selected_nodes: set[tuple[str, int]] = set()
         self.color_map: dict[str, str] = {}
+        self.hidden_edges: set[str] = set()
         self._overview_triplets: dict[str, tuple[int | None, ...]] | None = None
 
         self._current_edge: str | None = None
@@ -452,6 +453,38 @@ class SpatialViewQDock(QDockWidget):
     def hide_legend(self):
         self.legend.hide()
 
+    def set_edge_visible(self, name: str, visible: bool) -> None:
+        """Toggle visibility of a single hyperedge item."""
+        if visible:
+            changed = name in self.hidden_edges
+            self.hidden_edges.discard(name)
+        else:
+            changed = name not in self.hidden_edges
+            self.hidden_edges.add(name)
+        if name in self.hyperedgeItems:
+            self.hyperedgeItems[name].setVisible(visible)
+        self._update_mini_scatter(); self._update_minimap_view()
+        if changed:
+            # Cached radial layouts may reference now-hidden edges
+            self._radial_cache_by_edge.clear()
+            self._radial_layout_cache = None
+            self._layout_version = (self._layout_version or 0) + 1
+            self._update_image_layer()
+
+    def set_hidden_edges(self, names: set[str]) -> None:
+        """Replace the set of hidden hyperedges and refresh the view."""
+        if names == self.hidden_edges:
+            return
+        self.hidden_edges = set(names)
+        for n, it in self.hyperedgeItems.items():
+            it.setVisible(n not in self.hidden_edges)
+        self._update_mini_scatter(); self._update_minimap_view()
+        self._radial_cache_by_edge.clear()
+        self._radial_layout_cache = None
+        self._layout_version = (self._layout_version or 0) + 1
+        self._update_image_layer()
+
+
     def set_image_limit(self, enabled: bool, value: int):
         self.limit_images_enabled = enabled
         self.limit_images_value = value
@@ -525,7 +558,11 @@ class SpatialViewQDock(QDockWidget):
             col = self.color_map.get(name, '#AAAAAA')
             ell.setPen(pg.mkPen(col)); ell.setBrush(pg.mkBrush(col))
             self.view.addItem(ell); self.hyperedgeItems[name] = ell
-            
+
+        self.hidden_edges.intersection_update(session.hyperedges.keys())
+        for n, it in self.hyperedgeItems.items():
+            it.setVisible(n not in self.hidden_edges)
+
         self._features_norm = session.features_unit
         self._centroid_norm.clear(); self._centroid_sim.clear()
         self._image_umap = session.image_umap or {}
@@ -822,11 +859,16 @@ class SpatialViewQDock(QDockWidget):
         if not self.fa2_layout: return
         for name,ell in self.hyperedgeItems.items():
             x,y=self.fa2_layout.positions[name]; ell.setPos(x,y)
+            ell.setVisible(name not in self.hidden_edges)
         self._update_mini_scatter(); self._update_minimap_view()
 
     def _update_mini_scatter(self):
         if not self.fa2_layout: return
-        pos=np.array([self.fa2_layout.positions[n] for n in self.fa2_layout.names])
+        pos=np.array([
+            self.fa2_layout.positions[n]
+            for n in self.fa2_layout.names
+            if n not in self.hidden_edges
+        ])
         if self.minimap_scatter is None:
             self.minimap_scatter=pg.ScatterPlotItem(pen=None,brush=pg.mkBrush('w'),
                                                     size=3,pxMode=True,useOpenGL=True)
@@ -1059,8 +1101,8 @@ class SpatialViewQDock(QDockWidget):
         inter_counts = {
             e: len(session.hyperedges[e] & sel_full)
             for e in session.hyperedges
-            if e != sel_name and e in layout.names
-        }
+            if e != sel_name and e in layout.names and e not in self.hidden_edges
+                        }
 
         if self.limit_edges_enabled:
             top_edges = {
@@ -1155,9 +1197,10 @@ class SpatialViewQDock(QDockWidget):
 
         # Now, start the animation on the collected items
         if items_to_animate:
-            self._animating_items = items_to_animate
-            self._anim_step_count = self._highlight_anim_steps
-            self._highlight_timer.start()
+            if len(items_to_animate) < 50:
+                self._animating_items = items_to_animate
+                self._anim_step_count = self._highlight_anim_steps
+                self._highlight_timer.start()
 
         self._selected_nodes = {(e, i) for i in idxs for e in self.session.image_mapping.get(i, [])}
         print('_on_images',time.perf_counter() - start_timer5)
@@ -1213,7 +1256,8 @@ class SpatialViewQDock(QDockWidget):
                 self.hyperedgeItems[name].setRect(QtCore.QRectF(-r, -r, size, size))
             x, y = positions[name]
             self.hyperedgeItems[name].setPos(x, y)
-        self._refresh_edges()
+            self.hyperedgeItems[name].setVisible(name not in self.hidden_edges)
+            self._refresh_edges()
         print('_on_worker_layout2',time.perf_counter() - start_timer12)
         self._update_image_layer()
 

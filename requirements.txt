@@ -5,3 +5,4 @@ h5py
 open_clip_torch
 pyforceatlas2
 umap-learn
+fcmeans
