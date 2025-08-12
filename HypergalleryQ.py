@@ -208,19 +208,29 @@ class NewSessionDialog(QDialog):
         self.m_edit = QLineEdit("1.1")
         layout.addWidget(self.m_edit)
 
+        self.openclip_cb = QCheckBox("Include OpenCLIP features")
+        self.openclip_cb.setChecked(True)
+        layout.addWidget(self.openclip_cb)
+
+        self.places_cb = QCheckBox("Include Places365 features")
+        self.places_cb.setChecked(True)
+        layout.addWidget(self.places_cb)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText("Start generating hypergraph")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def parameters(self) -> tuple[int, float, float, str, float]:
+    def parameters(self) -> tuple[int, float, float, str, float, bool, bool]:
         return (
             int(self.edge_edit.text()),
             float(self.thr_edit.text()),
             float(self.jacc_edit.text()),
             self.alg_combo.currentText(),
             float(self.m_edit.text()),
+            self.openclip_cb.isChecked(),
+            self.places_cb.isChecked(),
         )
 
 class ReconstructDialog(QDialog):
@@ -659,7 +669,6 @@ class MainWin(QMainWindow):
         self.btn_manage_visibility = QPushButton("Manage hidden hyperedges")
         self.btn_manage_visibility.clicked.connect(self.choose_hidden_edges)
 
-        # --- Spatial view limits ---
         self.limit_images_cb = QCheckBox("Limit number of image nodes per hyperedge")
         self.limit_images_edit = QLineEdit("10")
         lim_img_row = QHBoxLayout(); lim_img_row.addWidget(self.limit_images_cb); lim_img_row.addWidget(self.limit_images_edit)
@@ -710,10 +719,8 @@ class MainWin(QMainWindow):
         toolbar_layout.addStretch()
         self.toolbar_dock.setWidget(toolbar_container)
 
-        # --- Image Grid ---
         self.image_grid.setObjectName("ImageGridDock") # Use object name for clarity
         self.image_grid.labelDoubleClicked.connect(lambda name: self.bus.set_edges([name]))
-        # --- Spatial View ---
         self.spatial_dock = SpatialViewQDock(self.bus, self)
         self.spatial_dock.setObjectName("SpatialViewDock")
         self.limit_images_cb.toggled.connect(self._update_spatial_limits)
@@ -722,14 +729,9 @@ class MainWin(QMainWindow):
         self.limit_edges_edit.editingFinished.connect(self._update_spatial_limits)
         self._update_spatial_limits()
 
-
-
-        # --- Hyperedge Matrix ---
         self.matrix_dock = HyperedgeMatrixDock(self.bus, self)
         self.matrix_dock.setObjectName("HyperedgeMatrixDock")
 
-        # --- Grouping Slider (no longer in central widget) ---
-        # We can place these controls in one of the docks, e.g., the 'Buttons' dock.
         self.slider = QSlider(Qt.Horizontal, minimum=50, maximum=100, singleStep=5, value=int(THRESHOLD_DEFAULT * 100))
         self.label = QLabel()
         self.label.setAlignment(Qt.AlignCenter)
@@ -737,34 +739,25 @@ class MainWin(QMainWindow):
         toolbar_layout.insertWidget(1, self.slider)
 
 
-        # ----------------- DOCK LAYOUT ARRANGEMENT ------------------------------------
-        # Arrange the created docks to match the wireframe.
-        # No central widget is set, allowing docks to fill the entire window.
-
-        # 1. Add the "List tree" to the left area.
+        # DOCK LAYOUT 
         self.addDockWidget(Qt.LeftDockWidgetArea, self.tree_dock)
 
-        # 2. Add the "Buttons" dock under the "List tree" dock.
         self.addDockWidget(Qt.LeftDockWidgetArea, self.toolbar_dock)
 
-        # 3. Add the "Image grid" to the right area. It will take up the remaining space.
         self.addDockWidget(Qt.RightDockWidgetArea, self.image_grid)
         self.addDockWidget(Qt.RightDockWidgetArea, self.overlap_dock)
         self.splitDockWidget(self.image_grid, self.overlap_dock, Qt.Horizontal)
-        # 4. Add the "Spatial view" below the "Image grid".
         self.addDockWidget(Qt.RightDockWidgetArea, self.spatial_dock)
 
-        # 5. Split the area occupied by the "Spatial view" to place the "Hyperedge matrix" to its right.
         self.splitDockWidget(self.spatial_dock, self.matrix_dock, Qt.Horizontal)
 
-        # Optional: Set initial relative sizes of the docks
         self.resizeDocks([self.tree_dock, self.image_grid], [300, 850], Qt.Horizontal)
         self.resizeDocks([self.image_grid, self.overlap_dock], [700, 200], Qt.Horizontal)
         self.resizeDocks([self.tree_dock, self.toolbar_dock], [550, 250], Qt.Vertical)
         self.resizeDocks([self.spatial_dock, self.matrix_dock], [450, 450], Qt.Horizontal)
 
 
-        # ----------------- MENU AND STATE ------------------------------------
+        #  MENU AND STATE 
         open_act = QAction("&Open Session…", self, triggered=self.open_session)
         new_act = QAction("&New Session…", self, triggered=self.new_session)
         save_act = QAction("&Save", self, triggered=self.save_session)
@@ -1164,7 +1157,7 @@ class MainWin(QMainWindow):
         if dlg.exec_() != QDialog.Accepted:
             return
         try:
-            n_edges, thr, prune_thr, algo, m_val = dlg.parameters()
+            n_edges, thr, prune_thr, algo, m_val, use_oc, use_plc = dlg.parameters()
         except Exception:
             QMessageBox.warning(self, "Invalid Input", "Enter valid numbers.")
             return
@@ -1175,18 +1168,30 @@ class MainWin(QMainWindow):
         try:
             extractor = Swinv2LargeFeatureExtractor()
             features = extractor.extract_features(files)
-            oc_extractor = OpenClipFeatureExtractor()
-            oc_features = oc_extractor.extract_features(files)
-            plc_extractor = DenseNet161Places365FeatureExtractor()
-            plc_features = plc_extractor.extract_features(files)
+            oc_features = None
+            plc_features = None
+            if use_oc:
+                oc_extractor = OpenClipFeatureExtractor()
+                oc_features = oc_extractor.extract_features(files)
+            if use_plc:
+                plc_extractor = DenseNet161Places365FeatureExtractor()
+                plc_features = plc_extractor.extract_features(files)
             if algo == "Fuzzy C-Means":
                 matrix, _ = fuzzy_cmeans_cluster(features, n_edges, thr, m_val)
-                oc_matrix, _ = fuzzy_cmeans_cluster(oc_features, n_edges, thr, m_val)
-                plc_matrix, _ = fuzzy_cmeans_cluster(plc_features, n_edges, thr, m_val)
+                oc_matrix = np.array([])
+                if oc_features is not None:
+                    oc_matrix, _ = fuzzy_cmeans_cluster(oc_features, n_edges, thr, m_val)
+                plc_matrix = np.array([])
+                if plc_features is not None:
+                    plc_matrix, _ = fuzzy_cmeans_cluster(plc_features, n_edges, thr, m_val)
             else:
                 matrix, _ = temi_cluster(features, out_dim=n_edges, threshold=thr)
-                oc_matrix, _ = temi_cluster(oc_features, out_dim=n_edges, threshold=thr)
-                plc_matrix, _ = temi_cluster(plc_features, out_dim=n_edges, threshold=thr)
+                oc_matrix = np.array([])
+                if oc_features is not None:
+                    oc_matrix, _ = temi_cluster(oc_features, out_dim=n_edges, threshold=thr)
+                plc_matrix = np.array([])
+                if plc_features is not None:
+                    plc_matrix, _ = temi_cluster(plc_features, out_dim=n_edges, threshold=thr)
             empty_cols = np.where(matrix.sum(axis=0) == 0)[0]
             if len(empty_cols) > 0:
                 matrix = np.delete(matrix, empty_cols, axis=1)
@@ -1195,12 +1200,14 @@ class MainWin(QMainWindow):
                     "Empty Hyperedges Removed",
                     f"{len(empty_cols)} empty hyperedges were removed after clustering."
                 )
-            oc_empty = np.where(oc_matrix.sum(axis=0) == 0)[0]
-            if len(oc_empty) > 0:
-                oc_matrix = np.delete(oc_matrix, oc_empty, axis=1)
-            plc_empty = np.where(plc_matrix.sum(axis=0) == 0)[0]
-            if len(plc_empty) > 0:
-                plc_matrix = np.delete(plc_matrix, plc_empty, axis=1)                
+            if oc_matrix.size:
+                oc_empty = np.where(oc_matrix.sum(axis=0) == 0)[0]
+                if len(oc_empty) > 0:
+                    oc_matrix = np.delete(oc_matrix, oc_empty, axis=1)
+            if plc_matrix.size:
+                plc_empty = np.where(plc_matrix.sum(axis=0) == 0)[0]
+                if len(plc_empty) > 0:
+                    plc_matrix = np.delete(plc_matrix, plc_empty, axis=1)
         except Exception as e:
             if app:
                 app.restoreOverrideCursor()
@@ -1277,34 +1284,71 @@ class MainWin(QMainWindow):
                     pass
 
             self.model = SessionModel.load_h5(path)
+            # --- Optional feature extraction ---------------------------------
             if self.model.openclip_features is None:
-                oc_extractor = OpenClipFeatureExtractor()
-                self.model.openclip_features = oc_extractor.extract_features(self.model.im_list)
+                if QMessageBox.question(
+                    self,
+                    "Missing OpenCLIP Features",
+                    "OpenCLIP features are absent in this session.\nGenerate them now?",
+                ) == QMessageBox.Yes:
+                    oc_extractor = OpenClipFeatureExtractor()
+                    self.model.openclip_features = oc_extractor.extract_features(
+                        self.model.im_list
+                    )
             if self.model.places365_features is None:
-                plc_extractor = DenseNet161Places365FeatureExtractor()
-                self.model.places365_features = plc_extractor.extract_features(self.model.im_list)                
-            if all(orig != "openclip" for orig in self.model.edge_origins.values()):
-                n_edges = len(self.model.cat_list)
-                oc_matrix, _ = temi_cluster(
-                    self.model.openclip_features,
-                    out_dim=n_edges,
-                    threshold=THRESHOLD_DEFAULT,
-                )
-                oc_empty = np.where(oc_matrix.sum(axis=0) == 0)[0]
-                if len(oc_empty) > 0:
-                    oc_matrix = np.delete(oc_matrix, oc_empty, axis=1)
-                self.model.append_clustering_matrix(oc_matrix, origin="openclip", prefix="clip")
-            if all(orig != "places365" for orig in self.model.edge_origins.values()):
-                n_edges = len(self.model.cat_list)
-                plc_matrix, _ = temi_cluster(
-                    self.model.places365_features,
-                    out_dim=n_edges,
-                    threshold=THRESHOLD_DEFAULT,
-                )
-                plc_empty = np.where(plc_matrix.sum(axis=0) == 0)[0]
-                if len(plc_empty) > 0:
-                    plc_matrix = np.delete(plc_matrix, plc_empty, axis=1)
-                self.model.append_clustering_matrix(plc_matrix, origin="places365", prefix="plc365")
+                if QMessageBox.question(
+                    self,
+                    "Missing Places365 Features",
+                    "Places365 features are absent in this session.\nGenerate them now?",
+                ) == QMessageBox.Yes:
+                    plc_extractor = DenseNet161Places365FeatureExtractor()
+                    self.model.places365_features = plc_extractor.extract_features(
+                        self.model.im_list
+                    )
+
+            # --- Optional hyperedge generation -------------------------------
+            if (
+                self.model.openclip_features is not None
+                and all(orig != "openclip" for orig in self.model.edge_origins.values())
+            ):
+                if QMessageBox.question(
+                    self,
+                    "Generate OpenCLIP Hyperedges",
+                    "No OpenCLIP hyperedges found.\nGenerate them now?",
+                ) == QMessageBox.Yes:
+                    n_edges = len(self.model.cat_list)
+                    oc_matrix, _ = temi_cluster(
+                        self.model.openclip_features,
+                        out_dim=n_edges,
+                        threshold=THRESHOLD_DEFAULT,
+                    )
+                    oc_empty = np.where(oc_matrix.sum(axis=0) == 0)[0]
+                    if len(oc_empty) > 0:
+                        oc_matrix = np.delete(oc_matrix, oc_empty, axis=1)
+                    self.model.append_clustering_matrix(
+                        oc_matrix, origin="openclip", prefix="clip"
+                    )
+            if (
+                self.model.places365_features is not None
+                and all(orig != "places365" for orig in self.model.edge_origins.values())
+            ):
+                if QMessageBox.question(
+                    self,
+                    "Generate Places365 Hyperedges",
+                    "No Places365 hyperedges found.\nGenerate them now?",
+                ) == QMessageBox.Yes:
+                    n_edges = len(self.model.cat_list)
+                    plc_matrix, _ = temi_cluster(
+                        self.model.places365_features,
+                        out_dim=n_edges,
+                        threshold=THRESHOLD_DEFAULT,
+                    )
+                    plc_empty = np.where(plc_matrix.sum(axis=0) == 0)[0]
+                    if len(plc_empty) > 0:
+                        plc_matrix = np.delete(plc_matrix, plc_empty, axis=1)
+                    self.model.append_clustering_matrix(
+                        plc_matrix, origin="places365", prefix="plc365"
+                    )
 
             self.model.layoutChanged.connect(self.regroup)
             self._overview_triplets = None
@@ -1334,7 +1378,6 @@ class MainWin(QMainWindow):
         path = self.model.h5_path
         if not path or path.suffix.lower() != ".h5":
             return self.save_session_as()
-
         try:
             self.model.save_h5()
         except Exception as e:

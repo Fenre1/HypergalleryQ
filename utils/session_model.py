@@ -132,15 +132,18 @@ class SessionModel(QObject):
             self.generate_thumbnails()
 
         with h5py.File(target, "w") as hdf:
+            print('starting save')
             dt = h5py.string_dtype(encoding="utf-8")
             hdf.create_dataset(
                 "file_list", data=np.array(self.im_list, dtype=object), dtype=dt
             )
+            print('saved filelist')
             hdf.create_dataset(
                 "clustering_results",
                 data=self.df_edges.values.astype("i8"),
                 dtype="i8",
             )
+            print('saved clustering results')
             hdf.create_dataset(
                 "catList", data=np.array(self.cat_list, dtype=object), dtype=dt
             )
@@ -152,19 +155,26 @@ class SessionModel(QObject):
                 ),
                 dtype=dt,
             )
+            print('saved edge origins')
+
             hdf.create_dataset("features", data=self.features, dtype="f4")
+            print('saved features')
             if self.openclip_features is not None:
                 hdf.create_dataset(
                     "openclip_features", data=self.openclip_features, dtype="f4"
                 )
+            print('saved openclip features')
             if self.places365_features is not None:
                 hdf.create_dataset(
                     "places365_features", data=self.places365_features, dtype="f4"
                 )
+            print('saved places365_features')
             if self.umap_embedding is not None:
                 hdf.create_dataset(
                     "umap_embedding", data=self.umap_embedding, dtype="f4"
                 )
+            print('saved umap_embedding')
+                
             if getattr(self, "image_umap", None):
                 grp = hdf.create_group("image_umap")
                 for edge, mapping in self.image_umap.items():
@@ -173,14 +183,21 @@ class SessionModel(QObject):
                         dtype="f4",
                     )
                     grp.create_dataset(edge, data=arr, dtype="f4")
+            print('saved image_umap')
+            
             hdf.attrs["thumbnails_are_embedded"] = self.thumbnails_are_embedded
-
+            print('saved thumbs emb')
             try:
-                meta_json = self.metadata.to_json(orient="table")
-            except RecursionError:
+                meta_json = (
+                    self._sanitize_metadata(self.metadata).to_json(orient="table")
+                )
+                print('meta json 1')
+            except Exception:
                 meta_json = self.metadata.astype(str).to_json(orient="table")
-            hdf.create_dataset("metadata", data=np.string_(meta_json), dtype=dt)
-
+                print('meta json 2')
+            hdf.create_dataset("metadata", data=np.string_(meta_json), dtype=dt)            
+            
+            print('meta json 3')
             if self.thumbnail_data:
                 if self.thumbnails_are_embedded:
                     dt_vlen = h5py.vlen_dtype(np.uint8)
@@ -190,13 +207,14 @@ class SessionModel(QObject):
                     hdf.create_dataset(
                         "thumbnail_data_embedded", data=arrs, dtype=dt_vlen
                     )
+                    print('thumbs2')
                 else:
                     hdf.create_dataset(
                         "thumbnail_relative_paths",
                         data=np.array(self.thumbnail_data, dtype=object),
                         dtype=dt,
                     )
-
+                    print('thumbs3')
         self.h5_path = target
 
 
@@ -283,7 +301,20 @@ class SessionModel(QObject):
         return {name: features[list(idx)].mean(axis=0) if idx else np.zeros(n_feat)
                 for name, idx in self.hyperedges.items()}
 
+    @staticmethod
+    def _sanitize_metadata(df: pd.DataFrame) -> pd.DataFrame:
+        """Return ``df`` with complex objects converted to strings.
 
+        Some EXIF parsers return nested objects that ``pandas``/JSON can't
+        serialise directly. Converting those values to ``str`` ensures the
+        metadata can always be written to disk.
+        """
+        return df.applymap(
+            lambda x: x
+            if isinstance(x, (int, float, str, bool))
+            else str(x)
+        )
+    
     @staticmethod
     def _extract_image_metadata(im_list: List[str]) -> pd.DataFrame:
         """Return a DataFrame with EXIF metadata for each image."""
