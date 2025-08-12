@@ -1,18 +1,28 @@
 from __future__ import annotations
+
+import os
+os.environ["PYQTGRAPH_QT_LIB"] = "PyQt5"   # force pyqtgraph to PyQt5
+os.environ.pop("QT_API", None)             # avoid other libs nudging Qt differently
+
 import numpy as np
 from math import cos, sin, pi
 from time import perf_counter
 import numba as nb
 import umap
 from types import SimpleNamespace
-import pyqtgraph as pg
-from pyqtgraph.Qt import QtCore, QtGui
-from PyQt5.QtCore import Qt, QPointF, QEvent, pyqtSignal as Signal, QUrl, QPoint, QTimer
+from PyQt5.QtCore import Qt, QPointF, QEvent, pyqtSignal as Signal, QUrl, QPoint, QTimer,pyqtSlot
+
 from PyQt5.QtGui import QPainterPath, QPen, QColor
 from PyQt5.QtWidgets import (
     QDockWidget, QWidget, QVBoxLayout, QApplication,
     QPushButton, QGraphicsEllipseItem, QToolTip, QLabel, QGraphicsSceneHoverEvent
 )
+
+from PyQt5 import QtCore, QtGui, QtWidgets
+import pyqtgraph as pg
+# from pyqtgraph.Qt import QtCore, QtGui
+
+
 from matplotlib.path import Path as MplPath
 import math
 from sklearn.decomposition import IncrementalPCA
@@ -95,7 +105,7 @@ class _RecalcWorker(QtCore.QObject):
         super().__init__(parent)
         self.session: SessionModel | None = None
 
-    @QtCore.pyqtSlot(str)
+    @pyqtSlot(str)
     def recompute(self, edge_name: str):
         print('start recompute')
         session = self.session
@@ -201,8 +211,10 @@ class LassoViewBox(pg.ViewBox):
         if ev.button() == Qt.LeftButton and ev.modifiers() & Qt.ShiftModifier:
             self._drawing = True
             self._path = QPainterPath(self.mapToView(ev.pos()))
-            pen = QPen(pg.mkColor("y")); pen.setWidth(2); pen.setCosmetic(True)
-            self._item = pg.QtWidgets.QGraphicsPathItem(); self._item.setPen(pen)
+            pen = QPen(pg.mkColor("y")); pen.setWidth(2)
+            pen.setCosmetic(True)
+            self._item = QtWidgets.QGraphicsPathItem()
+            self._item.setPen(pen)
             self.addItem(self._item); ev.accept(); return
         super().mousePressEvent(ev)
 

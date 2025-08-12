@@ -1,4 +1,9 @@
 # prototype.py --------------------------------------------------------------
+import os
+os.environ["PYQTGRAPH_QT_LIB"] = "PyQt5"   # force pyqtgraph to PyQt5
+os.environ.pop("QT_API", None)             # avoid other libs nudging Qt differently
+
+
 import sys, uuid, numpy as np
 import pandas as pd
 import numpy as np
