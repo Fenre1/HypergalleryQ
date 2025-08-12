@@ -1,10 +1,3 @@
-"""
-hyperedge_matrix_dock.py  –  drop‑in replacement that supports zooming
-────────────────────────────────────────────────────────────────────────
-• keep existing public API:  HyperedgeMatrixDock.set_model(...)
-• Ctrl+Wheel / Ctrl+'+' / Ctrl+'-' / Ctrl+'0' → zoom
-"""
-
 from __future__ import annotations
 
 from functools import lru_cache
@@ -32,6 +25,7 @@ from PyQt5.QtWidgets import (
 from .selection_bus import SelectionBus
 from .session_model import SessionModel
 from .image_popup import show_image_metadata
+from .image_utils import pixmap_from_file
 
 class TooltipManager:
     """Simple helper to show persistent HTML tooltips."""
@@ -167,7 +161,7 @@ class HyperedgeMatrixModel(QAbstractTableModel):
         if not idxs:
             return QPixmap()
         path = self._session.im_list[idxs[0]]
-        pix = QPixmap(path)
+        pix = pixmap_from_file(path)
         return pix.scaled(
             self._thumb_size,
             self._thumb_size,

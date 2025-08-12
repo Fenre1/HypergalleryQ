@@ -17,7 +17,7 @@ import time
 from .session_model import SessionModel
 from .selection_bus import SelectionBus
 from .image_grid import ImageGridDock
-
+from .image_utils import pixmap_from_file
 
 NAME_ROLE = Qt.UserRole
 IMAGES_ROLE = Qt.UserRole + 1
@@ -26,7 +26,7 @@ COUNT_ROLE = Qt.UserRole + 2
 
 @lru_cache(maxsize=1024)
 def _scaled_thumb(path: str, size: int) -> QPixmap:
-    pix = QPixmap(path)
+    pix = pixmap_from_file(path)
     if pix.isNull():
         return QPixmap()
     return pix.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)

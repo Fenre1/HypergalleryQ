@@ -6,7 +6,7 @@ import pandas as pd
 import h5py
 from pathlib import Path
 from typing import Dict, List, Set, Iterable, Optional
-from PIL import Image, ExifTags
+from PIL import Image, ExifTags, ImageOps
 import io
 from PyQt5.QtCore import QObject, pyqtSignal as Signal
 from PyQt5.QtGui import QColor
@@ -340,7 +340,7 @@ class SessionModel(QObject):
         thumbs: List[bytes] = []
         for p in self.im_list:
             try:
-                img = Image.open(p).convert("RGB")
+                img = ImageOps.exif_transpose(Image.open(p)).convert("RGB")
                 img.thumbnail(size, Image.Resampling.LANCZOS)
                 canvas = Image.new("RGB", size, "black")
                 off_x = (size[0] - img.width) // 2
@@ -355,6 +355,7 @@ class SessionModel(QObject):
 
         self.thumbnail_data = thumbs
         self.thumbnails_are_embedded = True
+
 
     # ------------------------------------------------------------------
     def _update_edit_status(self, name: str, *, renamed: bool = False, modified: bool = False) -> None:

@@ -16,6 +16,7 @@ from .selection_bus import SelectionBus
 from .session_model import SessionModel
 from .similarity import SIM_METRIC
 from .image_popup import show_image_metadata
+from .image_utils import qimage_from_file, qimage_from_data, pixmap_from_file
 
 from sklearn.cluster import AgglomerativeClustering
 import numpy as np
@@ -117,12 +118,12 @@ class _ThumbWorker(QObject):
         if not self._use_full and self._session.thumbnail_data:
             if self._session.thumbnails_are_embedded:
                 data = self._session.thumbnail_data[idx]
-                img = QImage.fromData(data)
+                img = qimage_from_data(data)
             else:
                 path = Path(self._session.h5_path).parent / self._session.thumbnail_data[idx]
-                img = QImage(str(path))
+                img = qimage_from_file(str(path))
         else:
-            img = QImage(self._session.im_list[idx])
+            img = qimage_from_file(self._session.im_list[idx])
 
         if not img.isNull():
             img = img.scaled(
@@ -656,7 +657,7 @@ class ImageGridDock(QDockWidget):
                 lbl_img = QLabel()
                 lbl_img.setFixedSize(self.thumb_size, self.thumb_size)
                 if idx is not None:
-                    pix = QPixmap(session.im_list[idx])
+                    pix = pixmap_from_file(session.im_list[idx])
                     if not pix.isNull():
                         pix = pix.scaled(
                             self.thumb_size,

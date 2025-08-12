@@ -9,12 +9,13 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QPixmap, QPen, QColor
 from PyQt5.QtCore import Qt, QRectF, pyqtSignal as Signal
-from PIL import Image
+from PIL import Image, ImageOps
 import numpy as np
 import torch
 
 from .similarity import SIM_METRIC
 from .feature_extraction import Swinv2LargeFeatureExtractor
+from .image_utils import pixmap_from_file
 
 
 class ZoomPanGraphicsView(QGraphicsView):
@@ -97,7 +98,7 @@ class ImageMetadataDialog(QDialog):
         self.view = ZoomPanGraphicsView()
         self.scene = QGraphicsScene(self.view)
         self.view.setScene(self.scene)
-        pix = QPixmap(image_path)
+        pix = pixmap_from_file(image_path)
         self.pix_item = QGraphicsPixmapItem(pix)
         self.scene.addItem(self.pix_item)
         self.view.fitInView(self.pix_item, Qt.KeepAspectRatio)
@@ -144,11 +145,6 @@ class ImageMetadataDialog(QDialog):
             self.table.setRowHidden(row, not match)
 
     # ------------------------------------------------------------------
-    def _on_selection_changed(self, rect: QRectF):
-        self._sel_rect = rect
-        valid = rect.width() > 2 and rect.height() > 2
-        self.rank_btn.setEnabled(bool(self._session) and valid)
-
     def _on_rank_selection(self):
         if not (self._session and self._sel_rect):
             return
@@ -159,7 +155,7 @@ class ImageMetadataDialog(QDialog):
         if ImageMetadataDialog._extractor is None:
             ImageMetadataDialog._extractor = Swinv2LargeFeatureExtractor(batch_size=1)
 
-        img = Image.open(self._image_path).convert("RGB")
+        img = ImageOps.exif_transpose(Image.open(self._image_path)).convert("RGB")
         crop = img.crop((int(rect.x()), int(rect.y()), int(rect.x()+rect.width()), int(rect.y()+rect.height())))
         tensor = ImageMetadataDialog._extractor.transform(crop).unsqueeze(0).to(ImageMetadataDialog._extractor.device)
         with torch.no_grad():
