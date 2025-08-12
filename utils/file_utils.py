@@ -1,28 +1,20 @@
-# utils/file_utils.py
-
-import os
-import glob
+from pathlib import Path
 from typing import List
 from PIL import Image
 
 def get_image_files(directory: str) -> List[str]:
-    """
-    Scans a directory and its subdirectories for image files with specific extensions.
-    Args:
-        directory (str): The root folder to scan for images.
-    Returns:
-        List[str]: A list of file paths for all found images.
-    """
-    # List of image file extensions to search for.
-    extensions = ['jpg', 'JPG', 'gif', 'GIF', 'png', 'PNG', 'tif', 'TIF', 'bmp', 'BMP']
-    file_paths = []
-    for ext in extensions:
-        pattern = os.path.join(directory, '**', f'*.{ext}')
-        for path in glob.glob(pattern, recursive=True):
+    exts = {".jpg",".jpeg",".gif",".png",".tif",".tiff",".bmp",".webp"}
+    file_paths: List[str] = []
+
+    for p in Path(directory).rglob("*"):
+        if p.is_file() and p.suffix.lower() in exts:
             try:
-                with Image.open(path) as img:
+                with Image.open(p) as img:
                     img.verify()
-                file_paths.append(path)
+                file_paths.append(str(p))
             except Exception as e:
-                print(f"Skipping corrupted image {path}: {e}")
-    return list(set(file_paths))
+                print(f"Skipping corrupted image {p}: {e}")
+
+    # dedupe while preserving order
+    seen = set()
+    return [p for p in file_paths if not (p in seen or seen.add(p))]
