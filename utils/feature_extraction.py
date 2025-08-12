@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import timm
-from PIL import Image
+from PIL import Image, ImageFile
 import timm.data
 from torch.utils.data import Dataset, DataLoader
 import open_clip
@@ -14,7 +14,7 @@ import urllib.request
 from typing import List
 import re
 
-
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 MODEL_DIR = Path(__file__).resolve().parent.parent / "models"
 MODEL_DIR.mkdir(exist_ok=True)
@@ -25,7 +25,7 @@ class ImageFileDataset(Dataset):
     """ 
     A PyTorch Dataset for loading and transforming images given a list of file paths.
     """
-    def __init__(self, file_list, transform):
+    def __init__(self, file_list, transform, image_size=None):
         """
         Args:
             file_list (List[str]): List of image file paths.
@@ -33,15 +33,21 @@ class ImageFileDataset(Dataset):
         """
         self.file_list = file_list
         self.transform = transform
+        self.image_size = image_size    
 
     def __len__(self):
         return len(self.file_list)
 
     def __getitem__(self, index):
         file_path = self.file_list[index]
-        # Load the image and convert to RGB
-        image = Image.open(file_path).convert('RGB')
-        # Apply the provided transformation
+        try:
+            image = Image.open(file_path).convert('RGB')
+        except Exception as e:
+            print(f"Warning: failed to load {file_path}: {e}")
+            if self.image_size:
+                image = Image.new('RGB', self.image_size)
+            else:
+                raise
         image = self.transform(image)
         return image
 
@@ -72,6 +78,9 @@ class FeatureExtractor:
             input_size=self.model.default_cfg['input_size']
         )
 
+        _, h, w = self.model.default_cfg['input_size']
+        self.image_size = (w, h)
+
 
 
 
@@ -86,7 +95,7 @@ class FeatureExtractor:
             np.ndarray: Features extracted from all images.
         """
         # Create a dataset instance and a DataLoader to handle batching.
-        dataset = ImageFileDataset(file_list, self.transform)
+        dataset = ImageFileDataset(file_list, self.transform, self.image_size)
         loader = DataLoader(
             dataset,
             batch_size=self.batch_size,
@@ -121,13 +130,14 @@ class OpenClipFeatureExtractor:
         self.model, _, self.preprocess = open_clip.create_model_and_transforms(model_name, pretrained=pretrained)
         self.model.to(self.device)
         self.model.eval()
+        self.image_size = (224, 224)
 
     @property
     def transform(self):
         return self.preprocess
 
     def extract_features(self, file_list: list) -> np.ndarray:
-        dataset = ImageFileDataset(file_list, self.preprocess)
+        dataset = ImageFileDataset(file_list, self.preprocess, self.image_size)
         loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=False, num_workers=0)
         all_features = []
         for images in loader:

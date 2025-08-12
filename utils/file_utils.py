@@ -3,6 +3,7 @@
 import os
 import glob
 from typing import List
+from PIL import Image
 
 def get_image_files(directory: str) -> List[str]:
     """
@@ -17,5 +18,11 @@ def get_image_files(directory: str) -> List[str]:
     file_paths = []
     for ext in extensions:
         pattern = os.path.join(directory, '**', f'*.{ext}')
-        file_paths.extend(glob.glob(pattern, recursive=True))
+        for path in glob.glob(pattern, recursive=True):
+            try:
+                with Image.open(path) as img:
+                    img.verify()
+                file_paths.append(path)
+            except Exception as e:
+                print(f"Skipping corrupted image {path}: {e}")
     return list(set(file_paths))
