@@ -642,6 +642,7 @@ class ImageGridDock(QDockWidget):
 
         col = row = 0
         max_cols = 3
+        first = True
         for name, imgs in triplets.items():
             frame = QFrame()
             frame.setFrameShape(QFrame.Box)
@@ -669,7 +670,7 @@ class ImageGridDock(QDockWidget):
 
                 style = ""
                 if pos < 3:
-                    style = "background-color: #ccffcc; border: 2px solid green;"
+                    style = "background-color: #228B22; border: 2px solid #006400;"
                 elif pos < 5:
                     style = "background-color: orange;"
                 elif pos == 5:
@@ -677,9 +678,26 @@ class ImageGridDock(QDockWidget):
                 if style:
                     lbl_img.setStyleSheet(style)
 
-                container.addWidget(lbl_img)
+                if first and pos == 5:
+                    red_layout = QVBoxLayout()
+                    red_layout.setSpacing(0)
+                    red_layout.setContentsMargins(0, 0, 0, 0)
+                    red_layout.addWidget(lbl_img)
+                    cap = QLabel("Furthest from center")
+                    cap.setAlignment(Qt.AlignCenter)
+                    red_layout.addWidget(cap)
+                    container.addLayout(red_layout)
+                else:
+                    container.addWidget(lbl_img)
+
+            if first:
+                v.addWidget(QLabel("Core images"))
             v.addLayout(top)
+            if first:
+                v.addWidget(QLabel("Furthest apart"))
             v.addLayout(bottom)
+            first = False                
+            
             layout.addWidget(frame, row, col)
             col += 1
             if col >= max_cols:
