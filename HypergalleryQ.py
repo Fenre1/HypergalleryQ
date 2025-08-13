@@ -11,7 +11,7 @@ from utils.similarity import SIM_METRIC
 from pathlib import Path
 import io
 import torch
-from PIL import Image, ImageGrab
+from PIL import Image, ImageGrab, ImageOps
 import time
 import pyqtgraph as pg
 from PyQt5.QtWidgets import (
@@ -37,6 +37,7 @@ from PyQt5.QtWidgets import (
     QGroupBox,
     QCheckBox,
     QHBoxLayout,
+    QGridLayout,
     QComboBox
 )
  
@@ -616,62 +617,62 @@ class MainWin(QMainWindow):
         toolbar_layout.setContentsMargins(10, 10, 10, 10)
         toolbar_layout.setSpacing(10)
 
-        self.btn_sim = QPushButton("Show similarity and intersection")
+        self.btn_sim = QPushButton("Similarity")
         self.btn_sim.clicked.connect(self.compute_similarity)
-        
-        self.btn_add_hyperedge = QPushButton("Add Hyperedge")
+
+        self.btn_add_hyperedge = QPushButton("Add")
         self.btn_add_hyperedge.clicked.connect(self.on_add_hyperedge)
-        
-        self.btn_del_hyperedge = QPushButton("Delete Hyperedge")
+
+        self.btn_del_hyperedge = QPushButton("Delete")
         self.btn_del_hyperedge.clicked.connect(self.on_delete_hyperedge)
 
-        self.btn_add_img = QPushButton("Add images to hyperedge")
+        self.btn_add_img = QPushButton("Add images")
         self.btn_add_img.clicked.connect(self.add_selection_to_hyperedge)
-        
-        self.btn_del_img = QPushButton("Remove images from hyperedge")
+
+        self.btn_del_img = QPushButton("Remove images")
         self.btn_del_img.clicked.connect(self.on_remove_images)
 
-        self.btn_rank = QPushButton("Rank images by selection")
+        self.btn_rank = QPushButton("By selection")
         self.btn_rank.clicked.connect(self.rank_selected_images)
 
-        self.btn_rank_edge = QPushButton("Rank images by hyperedge")
+        self.btn_rank_edge = QPushButton("By hyperedge")
         self.btn_rank_edge.clicked.connect(self.rank_selected_hyperedge)
 
-        self.btn_rank_file = QPushButton("Rank external image")
+        self.btn_rank_file = QPushButton("By image file")
         self.btn_rank_file.clicked.connect(self.rank_image_file)
 
-        self.btn_rank_clip = QPushButton("Rank clipboard image")
+        self.btn_rank_clip = QPushButton("By clipboard")
         self.btn_rank_clip.clicked.connect(self.rank_clipboard_image)
 
-        self.btn_overview = QPushButton("Overview")
+        self.btn_overview = QPushButton("Images")
         self.btn_overview.clicked.connect(self.show_overview)
 
         self.text_query = QLineEdit()
         self.text_query.setPlaceholderText("Text query…")
         self.text_query.returnPressed.connect(self.rank_text_query)
 
-        self.btn_rank_text = QPushButton("Rank by text")
+        self.btn_rank_text = QPushButton("By text")
         self.btn_rank_text.clicked.connect(self.rank_text_query)
 
-        self.btn_meta_overview = QPushButton("Metadata overview")
+        self.btn_meta_overview = QPushButton("Metadata")
         self.btn_meta_overview.clicked.connect(self.show_metadata_overview)
 
-        self.btn_color_default = QPushButton("Colorize (edge)")
+        self.btn_color_default = QPushButton("Edge")
         self.btn_color_default.clicked.connect(self.color_edges_default)
 
-        self.btn_color_status = QPushButton("Colorize by status")
+        self.btn_color_status = QPushButton("Status")
         self.btn_color_status.clicked.connect(self.color_edges_by_status)
 
-        self.btn_color_origin = QPushButton("Colorize by origin")
+        self.btn_color_origin = QPushButton("Origin")
         self.btn_color_origin.clicked.connect(self.color_edges_by_origin)
 
-        self.btn_color_similarity = QPushButton("Colorize by similarity")
+        self.btn_color_similarity = QPushButton("Similarity")
         self.btn_color_similarity.clicked.connect(self.color_edges_by_similarity)
 
         self.btn_session_stats = QPushButton("Session stats")
         self.btn_session_stats.clicked.connect(self.show_session_stats)
 
-        self.btn_manage_visibility = QPushButton("Manage hidden hyperedges")
+        self.btn_manage_visibility = QPushButton("Visibility")
         self.btn_manage_visibility.clicked.connect(self.choose_hidden_edges)
 
         self.limit_images_cb = QCheckBox("Limit number of image nodes per hyperedge")
@@ -684,29 +685,61 @@ class MainWin(QMainWindow):
         lim_edge_row = QHBoxLayout(); lim_edge_row.addWidget(self.limit_edges_cb); lim_edge_row.addWidget(self.limit_edges_edit)
         lim_edge_w = QWidget(); lim_edge_row.setContentsMargins(0,0,0,0); lim_img_row.setContentsMargins(0,0,0,0); lim_edge_w.setLayout(lim_edge_row)
 
+        hyperedge_group = QGroupBox("Hyperedges")
+        hyperedge_layout = QGridLayout()
+        hyperedge_layout.addWidget(self.btn_add_hyperedge, 0, 0)
+        hyperedge_layout.addWidget(self.btn_del_hyperedge, 0, 1)
+        hyperedge_layout.addWidget(self.btn_add_img, 1, 0)
+        hyperedge_layout.addWidget(self.btn_del_img, 1, 1)
+        hyperedge_layout.addWidget(self.btn_manage_visibility, 2, 0, 1, 2)
+        hyperedge_group.setLayout(hyperedge_layout)
+
+        query_group = QGroupBox("Query")
+        query_layout = QGridLayout()
+        query_layout.addWidget(self.btn_rank, 0, 0)
+        query_layout.addWidget(self.btn_rank_edge, 0, 1)
+        query_layout.addWidget(self.btn_rank_file, 1, 0)
+        query_layout.addWidget(self.btn_rank_clip, 1, 1)
+        query_layout.addWidget(self.text_query, 2, 0, 1, 2)
+        query_layout.addWidget(self.btn_rank_text, 3, 0, 1, 2)
+        query_group.setLayout(query_layout)
+
+        color_group = QGroupBox("Colorize")
+        color_layout = QGridLayout()
+        color_layout.addWidget(self.btn_color_default, 0, 0)
+        color_layout.addWidget(self.btn_color_status, 0, 1)
+        color_layout.addWidget(self.btn_color_origin, 1, 0)
+        color_layout.addWidget(self.btn_color_similarity, 1, 1)
+        color_group.setLayout(color_layout)
+
+        overview_group = QGroupBox("Overview")
+        overview_layout = QGridLayout()
+        overview_layout.addWidget(self.btn_sim, 0, 0, 1, 2)
+        overview_layout.addWidget(self.btn_overview, 1, 0)
+        overview_layout.addWidget(self.btn_meta_overview, 1, 1)
+        overview_layout.addWidget(self.btn_session_stats, 2, 0, 1, 2)
+        overview_group.setLayout(overview_layout)
+
+        options_group = QGroupBox("Options")
+        options_layout = QVBoxLayout()
+        options_layout.addWidget(lim_img_w)
+        options_layout.addWidget(lim_edge_w)
 
 
-        toolbar_layout.addWidget(self.btn_sim)
-        toolbar_layout.addWidget(self.btn_add_hyperedge)
-        toolbar_layout.addWidget(self.btn_del_hyperedge)
-        toolbar_layout.addWidget(self.btn_add_img)
-        toolbar_layout.addWidget(self.btn_del_img)
-        toolbar_layout.addWidget(self.btn_rank)        
-        toolbar_layout.addWidget(self.btn_rank_edge)
-        toolbar_layout.addWidget(self.btn_rank_file)
-        toolbar_layout.addWidget(self.btn_rank_clip)
-        toolbar_layout.addWidget(self.btn_overview)
-        toolbar_layout.addWidget(self.btn_session_stats)
-        toolbar_layout.addWidget(self.btn_manage_visibility)        
-        toolbar_layout.addWidget(self.text_query)
-        toolbar_layout.addWidget(self.btn_rank_text)
-        toolbar_layout.addWidget(self.btn_meta_overview)
-        toolbar_layout.addWidget(self.btn_color_default)
-        toolbar_layout.addWidget(self.btn_color_status)
-        toolbar_layout.addWidget(self.btn_color_origin)
-        toolbar_layout.addWidget(self.btn_color_similarity)
-        toolbar_layout.addWidget(lim_img_w)
-        toolbar_layout.addWidget(lim_edge_w)
+        self.image_grid = ImageGridDock(self.bus, self)
+
+        options_layout.addWidget(self.image_grid.hide_selected_cb)
+        options_layout.addWidget(self.image_grid.hide_modified_cb)
+
+
+        options_group.setLayout(options_layout)
+
+        toolbar_layout.addWidget(hyperedge_group)
+        toolbar_layout.addWidget(query_group)
+        toolbar_layout.addWidget(color_group)
+        toolbar_layout.addWidget(overview_group)
+        toolbar_layout.addWidget(options_group)
+
 
 
         self.legend_box = QGroupBox("Legend")
@@ -715,11 +748,8 @@ class MainWin(QMainWindow):
         self.legend_box.hide()
         toolbar_layout.addWidget(self.legend_box)
 
-        self.image_grid = ImageGridDock(self.bus, self)
         self.overlap_dock = OverlapListDock(self.bus, self.image_grid, self)
         self.overlap_dock.setObjectName("OverlapListDock")        
-        toolbar_layout.addWidget(self.image_grid.hide_selected_cb)
-        toolbar_layout.addWidget(self.image_grid.hide_modified_cb)
 
         toolbar_layout.addStretch()
         self.toolbar_dock.setWidget(toolbar_container)
@@ -984,11 +1014,12 @@ class MainWin(QMainWindow):
 
         if isinstance(clip_img, list):
             try:
-                clip_img = Image.open(clip_img[0])
+                clip_img = ImageOps.exif_transpose(Image.open(clip_img[0]))
             except Exception:
                 QMessageBox.information(self, "No Image", "Clipboard does not contain an image.")
                 return
 
+        clip_img = ImageOps.exif_transpose(clip_img)
         if clip_img.mode == "RGBA":
             clip_img = clip_img.convert("RGB")
 
@@ -1003,6 +1034,7 @@ class MainWin(QMainWindow):
         sims = SIM_METRIC(feat.reshape(1, -1), feats)[0]
         ranked = np.argsort(sims)[::-1][:500]
         self.image_grid.update_images(ranked, sort=False, query=True)
+
 
     def rank_text_query(self):
         """Rank images by similarity to a text query using OpenCLIP."""
