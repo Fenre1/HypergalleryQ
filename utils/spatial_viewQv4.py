@@ -79,7 +79,7 @@ def _resolve_overlaps_numba(pos, radii, iterations, strength):
                     moved = True
         if not moved:
             break
-    print('iter',itr)
+    #print('iter',itr)
     return pos
 
 
@@ -107,7 +107,7 @@ class _RecalcWorker(QtCore.QObject):
 
     @pyqtSlot(str)
     def recompute(self, edge_name: str):
-        print('start recompute')
+        #print('start recompute')
         session = self.session
         if session is None:
             return
@@ -122,7 +122,7 @@ class _RecalcWorker(QtCore.QObject):
         if edge_name in session.hyperedges:
             idx = list(session.hyperedges[edge_name])
             if idx:
-                print('umap1')
+                #print('umap1')
                 emb = umap.UMAP(n_components=2, random_state=42,n_jobs=-1).fit_transform(feats_norm[idx])
                 emb = emb - emb.mean(axis=0)
                 m = np.max(np.linalg.norm(emb, axis=1))
@@ -133,7 +133,7 @@ class _RecalcWorker(QtCore.QObject):
         edges = list(session.hyperedges)
         edge_feats = np.stack([session.hyperedge_avg_features[e] for e in edges]).astype(np.float32)
         reducer = umap.UMAP(n_components=2, random_state=42, min_dist=0.8, n_jobs=-1)
-        print('umap2')
+        #print('umap2')
         initial_pos = reducer.fit_transform(edge_feats)
         diameters = np.maximum(
             np.array([np.sqrt(len(session.hyperedges[n])) for n in edges]) * SpatialViewQDock.NODE_SIZE_SCALER,
@@ -160,7 +160,7 @@ class _RecalcWorker(QtCore.QObject):
         layout = {n: (pos[i], diameters[i]) for i, n in enumerate(edges)}
         self.imageEmbeddingReady.emit(edge_name, mapping)
         self.layoutReady.emit(layout)
-        print('end recompute')
+        #print('end recompute')
 
 
     
@@ -443,18 +443,18 @@ class SpatialViewQDock(QDockWidget):
             ell.setBrush(pg.mkBrush(col))
 
     def show_legend(self, mapping: dict[str, str]):
-        print('tuut legend')
+        #print('tuut legend')
         """Display a legend for the given mapping of labels to colors."""
         # Show immediately so _pos_legend can reposition correctly when switching
         # directly between different color modes.
         self.legend.show()  # ensure visible before positioning
         while self.legend_layout.count():
             item = self.legend_layout.takeAt(0)
-            print('item',item)
+            #print('item',item)
             if item.widget():
                 item.widget().deleteLater()
         for label, color in mapping.items():
-            print('labne', label, color)
+            #print('labne', label, color)
             lab = QLabel(f"<span style='color:{color}'>■</span> {label}")
             self.legend_layout.addWidget(lab)
         self.legend.show()
@@ -544,7 +544,7 @@ class SpatialViewQDock(QDockWidget):
         edge_feats = np.stack([session.hyperedge_avg_features[e] for e in edges]).astype(np.float32)
         sizes = np.maximum(np.array([np.sqrt(len(session.hyperedges[n])) for n in edges]) * self.NODE_SIZE_SCALER,
                            self.MIN_HYPEREDGE_DIAMETER)
-        print('umap3')
+        #print('umap3')
         reducer = umap.UMAP(n_components=2, random_state=42, min_dist=0.8, n_jobs=-1)
         initial_pos = reducer.fit_transform(edge_feats)
 
@@ -657,7 +657,7 @@ class SpatialViewQDock(QDockWidget):
 
                 idx = list(session.hyperedges[edge])
                 self._centroid_sim[edge] = self._features_norm[idx] @ c if idx else np.array([])
-        print('umaptime',time.perf_counter()-start_time)
+        #print('umaptime',time.perf_counter()-start_time)
 
 
         self._refresh_edges()
@@ -727,53 +727,27 @@ class SpatialViewQDock(QDockWidget):
 
       
     def _get_image_point_at(self, scene_pos: QPointF):
-        """
-        Performs a precise hit-test on the image scatter plot.
-        Returns the specific point under the cursor, or None.
-        """
-        # 1. Early exit if the scatter plot is invalid or has no points.
-        #    FIX: Use .points().size to correctly check the NumPy array.
-        if not self.image_scatter or self.image_scatter.points().size == 0:
+        # 1) Early exit if the scatter plot is invalid or has no points.
+        if not self.image_scatter or len(self.image_scatter.points()) == 0:
             return None
 
-        # 2. Convert the mouse position from global Scene coordinates to the
-        #    ViewBox's internal data coordinates. This is the coordinate
-        #    system the scatter plot's data lives in.
         view_pos = self.view.mapSceneToView(scene_pos)
 
-        # 3. Use pointsAt() for a fast, broad-phase check. It returns all
-        #    points in the general vicinity of the cursor.
+        # Fast broad-phase: candidates under cursor
         points = self.image_scatter.pointsAt(view_pos)
-
-        # 4. If the broad-phase check returns no candidate points, exit.
-        #    FIX: Use .size to correctly check the NumPy array.
-        if points.size == 0:
+        if len(points) == 0:
             return None
 
-        # 5. Perform a precise, narrow-phase check on the candidate points.
-        #    The calculation must be done consistently in a single coordinate system.
-        #    We will use the ViewBox's data coordinates.
-
-        #    - Get the size of a single pixel in view coordinates.
+        # Narrow-phase: consistent units (ViewBox data coords)
         pixel_width_in_view_coords = self.view.pixelWidth()
-        #    - Calculate the radius of the scatter points in view coordinates.
         radius = self.image_scatter.opts['size'] * 0.5
-        radius_in_view_coords_sq = (radius * pixel_width_in_view_coords)**2
+        radius_in_view_coords_sq = (radius * pixel_width_in_view_coords) ** 2
 
         for p in points:
-            # p.pos() returns the point's center in view coordinates.
-            point_view_pos = p.pos()
-
-            # Calculate the squared distance between the mouse and the point's center,
-            # all within the same (view) coordinate system.
-            dist_sq = (point_view_pos.x() - view_pos.x())**2 + \
-                      (point_view_pos.y() - view_pos.y())**2
-
-            # If the distance is less than the radius, we have a hit.
+            p_pos = p.pos()  # in view coords
+            dist_sq = (p_pos.x() - view_pos.x())**2 + (p_pos.y() - view_pos.y())**2
             if dist_sq <= radius_in_view_coords_sq:
-                return p  # Return the matching point and stop.
-
-        # If no candidate points passed the precise check, return None.
+                return p
         return None
 
     
@@ -924,7 +898,6 @@ class SpatialViewQDock(QDockWidget):
 
 
     def _update_image_layer(self):
-        start_time4 = time.perf_counter()
         if self._layout_version == self._rendered_version:
             return
 
@@ -933,20 +906,12 @@ class SpatialViewQDock(QDockWidget):
             if self.link_curve: self.link_curve.hide()
             self.tooltip_manager.hide()
             return
-        print('_update_image_layer-4',time.perf_counter() - start_time4 )
-        # xr,_=self.view.viewRange()
-        # if (xr[1]-xr[0])>self.zoom_threshold:
-        #     if self.image_scatter: self.image_scatter.hide()
-        #     if self.link_curve: self.link_curve.hide()
-        #     self.tooltip_manager.hide()
-        #     return
         if self.image_scatter: 
             self.image_scatter.show()
         if self.link_curve: 
             self.link_curve.show()
 
         if self.image_scatter is None:
-            # Use the simplified ImageScatterItem
             self.image_scatter = ImageScatterItem(
                 size=8, symbol='o', pxMode=True,
                 brush=pg.mkBrush('w'), pen=pg.mkPen('k'),
@@ -955,25 +920,16 @@ class SpatialViewQDock(QDockWidget):
             self.image_scatter.sigClicked.connect(self._on_image_clicked)
             self.view.addItem(self.image_scatter)
         
-        # Hover events are now globally controlled, so no need to toggle them here
         if not self._should_show_image_tooltip() and not self._should_show_hyperedge_tooltip():
             self.tooltip_manager.hide()
-        print('_update_image_layer-3',time.perf_counter() - start_time4 )
 
         if self.link_curve is None:
             self.link_curve = pg.PlotCurveItem(
                 pen=pg.mkPen(QColor(255, 255, 255, 150), width=1),
-                autoDownsample=True,  # Automatically adjust detail on zoom
-                downsample=10         # Downsample by a factor of 10 when zoomed out
+                autoDownsample=True,  
+                downsample=10         
             )
             self.view.addItem(self.link_curve)
-
-
-
-        # if self.link_curve is None:
-        #     self.link_curve=pg.PlotCurveItem(pen=pg.mkPen(QColor(255,255,255,150),width=1))
-        #     # self.link_curve.setDownsampling(mode='peak') 
-        #     self.view.addItem(self.link_curve)
             
         if self.selected_scatter is None:
             self.selected_scatter = pg.ScatterPlotItem(size=8, symbol='o', pxMode=True,
@@ -982,25 +938,15 @@ class SpatialViewQDock(QDockWidget):
             self.view.addItem(self.selected_scatter)
 
 
-
-            self.view.addItem(self.selected_scatter)
-
-
         if self.selected_links is None:
             self.selected_links = pg.PlotCurveItem(
                 pen=pg.mkPen(QColor(255, 0, 0, 150), width=1),
-                autoDownsample=True, # Also apply to the selection overlay
+                autoDownsample=True, 
                 downsample=10
             )
             self.view.addItem(self.selected_links)
 
-        # if self.selected_links is None:
-        #     self.selected_links=pg.PlotCurveItem(pen=pg.mkPen(QColor(255,0,0,150),width=1))
-        #     self.view.addItem(self.selected_links)
 
-
-
-        print('_update_image_layer-2',time.perf_counter() - start_time4 )
         rel,links=self._radial_layout_cache
         k_list=list(rel.keys())
         if not k_list:
@@ -1008,13 +954,11 @@ class SpatialViewQDock(QDockWidget):
             self.selected_scatter.setData([],[]); self.selected_links.setData([],[])
             self._abs_pos_cache={}
             return
-        print('_update_image_layer-1',time.perf_counter() - start_time4 )
         offsets=np.array(list(rel.values()),dtype=float)
         centres=np.array([self.fa2_layout.positions[e] for e,_ in k_list])
         abs_pos=centres+offsets
         self.image_scatter.setData(pos=abs_pos, data=k_list)
         self._abs_pos_cache={k:p for k,p in zip(k_list,abs_pos)}
-        print('_update_image_layer0',time.perf_counter() - start_time4 )
         if links:
             pairs=np.empty((2*len(links),2),dtype=float)
             abs_dict=self._abs_pos_cache
@@ -1023,12 +967,9 @@ class SpatialViewQDock(QDockWidget):
             self.link_curve.setData(pairs[:,0],pairs[:,1],connect='pairs')
         else:
             self.link_curve.setData([],[])
-        print('_update_image_layer',time.perf_counter() - start_time4 )
         self._update_selected_overlay()
-        print('_update_image_layer2',time.perf_counter() - start_time4 )
 
     def _update_selected_overlay(self):
-        start_timer6 = time.perf_counter() 
         if not self._selected_nodes or not self._radial_layout_cache:
             if self.selected_scatter: self.selected_scatter.setData([], [])
             if self.selected_links: self.selected_links.setData([], [])
@@ -1036,10 +977,8 @@ class SpatialViewQDock(QDockWidget):
 
         abs_pos_cache = self._abs_pos_cache
         sel_pos = [abs_pos_cache[k] for k in self._selected_nodes if k in abs_pos_cache]
-        print('_update_selected_overlay',time.perf_counter() - start_timer6 )
         if self.selected_scatter: 
             self.selected_scatter.setData(pos=np.array(sel_pos))
-            print('_update_selected_overlay2',time.perf_counter() - start_timer6 )
         rel, links = self._radial_layout_cache
         pairs = []
         for a, b in links:
@@ -1050,14 +989,11 @@ class SpatialViewQDock(QDockWidget):
 
 
                     
-        print('_update_selected_overlay3',time.perf_counter() - start_timer6 )
         if pairs and self.selected_links:
             arr = np.array(pairs)
             self.selected_links.setData(arr[:,0], arr[:,1], connect='pairs')
-            print('_update_selected_overlay4',time.perf_counter() - start_timer6 )
         elif self.selected_links:
             self.selected_links.setData([], [])
-            print('_update_selected_overlay5',time.perf_counter() - start_timer6 )
 
     def _compute_overview_triplets(self) -> dict[str, tuple[int | None, ...]]:
         session = self.session
@@ -1065,7 +1001,6 @@ class SpatialViewQDock(QDockWidget):
         return session.compute_overview_triplets()
 
     def _compute_radial_layout(self, sel_name: str):
-        start_timer15 = time.perf_counter()
         
         if sel_name in self._radial_cache_by_edge:
             return self._radial_cache_by_edge[sel_name]
@@ -1150,13 +1085,11 @@ class SpatialViewQDock(QDockWidget):
         self._radial_cache_by_edge[sel_name] = (offsets, links)
         self._layout_version = (self._layout_version or 0) + 1
 
-        print('_compute_radial_layout', time.perf_counter() - start_timer15)
         return offsets, links
 
 
 
     def _on_edges(self, names: list[str]):
-        start_timer7 = time.perf_counter()
         
         for name, ell in self.hyperedgeItems.items():
             col = self.color_map.get(name, '#AAAAAA')
@@ -1167,22 +1100,18 @@ class SpatialViewQDock(QDockWidget):
             self._radial_layout_cache = self._compute_radial_layout(names[0])
             self._layout_version = (self._layout_version or 0) + 1
 
-            print('_on_edges',time.perf_counter() - start_timer7)
         else:
             self._current_edge = None
             self._radial_layout_cache = None
             self._layout_version = (self._layout_version or 0) + 1
 
         self._update_image_layer()
-        print('_on_edges2',time.perf_counter() - start_timer7)
       
     def _on_images(self, idxs: list[int]):
-        start_timer5 = time.perf_counter()
         
         if not self.session:
             return
 
-        # Stop any previous animation cleanly
         if self._highlight_timer.isActive():
             self._highlight_timer.stop()
             for item in self._animating_items:
@@ -1207,7 +1136,6 @@ class SpatialViewQDock(QDockWidget):
                 ell.setPen(pg.mkPen(col))
                 ell.setBrush(pg.mkBrush(col))
 
-        # Now, start the animation on the collected items
         if items_to_animate:
             if len(items_to_animate) < 50:
                 self._animating_items = items_to_animate
@@ -1215,9 +1143,7 @@ class SpatialViewQDock(QDockWidget):
                 self._highlight_timer.start()
 
         self._selected_nodes = {(e, i) for i in idxs for e in self.session.image_mapping.get(i, [])}
-        print('_on_images',time.perf_counter() - start_timer5)
         self._update_selected_overlay()
-        print('_on_images2',time.perf_counter() - start_timer5)
 
 
     def _on_hyperedge_modified(self, name: str):
@@ -1239,7 +1165,6 @@ class SpatialViewQDock(QDockWidget):
         self._update_image_layer()
 
     def _on_worker_layout(self, layout: dict):
-        start_timer12 = time.perf_counter()        
         if not self.session:
             return
         names = list(layout)
@@ -1251,7 +1176,6 @@ class SpatialViewQDock(QDockWidget):
         self._radial_layout_cache = None
         self._layout_version = (self._layout_version or 0) + 1
 
-        print('_on_worker_layout',time.perf_counter() - start_timer12)
         for name in list(self.hyperedgeItems):
             if name not in layout:
                 self.view.removeItem(self.hyperedgeItems.pop(name))
@@ -1270,25 +1194,34 @@ class SpatialViewQDock(QDockWidget):
             self.hyperedgeItems[name].setPos(x, y)
             self.hyperedgeItems[name].setVisible(name not in self.hidden_edges)
             self._refresh_edges()
-        print('_on_worker_layout2',time.perf_counter() - start_timer12)
         self._update_image_layer()
 
 
     def _on_click(self, ev):
-        if ev.button() != Qt.LeftButton: return
-
-        item = self.plot.scene().itemAt(ev.scenePos(), QtGui.QTransform())
-        if isinstance(item, pg.ScatterPlotItem) or \
-           (item and isinstance(item.parentItem(), pg.ScatterPlotItem)):
+        if ev.button() != Qt.LeftButton:
             return
 
-        if isinstance(item, HyperedgeItem):
-            self.bus.set_edges([item.name])
-            ev.accept()
-            return
+        scene_pos = ev.scenePos()
 
+        # If we clicked an actual scatter POINT, let the scatter's own handler deal with it
+        if self.image_scatter and self.image_scatter.isVisible():
+            hit = self._get_image_point_at(scene_pos)
+            if hit is not None:
+                return  # do not change hyperedge selection
+
+        # Otherwise try to select the top-most hyperedge actually under the cursor
+        for it in self.plot.scene().items(scene_pos):
+            if isinstance(it, HyperedgeItem) and it.isVisible():
+                if it.contains(it.mapFromScene(scene_pos)):   # precise in-ellipse test
+                    self.bus.set_edges([it.name])
+                    ev.accept()
+                    return
+
+        # Clicked empty space: clear selection (unless Shift held)
         if not (QApplication.keyboardModifiers() & Qt.ShiftModifier):
             self.bus.set_edges([])
+
+
 
     def _on_image_clicked(self, scatter, points):
         if not points: return
@@ -1303,23 +1236,46 @@ class SpatialViewQDock(QDockWidget):
             self.bus.set_images(sel_imgs)
 
     def _on_lasso(self, pts: list[QPointF]):
-        if not self.fa2_layout: return
-        mpl_path = MplPath([(p.x(), p.y()) for p in pts])
-        names = self.fa2_layout.names
-        pos_edges = np.array([self.fa2_layout.positions[n] for n in names])
-        sel_edges = [names[i] for i in np.nonzero(mpl_path.contains_points(pos_edges))[0]]
+        if not self.fa2_layout:
+            return
+
+        poly = np.array([(p.x(), p.y()) for p in pts], dtype=float)
+        if len(poly) < 3:
+            return
+
+        mpl_path = MplPath(poly, closed=True)
+
+        names = [n for n in self.fa2_layout.names if n not in self.hidden_edges]
+        if names:
+            centers = np.array([self.fa2_layout.positions[n] for n in names], dtype=float)
+            radii   = np.array([self.fa2_layout.node_sizes[self.edge_index[n]] * 0.5
+                                for n in names], dtype=float)
+
+            K = 32
+            theta = np.linspace(0.0, 2.0*np.pi, K, endpoint=False)
+            unit = np.stack([np.cos(theta), np.sin(theta)], axis=1)                 
+            boundary = centers[:, None, :] + radii[:, None, None] * unit[None, :, :]  
+
+            inside_flags = mpl_path.contains_points(boundary.reshape(-1, 2))
+            fully_inside = inside_flags.reshape(len(names), K).all(axis=1)
+            sel_edges = [names[i] for i in np.flatnonzero(fully_inside)]
+        else:
+            sel_edges = []
+
         if sel_edges:
             self.bus.set_edges(sel_edges)
             return
 
-        if self._radial_layout_cache is None or not self._radial_layout_cache[0]: 
+        if self._radial_layout_cache is None or not self._radial_layout_cache[0]:
             return
         rel, _ = self._radial_layout_cache
         keys = list(rel.keys())
-        centres = np.array([self.fa2_layout.positions[e] for e, _ in keys])
-        offsets = np.array(list(rel.values()))
+        centres = np.array([self.fa2_layout.positions[e] for e, _ in keys], dtype=float)
+        offsets = np.array(list(rel.values()), dtype=float)
         abs_pos = centres + offsets
-        sel_nodes = {k for k, inside in zip(keys, mpl_path.contains_points(abs_pos)) if inside}
+
+        contained = mpl_path.contains_points(abs_pos)  # center-in test for images is fine
+        sel_nodes = {k for k, inside in zip(keys, contained) if inside}
         sel_imgs = [idx for (_e, idx) in sel_nodes]
         if sel_imgs:
             if QApplication.keyboardModifiers() & Qt.ControlModifier:

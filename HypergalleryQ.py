@@ -644,7 +644,7 @@ class MainWin(QMainWindow):
         self.btn_rank_clip = QPushButton("By clipboard")
         self.btn_rank_clip.clicked.connect(self.rank_clipboard_image)
 
-        self.btn_overview = QPushButton("Images")
+        self.btn_overview = QPushButton("Hyperedges")
         self.btn_overview.clicked.connect(self.show_overview)
 
         self.text_query = QLineEdit()
@@ -811,7 +811,6 @@ class MainWin(QMainWindow):
         file_menu.addAction(save_as_act)
         file_menu.addAction(self.thumb_toggle_act)
         file_menu.addAction(reconstruct_act)        
-        # self.menuBar().addMenu("&File").addAction(open_act)
 
         self.model = None
 
@@ -830,14 +829,11 @@ class MainWin(QMainWindow):
             QMessageBox.warning(self, "No Session", "Please load a session first.")
             return
 
-        # Use QInputDialog to get text from the user
         new_name, ok = QInputDialog.getText(self, "Add New Hyperedge", "Enter name for the new hyperedge:")
 
         if ok and new_name:
-            # User clicked OK and entered text
             clean_name = new_name.strip()
 
-            # --- Validation ---
             if not clean_name:
                 QMessageBox.warning(self, "Invalid Name", "Hyperedge name cannot be empty.")
                 return
@@ -847,11 +843,8 @@ class MainWin(QMainWindow):
                                     f"A hyperedge named '{clean_name}' already exists.")
                 return
 
-            # --- Call the model method to perform the addition ---
             self.model.add_empty_hyperedge(clean_name)
-            # The model will emit layoutChanged, which is connected to self.regroup in load_session
         else:
-            # User clicked Cancel or entered nothing
             print("Add hyperedge cancelled.")
 
     def on_delete_hyperedge(self):
@@ -911,7 +904,6 @@ class MainWin(QMainWindow):
             return
 
         self.model.remove_images_from_edges(img_idxs, edges)
-        # refresh displayed images of current selection
         self._update_bus_images(self.image_grid._selected_edges)
 
 
@@ -970,7 +962,6 @@ class MainWin(QMainWindow):
         self.image_grid.update_images(ranked, sort=False, query=True)
 
     def rank_image_file(self):
-        """Rank all session images against a user chosen image file."""
         if not self.model:
             QMessageBox.warning(self, "No Session", "Please load a session first.")
             return
@@ -1550,12 +1541,10 @@ class MainWin(QMainWindow):
         self._layout_timer.start(0)
 
     def _apply_layout_change(self):
-        start_timer13 = time.perf_counter()        
         if hasattr(self, "spatial_dock") and not self._skip_next_layout:
             self.spatial_dock.set_model(self.model)
         self.regroup()
         self._skip_next_layout = False
-        print('_apply_layout_change',time.perf_counter() - start_timer13)
 
     def toggle_full_images(self, flag: bool) -> None:
         self.image_grid.set_use_full_images(flag)
@@ -1599,12 +1588,10 @@ class MainWin(QMainWindow):
         sim_item.setData(None, Qt.UserRole); sim_item.setData("", Qt.DisplayRole)
 
     def _update_bus_images(self, names: list[str]):
-        start_timer14 = time.perf_counter()
         
         if not self.model:
             self.bus.set_images([])
             return
-        print('_update_bus_images0', time.perf_counter() - start_timer14)
         idxs = set()
         for name in names:
             if name in self.model.hyperedges:
@@ -1612,9 +1599,7 @@ class MainWin(QMainWindow):
             elif hasattr(self, "groups") and name in self.groups:
                 for child in self.groups[name]:
                     idxs.update(self.model.hyperedges.get(child, set()))
-        print('_update_bus_images1', time.perf_counter() - start_timer14)
         self.bus.set_images(sorted(idxs))
-        print('_update_bus_images2', time.perf_counter() - start_timer14)
 
     def _remember_last_edge(self, names: list[str]):
         if names:
@@ -1745,7 +1730,6 @@ class MainWin(QMainWindow):
         self._hide_legend()
 
     def regroup(self):
-        start_timer14 = time.perf_counter()
         if not self.model: 
             return
         thr = self.slider.value() / 100
@@ -1753,7 +1737,6 @@ class MainWin(QMainWindow):
 
         self.groups = rename_groups_sequentially(perform_hierarchical_grouping(self.model, thresh=thr))
         rows = build_row_data(self.groups, self.model)
-        print('regroup', time.perf_counter() - start_timer14)
         headers = [
             "Name",
             "Images",
@@ -1772,7 +1755,6 @@ class MainWin(QMainWindow):
 
         if hasattr(self, 'matrix_dock'): 
             self.matrix_dock.update_matrix()
-        print('regroup1', time.perf_counter() - start_timer14)
 
     def _update_group_similarity(self, group_item: QStandardItem):
         vals = [v for v in (group_item.child(r, SIM_COL).data(Qt.UserRole) for r in range(group_item.rowCount())) if v is not None]
