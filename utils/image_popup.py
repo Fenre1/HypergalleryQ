@@ -22,6 +22,8 @@ class ZoomPanGraphicsView(QGraphicsView):
     """Graphics view supporting zooming and shift-drag rectangle selection."""
 
     selectionChanged = Signal(QRectF)
+    prevImageRequested = Signal()
+    nextImageRequested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -30,12 +32,25 @@ class ZoomPanGraphicsView(QGraphicsView):
         self._drag_start = None
         self._rect_item = None
 
+    def keyPressEvent(self, event):
+        """Handle Left/Right arrow keys for navigation."""
+        if event.key() == Qt.Key_Left:
+            self.prevImageRequested.emit()
+            event.accept()  
+            return
+        elif event.key() == Qt.Key_Right:
+            self.nextImageRequested.emit()
+            event.accept()  
+            return
+        super().keyPressEvent(event)
+
+
     def wheelEvent(self, event):
         factor = 1.25 if event.angleDelta().y() > 0 else 0.8
         self.scale(factor, factor)
         event.accept()
 
-    # --------------------------------------------------------------
+
     def mousePressEvent(self, event):
         if (
             event.button() == Qt.LeftButton
@@ -130,7 +145,10 @@ class ImageMetadataDialog(QDialog):
 
         self.filter_edit.textChanged.connect(self._apply_filter)
         self.view.selectionChanged.connect(self._on_selection_changed)
-        
+
+        self.view.prevImageRequested.connect(self._show_prev)
+        self.view.nextImageRequested.connect(self._show_next)
+
         self.installEventFilter(self)
         self._load_image(self._indices[self._pos])
 

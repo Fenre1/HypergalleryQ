@@ -14,7 +14,8 @@ from PyQt5.QtCore import (
     QTimer,                 
     QRect,                  
 )
-from PyQt5.QtGui import QPixmap, QColor, QKeySequence, QPainter, QIcon, QPalette
+
+from PyQt5.QtGui import QPixmap, QColor, QKeySequence, QPainter, QIcon, QPalette, QFont
 
 from PyQt5.QtWidgets import (
     QApplication,
@@ -77,6 +78,12 @@ class HyperedgeHeaderView(QHeaderView):
       - Horizontal header: image on top, wrapped name below.
       - Vertical header:   image on left, wrapped name on right.
     """
+
+    _MIN_FONT_SIZE = 5.0   # Minimum font size in points
+    _MAX_FONT_SIZE = 12.0  # Maximum font size
+    _BASE_SECTION_SIZE = 64.0 # The section size at which _BASE_FONT_SIZE is used
+    _BASE_FONT_SIZE = 9.0     # The font size at 100% zoom (64px)
+
     def __init__(self, orientation: Qt.Orientation, parent=None):
         super().__init__(orientation, parent)
         self.setSectionsClickable(True)
@@ -107,7 +114,7 @@ class HyperedgeHeaderView(QHeaderView):
         self.updateGeometry()
 
 
-    def paintSection(self, painter: QPainter, rect: QRect, logicalIndex: int):  # noqa: N802
+    def paintSection(self, painter: QPainter, rect: QRect, logicalIndex: int):
         if not rect.isValid():
             return
 
@@ -119,7 +126,7 @@ class HyperedgeHeaderView(QHeaderView):
         opt.icon = QIcon()
 
         style = self.style()
-        style.drawControl(QStyle.CE_Header, opt, painter, self)
+        style.drawControl(QStyle.CE_HeaderSection, opt, painter, self) 
 
         model = self.model()
         if not model:
@@ -142,6 +149,14 @@ class HyperedgeHeaderView(QHeaderView):
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
         painter.setPen(self.palette().color(QPalette.ButtonText))  # visible text color
 
+        reference_dim = min(rect.width(), rect.height())
+        scaled_font_size = self._BASE_FONT_SIZE * (reference_dim / self._BASE_SECTION_SIZE)
+        final_font_size = max(self._MIN_FONT_SIZE, min(scaled_font_size, self._MAX_FONT_SIZE))
+        font = QFont(painter.font())
+        font.setPointSizeF(final_font_size)
+        painter.setFont(font)
+
+        
         if orientation == Qt.Horizontal:
             fm = self.fontMetrics()
             text_h = min(fm.lineSpacing() * self._text_lines, int(rect.height() * 0.6))
@@ -353,12 +368,13 @@ class HyperedgeMatrixDock(QDockWidget):
         self._model = HyperedgeMatrixModel(None, thumb_size)
         self._view.setModel(self._model)
         self.setWidget(self._view)
-
+        
+        thumb_qsize = QSize(thumb_size, thumb_size)
         for hdr in (self._view.horizontalHeader(), self._view.verticalHeader()):
             hdr.setSectionResizeMode(QHeaderView.Fixed)
             hdr.setDefaultSectionSize(thumb_size)
             hdr.setMinimumSectionSize(self._MIN_SIZE)
-
+            hdr.setIconSize(thumb_qsize) 
 
         hh = self._view.horizontalHeader()
         vh = self._view.verticalHeader()

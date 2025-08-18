@@ -970,30 +970,53 @@ class SpatialViewQDock(QDockWidget):
         self._update_selected_overlay()
 
     def _update_selected_overlay(self):
-        if not self._selected_nodes or not self._radial_layout_cache:
-            if self.selected_scatter: self.selected_scatter.setData([], [])
-            if self.selected_links: self.selected_links.setData([], [])
+        if not self._selected_nodes:
+            if self.selected_scatter:
+                self.selected_scatter.setData([], [])
+            if self.selected_links:
+                self.selected_links.setData([], [])
             return
 
-        abs_pos_cache = self._abs_pos_cache
-        sel_pos = [abs_pos_cache[k] for k in self._selected_nodes if k in abs_pos_cache]
-        if self.selected_scatter:
-            if sel_pos:
-                self.selected_scatter.setData(pos=np.array(sel_pos))
-            else:
-                self.selected_scatter.setData([], [])
-        rel, links = self._radial_layout_cache
-        pairs = []
-        for a, b in links:
-            if a in self._selected_nodes or b in self._selected_nodes:
-                if a in abs_pos_cache and b in abs_pos_cache:
-                    pairs.append(abs_pos_cache[a])
-                    pairs.append(abs_pos_cache[b])
+        pairs: list[np.ndarray] = []
+        if self._radial_layout_cache:
+            abs_pos_cache = self._abs_pos_cache
+            sel_pos = [abs_pos_cache[k] for k in self._selected_nodes if k in abs_pos_cache]
+            if self.selected_scatter:
+                if sel_pos:
+                    self.selected_scatter.setData(pos=np.array(sel_pos))
+                else:
+                    self.selected_scatter.setData([], [])
 
-                    
+            _, links = self._radial_layout_cache
+            for a, b in links:
+                if a in self._selected_nodes or b in self._selected_nodes:
+                    if a in abs_pos_cache and b in abs_pos_cache:
+                        pairs.append(abs_pos_cache[a])
+                        pairs.append(abs_pos_cache[b])
+        else:
+            centres = getattr(self.fa2_layout, 'positions', {})
+            sel_edges = {edge for edge, _ in self._selected_nodes if edge in centres}
+            sel_pos = [centres[e] for e in sel_edges]
+            if self.selected_scatter:
+                if sel_pos:
+                    self.selected_scatter.setData(pos=np.array(sel_pos))
+                else:
+                    self.selected_scatter.setData([], [])
+
+            by_idx: dict[int, list[str]] = {}
+            for edge, idx in self._selected_nodes:
+                if edge in centres:
+                    by_idx.setdefault(idx, []).append(edge)
+            for edges in by_idx.values():
+                coords = [centres[e] for e in edges if e in centres]
+                for i in range(len(coords)):
+                    for j in range(i + 1, len(coords)):
+                        pairs.append(coords[i])
+                        pairs.append(coords[j])
+
         if pairs and self.selected_links:
             arr = np.array(pairs)
-            self.selected_links.setData(arr[:,0], arr[:,1], connect='pairs')
+            self.selected_links.setData(arr[:, 0], arr[:, 1], connect='pairs')
         elif self.selected_links:
             self.selected_links.setData([], [])
 
