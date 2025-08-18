@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from PyQt5.QtWidgets import (
     QListView, QDockWidget, QWidget, QLabel, QGridLayout, QHBoxLayout,
-    QVBoxLayout, QFrame, QScrollArea, QCheckBox, QSlider, QApplication, 
-    QStyledItemDelegate
+    QVBoxLayout, QFrame, QScrollArea, QCheckBox, QSlider, QApplication,
+    QStyledItemDelegate, QStackedWidget
 )
 from PyQt5.QtGui import QPixmap, QIcon, QImage, QPainter, QPen, QColor
 from PyQt5.QtCore import (
@@ -11,13 +11,17 @@ from PyQt5.QtCore import (
     pyqtSignal as Signal, QEvent, QTimer, QRect
 )
 from pathlib import Path
+import hashlib
 
 from .selection_bus import SelectionBus
 from .session_model import SessionModel
 from .similarity import SIM_METRIC
 from .image_popup import show_image_metadata
-from .image_utils import qimage_from_file, qimage_from_data, pixmap_from_file
-
+from .image_utils import (
+    qimage_from_file,
+    qimage_from_data,
+    load_thumbnail,
+)
 from sklearn.cluster import AgglomerativeClustering
 import numpy as np
 import time
@@ -99,6 +103,26 @@ class _ClickableLabel(QLabel):
 
     def __init__(self, text: str, parent=None):
         super().__init__(text, parent)
+
+class LazyThumbLabel(QLabel):
+    """QLabel that loads its pixmap on first paint and caches it."""
+
+    def __init__(self, path: str | None, w: int, h: int, parent=None):
+        super().__init__(parent)
+        self._path = path
+        self._w = w
+        self._h = h
+        self._pix: QPixmap | None = None
+        self.setFixedSize(w, h)
+        self._placeholder = QPixmap(w, h)
+        self._placeholder.fill(QColor(245, 245, 245))
+
+    def paintEvent(self, event):
+        if self._pix is None and self._path:
+            self._pix = load_thumbnail(self._path, self._w, self._h)
+        painter = QPainter(self)
+        pix = self._pix if self._pix is not None else self._placeholder
+        painter.drawPixmap(0, 0, pix)
 
 class _ThumbWorker(QObject):
     """Worker object living in a QThread that loads thumbnails or full images."""
@@ -316,18 +340,18 @@ class ImageGridDock(QDockWidget):
 
         self._container = container
 
+        self._stack = QStackedWidget()
+        self._stack.addWidget(self._container)
+        self.setWidget(self._stack)
+
         self._overview_widget: QScrollArea | None = None
-        self._mode = "grid" 
+        self._overview_key: str | None = None
+        self._mode = "grid"
 
         self._cluster_source_indices: list[int] | None = None
         self._clusters: list[tuple[int, list[int]]] = []
         self._expanded_clusters: set[int] = set()
-        self._row_info: list[tuple[int, int]] = []
-        # self._cluster_click_connected = False
-        # self._click_timer = QTimer(self)
-        # self._click_timer.setSingleShot(True)
-        # self._click_timer.timeout.connect(self._on_cluster_click_timeout)
-        # self._pending_click_row: int | None = None
+        self._row_info: list[tuple[int, int]] = []     
 
         self.setWidget(self._container)
 
@@ -593,6 +617,11 @@ class ImageGridDock(QDockWidget):
         self.session = session
         self._mode = "overview"
 
+        key = self._overview_key_for(triplets, session)
+        if self._overview_widget is not None and self._overview_key == key:
+            self._stack.setCurrentWidget(self._overview_widget)
+            return
+
         content = QWidget()
         layout = QGridLayout(content)
         layout.setSpacing(10)
@@ -612,18 +641,8 @@ class ImageGridDock(QDockWidget):
             bottom = QHBoxLayout()
             for pos, idx in enumerate(imgs[:6]):
                 container = top if pos < 3 else bottom
-                lbl_img = QLabel()
-                lbl_img.setFixedSize(self.thumb_size, self.thumb_size)
-                if idx is not None:
-                    pix = pixmap_from_file(session.im_list[idx])
-                    if not pix.isNull():
-                        pix = pix.scaled(
-                            self.thumb_size,
-                            self.thumb_size,
-                            Qt.KeepAspectRatio,
-                            Qt.SmoothTransformation,
-                        )
-                    lbl_img.setPixmap(pix)
+                path = session.im_list[idx] if idx is not None else None
+                lbl_img = LazyThumbLabel(path, self.thumb_size, self.thumb_size)
 
                 style = ""
                 if pos < 3:
@@ -653,8 +672,8 @@ class ImageGridDock(QDockWidget):
             if first:
                 v.addWidget(QLabel("Furthest apart"))
             v.addLayout(bottom)
-            first = False                
-            
+            first = False
+
             layout.addWidget(frame, row, col)
             col += 1
             if col >= max_cols:
@@ -664,20 +683,40 @@ class ImageGridDock(QDockWidget):
             lbl.installEventFilter(self)
 
         layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(content)
+
+        if self._overview_widget is None:
+            self._stack.addWidget(scroll)
+        else:
+            self._stack.removeWidget(self._overview_widget)
+            self._overview_widget.deleteLater()
+            self._stack.addWidget(scroll)
+
         self._overview_widget = scroll
-        self.setWidget(scroll)
+        self._overview_key = key
+        self._stack.setCurrentWidget(scroll)
         
     def show_grid(self):
         if self._mode != "grid":
             self._mode = "grid"
-            self.setWidget(self._container)
-            if self._overview_widget is not None:
-                self._overview_widget.deleteLater()
-                self._overview_widget = None
+            self._stack.setCurrentWidget(self._container)
+
+    def invalidate_overview_cache(self) -> None:
+        print('invalidate overview cache')
+        self._overview_key = None
+        if self._overview_widget is not None:
+            self._stack.removeWidget(self._overview_widget)
+            self._overview_widget.deleteLater()
+            self._overview_widget = None
+
+    def _overview_key_for(self, triplets: dict[str, tuple[int | None, ...]], session: SessionModel) -> str:
+        h = hashlib.sha1(str(id(session)).encode())
+        for name, imgs in sorted(triplets.items()):
+            h.update(name.encode())
+            h.update(",".join("n" if i is None else str(i) for i in imgs).encode())
+        return h.hexdigest()
 
 
     def eventFilter(self, obj, event):

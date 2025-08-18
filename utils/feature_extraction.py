@@ -84,36 +84,29 @@ class FeatureExtractor:
 
 
 
-    def extract_features(self, file_list: list) -> np.ndarray:
-        """
-        Extract features for the given list of image file paths.
-
-        Args:
-            file_list (list): List of image file paths.
-
-        Returns:
-            np.ndarray: Features extracted from all images.
-        """
-        # Create a dataset instance and a DataLoader to handle batching.
+    def extract_features(self, file_list: list, progress_callback=None) -> np.ndarray:
         dataset = ImageFileDataset(file_list, self.transform, self.image_size)
         loader = DataLoader(
             dataset,
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=0  # Adjust num_workers based on your system
+            num_workers=0  
         )
- 
-
 
         all_features = []
+        processed = 0
+        total = len(file_list)
         for images in loader:
             images = images.to(self.device)
             with torch.no_grad():
                 features = self.model(images)
-            # Append the features (moved to CPU and converted to numpy)
             all_features.append(features.cpu().numpy())
+            processed += images.size(0)
+            if progress_callback:
+                progress_callback(processed, total)
 
         return np.vstack(all_features)
+
 
 class Swinv2LargeFeatureExtractor(FeatureExtractor):
     """Convenience wrapper for the SwinV2 large model."""
@@ -136,15 +129,20 @@ class OpenClipFeatureExtractor:
     def transform(self):
         return self.preprocess
 
-    def extract_features(self, file_list: list) -> np.ndarray:
+    def extract_features(self, file_list: list, progress_callback=None) -> np.ndarray:
         dataset = ImageFileDataset(file_list, self.preprocess, self.image_size)
         loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=False, num_workers=0)
         all_features = []
+        processed = 0
+        total = len(file_list)
         for images in loader:
             images = images.to(self.device)
             with torch.no_grad():
                 feats = self.model.encode_image(images)
             all_features.append(feats.cpu().numpy())
+            processed += images.size(0)
+            if progress_callback:
+                progress_callback(processed, total)
         return np.vstack(all_features)
     
     def encode_text(self, texts: list[str]) -> np.ndarray:
@@ -218,10 +216,8 @@ class DenseNet161Places365FeatureExtractor:
             input_size=(3, 224, 224), interpolation="bicubic", crop_pct=224 / 256
         )
 
-    # ------------------------------------------------------------------
-    # 4.  Public API (same signature as your other extractors)
-    # ------------------------------------------------------------------
-    def extract_features(self, file_list: List[str]) -> np.ndarray:
+
+    def extract_features(self, file_list: List[str], progress_callback=None) -> np.ndarray:
         loader = DataLoader(
             ImageFileDataset(file_list, self.transform),
             batch_size=self.batch_size,
@@ -229,8 +225,13 @@ class DenseNet161Places365FeatureExtractor:
             num_workers=self.num_workers,
         )
         feats = []
+        processed = 0
+        total = len(file_list)
         with torch.no_grad():
             for imgs in loader:
                 feats.append(self.model(imgs.to(self.device)).cpu().numpy())
+                processed += imgs.size(0)
+                if progress_callback:
+                    progress_callback(processed, total)
         return np.vstack(feats)
 

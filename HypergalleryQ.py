@@ -11,6 +11,8 @@ from utils.similarity import SIM_METRIC
 from pathlib import Path
 import io
 import torch
+import hashlib
+
 from PIL import Image, ImageGrab, ImageOps
 import time
 import pyqtgraph as pg
@@ -38,7 +40,8 @@ from PyQt5.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
     QGridLayout,
-    QComboBox
+    QComboBox,
+    QProgressDialog
 )
  
 from PyQt5.QtGui import (
@@ -48,6 +51,7 @@ from PyQt5.QtGui import (
     QColor,
     QIcon,
     QPixmap,
+    QPixmapCache
 )
 from PyQt5.QtCore import (
     Qt,
@@ -113,6 +117,7 @@ STDDEV_COL = 5
 INTER_COL = 6
 DECIMALS = 3
 UNGROUPED = "Ungrouped"
+QPixmapCache.setCacheLimit(512 * 1024)
 
 class _MultiSelectDialog(QDialog):
     """Simple dialog presenting a list for multi-selection."""
@@ -1053,6 +1058,7 @@ class MainWin(QMainWindow):
             QMessageBox.warning(self, "No Session", "Please load a session first.")
             return
         if self._overview_triplets is None:
+            self.image_grid.invalidate_overview_cache()
             self._overview_triplets = self._compute_overview_triplets()
         self.image_grid.show_overview(self._overview_triplets, self.model)
 
@@ -1195,31 +1201,96 @@ class MainWin(QMainWindow):
             app.setOverrideCursor(Qt.WaitCursor)
         try:
             extractor = Swinv2LargeFeatureExtractor()
-            features = extractor.extract_features(files)
+            prog = QProgressDialog("Extracting SwinV2 features...", None, 0, len(files), self)
+            prog.setWindowModality(Qt.ApplicationModal)
+            prog.show()
+            def swin_cb(done, total):
+                prog.setValue(done)
+                prog.setLabelText(f"Extracting SwinV2 features ({done}/{total})")
+                QApplication.processEvents()
+            features = extractor.extract_features(files, swin_cb)
+            prog.close()
+
             oc_features = None
             plc_features = None
             if use_oc:
                 oc_extractor = OpenClipFeatureExtractor()
-                oc_features = oc_extractor.extract_features(files)
+                prog = QProgressDialog("Extracting OpenCLIP features...", None, 0, len(files), self)
+                prog.setWindowModality(Qt.ApplicationModal)
+                prog.show()
+                def oc_cb(done, total):
+                    prog.setValue(done)
+                    prog.setLabelText(f"Extracting OpenCLIP features ({done}/{total})")
+                    QApplication.processEvents()
+                oc_features = oc_extractor.extract_features(files, oc_cb)
+                prog.close()
             if use_plc:
                 plc_extractor = DenseNet161Places365FeatureExtractor()
-                plc_features = plc_extractor.extract_features(files)
+                prog = QProgressDialog("Extracting Places365 features...", None, 0, len(files), self)
+                prog.setWindowModality(Qt.ApplicationModal)
+                prog.show()
+                def plc_cb(done, total):
+                    prog.setValue(done)
+                    prog.setLabelText(f"Extracting Places365 features ({done}/{total})")
+                    QApplication.processEvents()
+                plc_features = plc_extractor.extract_features(files, plc_cb)
+                prog.close()
+
             if algo == "Fuzzy C-Means":
+                prog = QProgressDialog("Clustering features...", None, 0, 0, self)
+                prog.setWindowModality(Qt.ApplicationModal)
+                prog.show()
                 matrix, _ = fuzzy_cmeans_cluster(features, n_edges, thr, m_val)
+                prog.close()
                 oc_matrix = np.array([])
                 if oc_features is not None:
+                    prog = QProgressDialog("Clustering OpenCLIP features...", None, 0, 0, self)
+                    prog.setWindowModality(Qt.ApplicationModal)
+                    prog.show()
                     oc_matrix, _ = fuzzy_cmeans_cluster(oc_features, n_edges, thr, m_val)
+                    prog.close()
                 plc_matrix = np.array([])
                 if plc_features is not None:
+                    prog = QProgressDialog("Clustering Places365 features...", None, 0, 0, self)
+                    prog.setWindowModality(Qt.ApplicationModal)
+                    prog.show()
                     plc_matrix, _ = fuzzy_cmeans_cluster(plc_features, n_edges, thr, m_val)
+                    prog.close()
             else:
-                matrix, _ = temi_cluster(features, out_dim=n_edges, threshold=thr)
+                prog = QProgressDialog("Clustering features...", None, 0, 100, self)
+                prog.setWindowModality(Qt.ApplicationModal)
+                prog.show()
+                def cluster_cb(done, total):
+                    prog.setMaximum(total)
+                    prog.setValue(done)
+                    prog.setLabelText(f"Clustering features ({done}/{total})")
+                    QApplication.processEvents()
+                matrix, _ = temi_cluster(features, out_dim=n_edges, threshold=thr, progress_callback=cluster_cb)
+                prog.close()
                 oc_matrix = np.array([])
                 if oc_features is not None:
-                    oc_matrix, _ = temi_cluster(oc_features, out_dim=n_edges, threshold=thr)
+                    prog = QProgressDialog("Clustering OpenCLIP features...", None, 0, 100, self)
+                    prog.setWindowModality(Qt.ApplicationModal)
+                    prog.show()
+                    def oc_cluster_cb(done, total):
+                        prog.setMaximum(total)
+                        prog.setValue(done)
+                        prog.setLabelText(f"Clustering OpenCLIP features ({done}/{total})")
+                        QApplication.processEvents()
+                    oc_matrix, _ = temi_cluster(oc_features, out_dim=n_edges, threshold=thr, progress_callback=oc_cluster_cb)
+                    prog.close()
                 plc_matrix = np.array([])
                 if plc_features is not None:
-                    plc_matrix, _ = temi_cluster(plc_features, out_dim=n_edges, threshold=thr)
+                    prog = QProgressDialog("Clustering Places365 features...", None, 0, 100, self)
+                    prog.setWindowModality(Qt.ApplicationModal)
+                    prog.show()
+                    def plc_cluster_cb(done, total):
+                        prog.setMaximum(total)
+                        prog.setValue(done)
+                        prog.setLabelText(f"Clustering Places365 features ({done}/{total})")
+                        QApplication.processEvents()
+                    plc_matrix, _ = temi_cluster(plc_features, out_dim=n_edges, threshold=thr, progress_callback=plc_cluster_cb)
+                    prog.close()
             empty_cols = np.where(matrix.sum(axis=0) == 0)[0]
             if len(empty_cols) > 0:
                 matrix = np.delete(matrix, empty_cols, axis=1)
@@ -1277,6 +1348,7 @@ class MainWin(QMainWindow):
 
         self.model.layoutChanged.connect(self.regroup)
         self._overview_triplets = None
+        self.image_grid.invalidate_overview_cache()
         self.model.layoutChanged.connect(self._on_layout_changed)
         self.model.hyperedgeModified.connect(self._on_model_hyperedge_modified)
 
@@ -1380,8 +1452,9 @@ class MainWin(QMainWindow):
 
             self.model.layoutChanged.connect(self.regroup)
             self._overview_triplets = None
+            self.image_grid.invalidate_overview_cache()
             self.model.layoutChanged.connect(self._on_layout_changed)
-            self.model.hyperedgeModified.connect(self._on_model_hyperedge_modified)            
+            self.model.hyperedgeModified.connect(self._on_model_hyperedge_modified)
         except Exception as e:
             QMessageBox.critical(self, "Load error", str(e))
             return
@@ -1518,6 +1591,7 @@ class MainWin(QMainWindow):
 
         self.model.layoutChanged.connect(self.regroup)
         self._overview_triplets = None
+        self.image_grid.invalidate_overview_cache()
         self.model.layoutChanged.connect(self._on_layout_changed)
         self.model.hyperedgeModified.connect(self._on_model_hyperedge_modified)
 
@@ -1536,6 +1610,7 @@ class MainWin(QMainWindow):
 
     def _on_layout_changed(self):
         self._overview_triplets = None
+        self.image_grid.invalidate_overview_cache()
         if self._layout_timer.isActive():
             self._layout_timer.stop()
         self._layout_timer.start(0)

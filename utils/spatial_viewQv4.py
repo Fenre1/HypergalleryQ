@@ -79,7 +79,6 @@ def _resolve_overlaps_numba(pos, radii, iterations, strength):
                     moved = True
         if not moved:
             break
-    #print('iter',itr)
     return pos
 
 
@@ -107,14 +106,9 @@ class _RecalcWorker(QtCore.QObject):
 
     @pyqtSlot(str)
     def recompute(self, edge_name: str):
-        #print('start recompute')
         session = self.session
         if session is None:
             return
-        # feats = session.features.astype(np.float32)
-        # norms = np.linalg.norm(feats, axis=1, keepdims=True)
-        # norms[norms == 0] = 1.0
-        # feats_norm = feats / norms
         feats_norm = session.features_unit
 
 
@@ -122,7 +116,6 @@ class _RecalcWorker(QtCore.QObject):
         if edge_name in session.hyperedges:
             idx = list(session.hyperedges[edge_name])
             if idx:
-                #print('umap1')
                 emb = umap.UMAP(n_components=2, random_state=42,n_jobs=-1).fit_transform(feats_norm[idx])
                 emb = emb - emb.mean(axis=0)
                 m = np.max(np.linalg.norm(emb, axis=1))
@@ -133,7 +126,6 @@ class _RecalcWorker(QtCore.QObject):
         edges = list(session.hyperedges)
         edge_feats = np.stack([session.hyperedge_avg_features[e] for e in edges]).astype(np.float32)
         reducer = umap.UMAP(n_components=2, random_state=42, min_dist=0.8, n_jobs=-1)
-        #print('umap2')
         initial_pos = reducer.fit_transform(edge_feats)
         diameters = np.maximum(
             np.array([np.sqrt(len(session.hyperedges[n])) for n in edges]) * SpatialViewQDock.NODE_SIZE_SCALER,
@@ -160,7 +152,6 @@ class _RecalcWorker(QtCore.QObject):
         layout = {n: (pos[i], diameters[i]) for i, n in enumerate(edges)}
         self.imageEmbeddingReady.emit(edge_name, mapping)
         self.layoutReady.emit(layout)
-        #print('end recompute')
 
 
     
@@ -443,18 +434,12 @@ class SpatialViewQDock(QDockWidget):
             ell.setBrush(pg.mkBrush(col))
 
     def show_legend(self, mapping: dict[str, str]):
-        #print('tuut legend')
-        """Display a legend for the given mapping of labels to colors."""
-        # Show immediately so _pos_legend can reposition correctly when switching
-        # directly between different color modes.
-        self.legend.show()  # ensure visible before positioning
+        self.legend.show()  
         while self.legend_layout.count():
             item = self.legend_layout.takeAt(0)
-            #print('item',item)
             if item.widget():
                 item.widget().deleteLater()
         for label, color in mapping.items():
-            #print('labne', label, color)
             lab = QLabel(f"<span style='color:{color}'>■</span> {label}")
             self.legend_layout.addWidget(lab)
         self.legend.show()
@@ -544,7 +529,6 @@ class SpatialViewQDock(QDockWidget):
         edge_feats = np.stack([session.hyperedge_avg_features[e] for e in edges]).astype(np.float32)
         sizes = np.maximum(np.array([np.sqrt(len(session.hyperedges[n])) for n in edges]) * self.NODE_SIZE_SCALER,
                            self.MIN_HYPEREDGE_DIAMETER)
-        #print('umap3')
         reducer = umap.UMAP(n_components=2, random_state=42, min_dist=0.8, n_jobs=-1)
         initial_pos = reducer.fit_transform(edge_feats)
 
@@ -569,7 +553,10 @@ class SpatialViewQDock(QDockWidget):
             ell = HyperedgeItem(name, QtCore.QRectF(-r, -r, size, size))
             col = self.color_map.get(name, '#AAAAAA')
             ell.setPen(pg.mkPen(col)); ell.setBrush(pg.mkBrush(col))
-            self.view.addItem(ell); self.hyperedgeItems[name] = ell
+            self.view.addItem(ell)
+            ell.setZValue(-1)
+            self.hyperedgeItems[name] = ell
+
 
         self.hidden_edges.intersection_update(session.hyperedges.keys())
         for n, it in self.hyperedgeItems.items():
@@ -657,7 +644,6 @@ class SpatialViewQDock(QDockWidget):
 
                 idx = list(session.hyperedges[edge])
                 self._centroid_sim[edge] = self._features_norm[idx] @ c if idx else np.array([])
-        #print('umaptime',time.perf_counter()-start_time)
 
 
         self._refresh_edges()
@@ -1118,7 +1104,9 @@ class SpatialViewQDock(QDockWidget):
         
         for name, ell in self.hyperedgeItems.items():
             col = self.color_map.get(name, '#AAAAAA')
-            ell.setPen(pg.mkPen(col)); ell.setBrush(pg.mkBrush(col))
+            ell.setPen(pg.mkPen(col))
+            ell.setBrush(pg.mkBrush(col))
+
         self._selected_nodes.clear()
         if len(names) == 1:
             self._current_edge = names[0]
@@ -1210,8 +1198,10 @@ class SpatialViewQDock(QDockWidget):
             if name not in self.hyperedgeItems:
                 ell = HyperedgeItem(name, QtCore.QRectF(-r, -r, size, size))
                 col = self.color_map.get(name, '#AAAAAA')
-                ell.setPen(pg.mkPen(col)); ell.setBrush(pg.mkBrush(col))
+                ell.setPen(pg.mkPen(col))
+                ell.setBrush(pg.mkBrush(col))
                 self.view.addItem(ell)
+                ell.setZValue(-1)  
                 self.hyperedgeItems[name] = ell
             else:
                 self.hyperedgeItems[name].setRect(QtCore.QRectF(-r, -r, size, size))

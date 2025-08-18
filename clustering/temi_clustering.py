@@ -295,8 +295,8 @@ def train_one_epoch(student_teacher_model, dino_loss, data_loader,
     return {k: meter.global_avg for k, meter in metric_logger.scalar_meters.items()}
 
 
-def train_dino(args, features, knn):
-    # args.batch_size_per_gpu = 512
+def train_dino(args, features, knn, progress_callback=None):
+    
     fix_random_seeds(args.seed)
     cudnn.benchmark = True
     print('pre loading')
@@ -392,6 +392,8 @@ def train_dino(args, features, knn):
             optimizer, lr_schedule, wd_schedule, momentum_schedule,
             epoch, fp16_scaler, args
         )
+        if progress_callback:
+            progress_callback(epoch + 1, args.epochs)
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
@@ -428,7 +430,7 @@ def make_knn(features,num_k=25):
     nn_dists, knn = compute_neighbors(features, num_k)
     return nn_dists, knn
 
-def train_model(features: Union[np.ndarray, torch.Tensor], out_dim: int) -> nn.Module:
+def train_model(features: Union[np.ndarray, torch.Tensor], out_dim: int, progress_callback=None) -> nn.Module:
     """
     Train the clustering model on the input features.
 
@@ -446,7 +448,7 @@ def train_model(features: Union[np.ndarray, torch.Tensor], out_dim: int) -> nn.M
         args.batch_size_per_gpu = len(features)//2
 
     _, knn = compute_neighbors(features, args.knn)
-    return train_dino(args, features, knn)
+    return train_dino(args, features, knn, progress_callback)
 
 @torch.no_grad()
 def generate_hypergraph(
@@ -491,7 +493,8 @@ def generate_hypergraph(
 def temi_cluster(
     features: Union[np.ndarray, torch.Tensor],
     out_dim: int,
-    threshold: float
+    threshold: float,
+    progress_callback=None,
 ) -> Tuple[np.ndarray, nn.Module]:
     """
     Convenience wrapper to train model and generate hypergraph in one call.
@@ -500,7 +503,7 @@ def temi_cluster(
         - hypergraph (np.ndarray): Clustering result
         - model (nn.Module): Trained model
     """
-    model = train_model(features, out_dim)
+    model = train_model(features, out_dim, progress_callback)
     hypergraph = generate_hypergraph(model, features, threshold)
     return hypergraph, model
 

@@ -50,7 +50,7 @@ class SessionStatsDialog(QDialog):
         )
         info.setAlignment(Qt.AlignLeft)
         layout.addWidget(info)
-
+        
         table = QTableWidget()
         table.setColumnCount(3)
         table.setHorizontalHeaderLabels([

@@ -1,5 +1,11 @@
-from PyQt5.QtGui import QImageReader, QPixmap, QImage
-from PyQt5.QtCore import QBuffer, QIODevice
+from PyQt5.QtGui import (
+    QImageReader,
+    QPixmap,
+    QImage,
+    QPixmapCache,
+    QColor,
+)
+from PyQt5.QtCore import QBuffer, QIODevice, QSize
 
 
 def qimage_from_file(path: str) -> QImage:
@@ -25,3 +31,29 @@ def pixmap_from_file(path: str) -> QPixmap:
     """Load a QPixmap from *path* respecting EXIF orientation."""
     img = qimage_from_file(path)
     return QPixmap.fromImage(img)
+
+
+# -------------------------- thumbnail helpers -------------------------------
+
+QPixmapCache.setCacheLimit(512 * 1024)  # 512 MB
+
+
+def load_thumbnail(path: str, w: int, h: int) -> QPixmap:
+    """Load a scaled thumbnail using QPixmapCache to avoid repeated I/O."""
+    key = f"{path}|{w}x{h}"
+    pix = QPixmap()
+    if QPixmapCache.find(key, pix):
+        return pix
+
+    reader = QImageReader(path)
+    reader.setAutoTransform(True)
+    reader.setScaledSize(QSize(w, h))
+    img = reader.read()
+    if img.isNull():
+        pix = QPixmap(w, h)
+        pix.fill(QColor(220, 220, 220))
+    else:
+        pix = QPixmap.fromImage(img)
+
+    QPixmapCache.insert(key, pix)
+    return pix

@@ -118,7 +118,6 @@ class MultiHeadClassifier(nn.Module):
         if layer_norm_only:
             for name, param in backbone.named_parameters():
                 if "ln_" in name:
-                    #print(name , param.shape)
                     param.requires_grad = True
                 else:
                     param.requires_grad = False
