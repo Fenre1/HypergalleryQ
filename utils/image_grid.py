@@ -353,10 +353,6 @@ class ImageGridDock(QDockWidget):
         self._expanded_clusters: set[int] = set()
         self._row_info: list[tuple[int, int]] = []     
 
-        self.setWidget(self._container)
-
-        # self.setWidget(self.view)
-
         self.view.doubleClicked.connect(self._on_double_clicked)
 
         self._ignore_bus_images = False

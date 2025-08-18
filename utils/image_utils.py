@@ -41,8 +41,8 @@ QPixmapCache.setCacheLimit(512 * 1024)  # 512 MB
 def load_thumbnail(path: str, w: int, h: int) -> QPixmap:
     """Load a scaled thumbnail using QPixmapCache to avoid repeated I/O."""
     key = f"{path}|{w}x{h}"
-    pix = QPixmap()
-    if QPixmapCache.find(key, pix):
+    pix = QPixmapCache.find(key)
+    if pix is not None and not pix.isNull():
         return pix
 
     reader = QImageReader(path)
