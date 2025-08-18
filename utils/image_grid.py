@@ -364,7 +364,6 @@ class ImageGridDock(QDockWidget):
         labels: list[str] | None = None,
         separators: set[int] | None = None,
     ) -> None:
-        start_time = time.perf_counter()
         if self.session is None:
             self.view.setModel(None)
             return
@@ -388,17 +387,14 @@ class ImageGridDock(QDockWidget):
                 feats = self.session.features[idxs]
                 sims = SIM_METRIC(ref.reshape(1, -1), feats)[0]
                 idxs = [i for _, i in sorted(zip(sims, idxs), reverse=True)]
-            print('update_images 1',time.perf_counter() - start_time )
         # determine highlight colors
         is_query = bool(highlight) or query
         highlight_map: dict[int, QColor] = {}
         if isinstance(highlight, dict):
             highlight_map.update(highlight)
-            print('update_images 2',time.perf_counter() - start_time )
         elif highlight:
             for idx in highlight:
                 highlight_map[idx] = QColor("red")
-            print('update_images 3',time.perf_counter() - start_time )
         if is_query:
             if self.session and self._selected_edges:
                 selected_imgs = set().union(
@@ -448,14 +444,6 @@ class ImageGridDock(QDockWidget):
         )
         self.view.setModel(model)
         self.view.selectionModel().selectionChanged.connect(self._on_selection_changed)
-        print('update_images 4',time.perf_counter() - start_time )
-        # if self._cluster_click_connected:
-        #     try:
-        #         self.view.clicked.disconnect(self._on_view_clicked)
-        #     except Exception:
-        #         pass
-        #     self._cluster_click_connected = False
-
 
     def _remember_edges(self, names: list[str]):
         self._selected_edges = names
@@ -481,19 +469,15 @@ class ImageGridDock(QDockWidget):
 
 
     def _on_selection_changed(self, *_):
-        start_timer10 = time.perf_counter()        
         model = self.view.model()
         if not isinstance(model, ImageListModel):
             return
-        print('_on_selection_changed',time.perf_counter() - start_timer10)
         sel = self.view.selectionModel().selectedRows()
         idxs = [model._indexes[i.row()] for i in sel]
         self._ignore_bus_images = True
         self.bus.set_images(sorted(set(idxs)))
-        print('_on_selection_changed2',time.perf_counter() - start_timer10)
 
     def _on_bus_images(self, idxs: list[int]):
-        start_timer11 = time.perf_counter()
         if self._ignore_bus_images:
             self._ignore_bus_images = False
             return
@@ -509,14 +493,12 @@ class ImageGridDock(QDockWidget):
             self._row_info = []
             self.view.setItemDelegate(QStyledItemDelegate(self.view))
             self.update_images(idxs, highlight=highlight)
-        print('_on_bus_images',time.perf_counter() - start_timer11)
 
     def _on_cluster_slider(self, *_):
         if self._cluster_source_indices is not None:
             self._show_clusters()
 
     def _show_clusters(self):
-        start_time2 = time.perf_counter()        
         if not self.session or self._cluster_source_indices is None:
             return
         idxs = self._cluster_source_indices
@@ -535,7 +517,6 @@ class ImageGridDock(QDockWidget):
             feats = self.session.features[idxs]
             clust = AgglomerativeClustering(n_clusters=n_clusters, linkage="ward")
             labels_arr = clust.fit_predict(feats)
-            print('_show_clusters-1',time.perf_counter() - start_time2 )
             for lbl in np.unique(labels_arr):
                 mask = labels_arr == lbl
                 cluster_indices = [idxs[i] for i in range(n) if mask[i]]
@@ -548,12 +529,10 @@ class ImageGridDock(QDockWidget):
 
         self._clusters = clusters
         self._expanded_clusters = set()
-        print('_show_clusters',time.perf_counter() - start_time2 )
         self._build_cluster_view()
 
 
     def _build_cluster_view(self) -> None:
-        start_time3 = time.perf_counter()
         indices: list[int] = []
         labels: list[str] = []
         self._row_info = []
@@ -590,18 +569,8 @@ class ImageGridDock(QDockWidget):
                                     self._expanded_clusters,
                                     self.view)
         delegate.toggleRequested.connect(self._on_cluster_clicked)
-        print('_build_cluster_view',time.perf_counter() - start_time3 )
         self.view.setItemDelegate(delegate)
         
-
-        # self.update_images(indices, sort=False, query=False, labels=labels, separators=separators)
-        # try:
-        #     self.view.clicked.disconnect(self._on_view_clicked)
-        # except Exception:
-        #     pass
-        # self.view.clicked.connect(self._on_view_clicked)
-        # self._cluster_click_connected = True
-
 
     def _on_cluster_clicked(self, index: QModelIndex) -> None:
         if not self._clusters:
@@ -619,18 +588,6 @@ class ImageGridDock(QDockWidget):
             self._expanded_clusters.add(cluster_idx)
         self._build_cluster_view()
 
-    # def _on_view_clicked(self, index: QModelIndex) -> None:
-    #     self._pending_click_row = index.row()
-    #     self._click_timer.start(QApplication.instance().doubleClickInterval())
-
-    # def _on_cluster_click_timeout(self) -> None:
-    #     if self._pending_click_row is None:
-    #         return
-    #     model_index = self.view.model().index(self._pending_click_row)
-    #     self._on_cluster_clicked(model_index)
-    #     self._pending_click_row = None
-
-            # ------------------------------------------------------------------
     def show_overview(self, triplets: dict[str, tuple[int | None, ...]], session: SessionModel):
         """Display an overview of 6-image sets for each hyperedge."""
         self.session = session
@@ -722,7 +679,7 @@ class ImageGridDock(QDockWidget):
                 self._overview_widget.deleteLater()
                 self._overview_widget = None
 
-    # --------------------------------------------------------------
+
     def eventFilter(self, obj, event):
         if isinstance(obj, _ClickableLabel) and event.type() == QEvent.MouseButtonDblClick:
             self.labelDoubleClicked.emit(obj.text())

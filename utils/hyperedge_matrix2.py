@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from PyQt5.QtCore import (
     Qt,
@@ -11,8 +11,10 @@ from PyQt5.QtCore import (
     QEvent,
     QPoint,
     QUrl,
+    QTimer,                 
+    QRect,                  
 )
-from PyQt5.QtGui import QPixmap, QColor, QKeySequence
+from PyQt5.QtGui import QPixmap, QColor, QKeySequence, QPainter, QIcon 
 from PyQt5.QtWidgets import (
     QApplication,
     QDockWidget,
@@ -20,6 +22,8 @@ from PyQt5.QtWidgets import (
     QHeaderView,
     QAbstractItemView,
     QShortcut,
+    QStyleOptionHeader,
+    QStyle,
 )
 
 from .selection_bus import SelectionBus
@@ -66,6 +70,89 @@ def f1_colour(score: float, max_score: float) -> QColor:
     b = int(start[2] + (end[2] - start[2]) * t)
     return QColor(r, g, b)
 
+class HyperedgeHeaderView(QHeaderView):  # ### NEW
+    """
+    Paints the header section as:
+      - Horizontal header: image on top, wrapped name below.
+      - Vertical header:   image on left, wrapped name on right.
+    This guarantees scaling matches the cell size and long names wrap.
+    """
+    def __init__(self, orientation: Qt.Orientation, parent=None):
+        super().__init__(orientation, parent)
+        self.setSectionsClickable(True)
+        self.setDefaultAlignment(Qt.AlignCenter)
+        if hasattr(self, "setTextElideMode"):
+            self.setTextElideMode(Qt.ElideNone)
+
+
+    def paintSection(self, painter: QPainter, rect: QRect, logicalIndex: int):  # noqa: N802
+        if not rect.isValid():
+            return
+        opt = QStyleOptionHeader()
+        self.initStyleOption(opt)
+        opt.rect = rect
+        opt.section = logicalIndex
+        opt.text = ""
+        opt.icon = QIcon()
+        style = self.style()
+        style.drawControl(QStyle.CE_Header, opt, painter, self)
+
+        # Pull data from the model
+        model = self.model()
+        if not model:
+            return
+        orientation = self.orientation()
+        name = model.headerData(logicalIndex, orientation, Qt.DisplayRole) or ""
+        pixdata = model.headerData(logicalIndex, orientation, Qt.DecorationRole)
+
+        pix: QPixmap | None = None
+        if isinstance(pixdata, QPixmap):
+            pix = pixdata
+        elif isinstance(pixdata, QIcon):
+            s = pixdata.actualSize(rect.size())
+            pix = pixdata.pixmap(s)
+
+        margin = 4
+        painter.save()
+        if orientation == Qt.Horizontal:
+            # Reserve up to 3 lines for text
+            fm = self.fontMetrics()
+            text_h = min(fm.lineSpacing() * 3, int(rect.height() * 0.5))
+            # Image rect
+            max_side = max(0, min(rect.width() - 2 * margin, rect.height() - text_h - 2 * margin))
+            img_rect = QRect(
+                rect.x() + (rect.width() - max_side) // 2,
+                rect.y() + margin,
+                max_side,
+                max_side,
+            )
+            if pix and not pix.isNull():
+                painter.drawPixmap(
+                    img_rect,
+                    pix.scaled(img_rect.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation),
+                )
+            # Text rect below
+            text_rect = QRect(
+                rect.x() + margin, rect.bottom() - text_h - margin + 1,
+                rect.width() - 2 * margin, text_h
+            )
+            painter.drawText(text_rect, Qt.AlignHCenter | Qt.AlignTop | Qt.TextWordWrap, str(name))
+        else:
+            # Vertical header: image on left, text to the right (wrapped)
+            max_side = max(0, min(rect.height() - 2 * margin, int(rect.width() * 0.6)))
+            img_rect = QRect(rect.x() + margin, rect.y() + (rect.height() - max_side) // 2, max_side, max_side)
+            if pix and not pix.isNull():
+                painter.drawPixmap(
+                    img_rect,
+                    pix.scaled(img_rect.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation),
+                )
+            text_rect = QRect(img_rect.right() + margin, rect.y() + margin,
+                              rect.right() - img_rect.right() - 2 * margin, rect.height() - 2 * margin)
+            painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter | Qt.TextWordWrap, str(name))
+        painter.restore()
+
+
+
 
 # ──────────────────────────────────────────────────────────────────────
 # QAbstractTableModel implementation
@@ -101,19 +188,15 @@ class HyperedgeMatrixModel(QAbstractTableModel):
         if size == self._thumb_size:
             return
         self._thumb_size = size
-        # cached icons depend on thumb size → clear:
         self._load_thumb.cache_clear()
-        # header repaint will be triggered by view in dock widget
 
-    # ------------------------------------------------------------------
-    # QAbstractTableModel mandatory interface ---------------------------
-    def rowCount(self, parent=QModelIndex()) -> int:     # noqa: N802
+
+    def rowCount(self, parent=QModelIndex()) -> int:     
         return 0 if parent.isValid() else len(self._edges)
 
-    def columnCount(self, parent=QModelIndex()) -> int:  # noqa: N802
+    def columnCount(self, parent=QModelIndex()) -> int:  
         return 0 if parent.isValid() else len(self._edges)
 
-    # Roles: DisplayRole, BackgroundRole, TextAlignmentRole -------------
     def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
         if not index.isValid() or not self._session:
             return None
@@ -133,11 +216,13 @@ class HyperedgeMatrixModel(QAbstractTableModel):
 
         return None
 
-    # Header thumbnails & tooltips -------------------------------------
     def headerData(self, section: int, orient: Qt.Orientation, role: int = Qt.DisplayRole):
         if not self._session or section >= len(self._edges):
             return None
         name = self._edges[section]
+
+        if role == Qt.DisplayRole:                          # ### NEW (show names)
+            return name
 
         if role == Qt.ToolTipRole:
             return name
@@ -146,12 +231,13 @@ class HyperedgeMatrixModel(QAbstractTableModel):
             return self._load_thumb(name)
 
         if role == Qt.SizeHintRole:
-            return QSize(self._thumb_size, self._thumb_size)
-
+            if orient == Qt.Horizontal:
+                return QSize(self._thumb_size, int(self._thumb_size * 1.6))
+            else:
+                return QSize(int(self._thumb_size * 1.8), self._thumb_size)
         return None
 
-    # ------------------------------------------------------------------
-    # Internal helpers --------------------------------------------------
+
     @lru_cache(maxsize=1024)
     def _load_thumb(self, edge_name: str) -> QPixmap:
         """Load & scale the first image of the hyperedge."""
@@ -177,7 +263,6 @@ class HyperedgeMatrixModel(QAbstractTableModel):
         self._scores = [[0.0] * sz for _ in range(sz)]
         self._max_score = 0.0
 
-        # Cache set lengths to avoid recomputing
         len_cache = {name: len(self._session.hyperedges[name]) for name in edges}
 
         for r, r_name in enumerate(edges):
@@ -207,7 +292,7 @@ class HyperedgeMatrixDock(QDockWidget):
 
     _MIN_SIZE = 16
     _MAX_SIZE = 512
-    _ZOOM_STEP = 1.15  # multiplicative; Excel steps are ~15 %
+    _ZOOM_STEP = 1.15  
 
     def __init__(self, bus: SelectionBus, parent=None, thumb_size: int = 64):
         super().__init__("Hyperedge Overlap", parent)
@@ -216,7 +301,8 @@ class HyperedgeMatrixDock(QDockWidget):
         self._zoom = 1.0
         self._overview_triplets: Dict[str, tuple[int | None, ...]] | None = None
         self._last_index = QModelIndex()
-        # --- TableView & Model ----------------------------------------
+        
+        
         self._view = QTableView(self)
         self._view.setSelectionMode(QAbstractItemView.NoSelection)
         self._view.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -224,22 +310,23 @@ class HyperedgeMatrixDock(QDockWidget):
         self._view.horizontalHeader().setSectionsClickable(True)
         self._view.setAlternatingRowColors(False)
 
-        # speed: per‑pixel scrolling keeps wheel nice & smooth
         self._view.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self._view.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+
+        self._view.setHorizontalHeader(HyperedgeHeaderView(Qt.Horizontal, self._view))
+        self._view.setVerticalHeader(HyperedgeHeaderView(Qt.Vertical, self._view))
+
 
         self._model = HyperedgeMatrixModel(None, thumb_size)
         self._view.setModel(self._model)
         self.setWidget(self._view)
 
-        # --- Size policy for headers ----------------------------------
         for hdr in (self._view.horizontalHeader(), self._view.verticalHeader()):
             hdr.setSectionResizeMode(QHeaderView.Fixed)
             hdr.setDefaultSectionSize(thumb_size)
             hdr.setMinimumSectionSize(self._MIN_SIZE)
             hdr.setIconSize(QSize(thumb_size, thumb_size))
 
-        # --- Signals ---------------------------------------------------
         self._view.clicked.connect(self._on_cell_clicked)
         self._view.horizontalHeader().sectionDoubleClicked.connect(
             lambda s: self._on_header_double_clicked(s)
@@ -248,7 +335,6 @@ class HyperedgeMatrixDock(QDockWidget):
             lambda s: self._on_header_double_clicked(s)
         )
 
-        # --- Zoom shortcuts -------------------------------------------
         QShortcut(QKeySequence.ZoomIn, self, self.zoom_in)
         QShortcut(QKeySequence.ZoomOut, self, self.zoom_out)
         QShortcut(QKeySequence("Ctrl+0"), self, self.zoom_reset)
@@ -258,17 +344,26 @@ class HyperedgeMatrixDock(QDockWidget):
         self._view.viewport().setMouseTracking(True)
 
         self.tooltip_manager = TooltipManager(self._view)
+        self._tooltip_timer = QTimer(self)                 # ### NEW
+        self._tooltip_timer.setSingleShot(True)
+        self._tooltip_timer.setInterval(500)               # 0.5s debounce
+        self._tooltip_timer.timeout.connect(self._show_pending_tooltip)
+        self._pending_index = QModelIndex()
+        self._pending_pos = QPoint()
+        self._tooltip_html_cache: Dict[Tuple[str, str, int], str] = {}  # ### NEW
+
+
     # ------------------------------------------------------------------
     # Public API --------------------------------------------------------
     def set_model(self, session: SessionModel | None):
         """Load / clear the matrix."""
         self._model.set_session(session)
         self._overview_triplets = None
+        self._tooltip_html_cache.clear()
         self.zoom_reset()  # ensures headers match current _base_thumb
 
     def update_matrix(self):
         """Compatibility wrapper used by the main window to refresh data."""
-        # Rebuild the model using whatever session is currently loaded
         self._model.set_session(self._model._session)
 
     # ------------------------------------------------------------------
@@ -289,39 +384,30 @@ class HyperedgeMatrixDock(QDockWidget):
         self._zoom = factor
         size = int(round(self._base_thumb * self._zoom))
 
-        # update model thumbnails + headers
+        # update model thumbnails + header section sizes
         self._model.set_thumb_size(size)
-        for hdr in (self._view.horizontalHeader(), self._view.verticalHeader()):
-            hdr.setDefaultSectionSize(size)
-            hdr.setIconSize(QSize(size, size))
+        hh = self._view.horizontalHeader()
+        vh = self._view.verticalHeader()
+        hh.setDefaultSectionSize(size)   # column width
+        vh.setDefaultSectionSize(size)   # row height
+
+        # Provide extra space for wrapped names with the custom painter
+        fm = self._view.fontMetrics()
+        hh.setMinimumHeight(int(size + fm.lineSpacing() * 2.5))
+        vh.setMinimumWidth(int(size + fm.averageCharWidth() * 12))
 
         # repaint everything
-        self._model.dataChanged.emit(
-            QModelIndex(), QModelIndex(), [Qt.DecorationRole, Qt.SizeHintRole]
-        )
+        self._model.dataChanged.emit(QModelIndex(), QModelIndex(), [Qt.DecorationRole, Qt.SizeHintRole])
 
-    # ------------------------------------------------------------------
-    # Event filter for Ctrl+Wheel zoom ---------------------------------
-    # def eventFilter(self, obj, event):
-    #     if event.type() == QEvent.Wheel and QApplication.keyboardModifiers() & Qt.ControlModifier:
-    #         if event.angleDelta().y() > 0:
-    #             self.zoom_in()
-    #         else:
-    #             self.zoom_out()
-    #         return True
-    #     return super().eventFilter(obj, event)
 
-    # ------------------------------------------------------------------
-    # Click / double‑click behaviour (unchanged) ------------------------
+
     def _on_cell_clicked(self, index: QModelIndex):
         if not self._model._session or not index.isValid():
             return
         edges = self._model._edges
         r_name = edges[index.row()]
         c_name = edges[index.column()]
-        idxs = sorted(
-            self._model._session.hyperedges[r_name] & self._model._session.hyperedges[c_name]
-        )
+        idxs = sorted(self._model._session.hyperedges[r_name] & self._model._session.hyperedges[c_name])
         self.bus.set_images(idxs)
 
     def _on_header_double_clicked(self, section: int):
@@ -335,14 +421,17 @@ class HyperedgeMatrixDock(QDockWidget):
         if idxs:
             show_image_metadata(self._model._session, idxs[0], self)
 
-    # ------------------------------------------------------------------
-    # Tooltip handling -------------------------------------------------
+
+
+    # Tooltip handling 
     def eventFilter(self, obj, event):
         if obj is self._view.viewport():
             if event.type() == QEvent.MouseMove:
-                self._update_tooltip(event)
+                self._on_mouse_move(event)
             elif event.type() == QEvent.Leave:
+                self._tooltip_timer.stop()
                 self.tooltip_manager.hide()
+                self._pending_index = QModelIndex()
 
         if event.type() == QEvent.Wheel and QApplication.keyboardModifiers() & Qt.ControlModifier:
             if event.angleDelta().y() > 0:
@@ -352,35 +441,48 @@ class HyperedgeMatrixDock(QDockWidget):
             return True
         return super().eventFilter(obj, event)
 
-    def _update_tooltip(self, event):
+    def _on_mouse_move(self, event):
         session = self._model._session
         if session is None:
-            self.tooltip_manager.hide()
-            self._last_index = QModelIndex()
             return
-
         idx = self._view.indexAt(event.pos())
         if not idx.isValid():
             self.tooltip_manager.hide()
-            self._last_index = QModelIndex()
+            self._tooltip_timer.stop()
+            self._pending_index = QModelIndex()
             return
 
-        if idx == self._last_index:
-            # just reposition
-            global_pos = self._view.viewport().mapToGlobal(event.pos())
-            self.tooltip_manager.tooltip.move(global_pos + QPoint(15, 10))
-            return
-
-        self._last_index = idx
-        edges = self._model._edges
-        r_name = edges[idx.row()]
-        c_name = edges[idx.column()]
-        html = self._build_cell_tooltip(r_name, c_name)
-        if html:
-            global_pos = self._view.viewport().mapToGlobal(event.pos())
-            self.tooltip_manager.show(global_pos, html)
-        else:
+        if idx != self._pending_index:
+            # Hovering a new cell → (re)start debounce
+            self._pending_index = idx
+            self._pending_pos = event.pos()
             self.tooltip_manager.hide()
+            self._tooltip_timer.start()
+        else:
+            # Same cell: if tooltip is visible, just reposition smoothly
+            if self.tooltip_manager.tooltip.isVisible():
+                global_pos = self._view.viewport().mapToGlobal(event.pos())
+                self.tooltip_manager.tooltip.move(global_pos + QPoint(15, 10))
+            else:
+                self._pending_pos = event.pos()
+                self._tooltip_timer.start()
+
+    def _show_pending_tooltip(self):
+        if not self._pending_index.isValid() or self._model._session is None:
+            return
+        edges = self._model._edges
+        r_name = edges[self._pending_index.row()]
+        c_name = edges[self._pending_index.column()]
+
+        key = (r_name, c_name, self._model._thumb_size)
+        html = self._tooltip_html_cache.get(key)
+        if html is None:
+            html = self._build_cell_tooltip(r_name, c_name)
+            self._tooltip_html_cache[key] = html
+
+        if html:
+            global_pos = self._view.viewport().mapToGlobal(self._pending_pos)
+            self.tooltip_manager.show(global_pos, html)
 
     def _build_cell_tooltip(self, row_edge: str, col_edge: str) -> str:
         session = self._model._session
@@ -405,6 +507,8 @@ class HyperedgeMatrixDock(QDockWidget):
             return ""
 
         return (
-            f"<table><tr><td valign='top'><b>{col_edge}</b><br>{col_html}</td>"
-            f"<td valign='top'><b>{row_edge}</b><br>{row_html}</td></tr></table>"
+            f"<table><tr>"
+            f"<td valign='top'><b>{col_edge}</b><br>{col_html}</td>"
+            f"<td valign='top'><b>{row_edge}</b><br>{row_html}</td>"
+            f"</tr></table>"
         )

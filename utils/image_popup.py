@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (
     QPushButton
 )
 from PyQt5.QtGui import QPixmap, QPen, QColor
-from PyQt5.QtCore import Qt, QRectF, pyqtSignal as Signal
+from PyQt5.QtCore import Qt, QRectF, pyqtSignal as Signal, QEvent
 from PIL import Image, ImageOps
 import numpy as np
 import torch
@@ -86,22 +86,27 @@ class ImageMetadataDialog(QDialog):
 
     _extractor: Swinv2LargeFeatureExtractor | None = None
 
-    def __init__(self, image_path: str, metadata: Mapping[str, Any] | None,
-                 session=None, parent=None):
+    def __init__(
+        self,
+        session,
+        idx: int,
+        parent=None,
+        indices: list[int] | None = None,
+        ):
+
         super().__init__(parent)
-        self.setWindowTitle(Path(image_path).name)
 
         self._session = session
-        self._image_path = image_path
+        self._indices = indices or list(range(len(session.im_list)))
+        self._pos = self._indices.index(idx) if idx in self._indices else 0
+        self._image_path = ""
         self._sel_rect: QRectF | None = None
 
         self.view = ZoomPanGraphicsView()
         self.scene = QGraphicsScene(self.view)
         self.view.setScene(self.scene)
-        pix = pixmap_from_file(image_path)
-        self.pix_item = QGraphicsPixmapItem(pix)
+        self.pix_item = QGraphicsPixmapItem()
         self.scene.addItem(self.pix_item)
-        self.view.fitInView(self.pix_item, Qt.KeepAspectRatio)
 
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Filter...")
@@ -123,9 +128,12 @@ class ImageMetadataDialog(QDialog):
         side.addWidget(self.rank_btn)
         layout.addLayout(side, 1)
 
-        self._populate_table(metadata or {})
         self.filter_edit.textChanged.connect(self._apply_filter)
         self.view.selectionChanged.connect(self._on_selection_changed)
+        
+        self.installEventFilter(self)
+        self._load_image(self._indices[self._pos])
+
 
 
 
@@ -156,7 +164,47 @@ class ImageMetadataDialog(QDialog):
 
         self.rank_btn.setEnabled(self._session is not None and self._sel_rect is not None)
 
+    def _load_image(self, idx: int) -> None:
+        """Load image and metadata for the given session index."""
+        self._sel_rect = None
+        self.rank_btn.setEnabled(False)
+        self.view.clear_selection()
 
+        self._image_path = self._session.im_list[idx]
+        self.setWindowTitle(Path(self._image_path).name)
+        pix = pixmap_from_file(self._image_path)
+        self.pix_item.setPixmap(pix)
+        self.scene.setSceneRect(self.pix_item.boundingRect())
+        self.view.fitInView(self.pix_item, Qt.KeepAspectRatio)
+        self.view.setFocus()
+
+        row = self._session.metadata[self._session.metadata["image_path"] == self._image_path]
+        meta = row.iloc[0].to_dict() if not row.empty else {}
+        self._populate_table(meta)
+        self.filter_edit.clear()
+
+    def _show_prev(self) -> None:
+        if self._pos > 0:
+            self._pos -= 1
+            self._load_image(self._indices[self._pos])
+
+    def _show_next(self) -> None:
+        if self._pos + 1 < len(self._indices):
+            self._pos += 1
+            self._load_image(self._indices[self._pos])
+
+    def eventFilter(self, obj, event):  
+        if event.type() == QEvent.KeyPress:
+            print('event')
+            if event.key() == Qt.Key_Left:
+                print('event lkeft')
+                self._show_prev()
+                return True
+            if event.key() == Qt.Key_Right:
+                print('event right')
+                self._show_next()
+                return True
+        return super().eventFilter(obj, event)
 
     def _on_rank_selection(self):
         if not (self._session and self._sel_rect):
@@ -185,10 +233,12 @@ class ImageMetadataDialog(QDialog):
             win.image_grid.update_images(list(ranked), sort=False, query=True)
 
 
+_open_dialogs: list[ImageMetadataDialog] = []
+
 def show_image_metadata(session, idx: int, parent=None):
     """Display the metadata dialog for the given image index."""
-    path = session.im_list[idx]
-    row = session.metadata[session.metadata["image_path"] == path]
-    meta = row.iloc[0].to_dict() if not row.empty else {}
-    dlg = ImageMetadataDialog(path, meta, session=session, parent=parent)
-    dlg.exec_()
+    indices = getattr(parent, "_current_indices", None)
+    dlg = ImageMetadataDialog(session, idx, parent=parent, indices=indices)
+    _open_dialogs.append(dlg)
+    dlg.finished.connect(lambda *_: _open_dialogs.remove(dlg))
+    dlg.show()
