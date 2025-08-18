@@ -14,7 +14,8 @@ from PyQt5.QtCore import (
     QTimer,                 
     QRect,                  
 )
-from PyQt5.QtGui import QPixmap, QColor, QKeySequence, QPainter, QIcon 
+from PyQt5.QtGui import QPixmap, QColor, QKeySequence, QPainter, QIcon, QPalette
+
 from PyQt5.QtWidgets import (
     QApplication,
     QDockWidget,
@@ -70,12 +71,11 @@ def f1_colour(score: float, max_score: float) -> QColor:
     b = int(start[2] + (end[2] - start[2]) * t)
     return QColor(r, g, b)
 
-class HyperedgeHeaderView(QHeaderView):  # ### NEW
+class HyperedgeHeaderView(QHeaderView):
     """
     Paints the header section as:
       - Horizontal header: image on top, wrapped name below.
       - Vertical header:   image on left, wrapped name on right.
-    This guarantees scaling matches the cell size and long names wrap.
     """
     def __init__(self, orientation: Qt.Orientation, parent=None):
         super().__init__(orientation, parent)
@@ -83,24 +83,48 @@ class HyperedgeHeaderView(QHeaderView):  # ### NEW
         self.setDefaultAlignment(Qt.AlignCenter)
         if hasattr(self, "setTextElideMode"):
             self.setTextElideMode(Qt.ElideNone)
+        self._text_lines = 3
+        self._margin = 6
+
+    def sizeHint(self):
+        sz = super().sizeHint()
+        s = self.defaultSectionSize()
+        fm = self.fontMetrics()
+        if self.orientation() == Qt.Horizontal:
+            txt_h = min(fm.lineSpacing() * self._text_lines, int(s * 0.75))
+            sz.setHeight(int(s + txt_h + 2 * self._margin))
+        else:
+            txt_w = int(fm.averageCharWidth() * 12)  # room for a few words
+            sz.setWidth(int(s + txt_w + 2 * self._margin))
+        return sz
+
+    def updateGeometryForZoom(self):
+        sz = self.sizeHint()
+        if self.orientation() == Qt.Horizontal:
+            self.setFixedHeight(sz.height())
+        else:
+            self.setFixedWidth(sz.width())
+        self.updateGeometry()
 
 
     def paintSection(self, painter: QPainter, rect: QRect, logicalIndex: int):  # noqa: N802
         if not rect.isValid():
             return
+
         opt = QStyleOptionHeader()
         self.initStyleOption(opt)
         opt.rect = rect
         opt.section = logicalIndex
         opt.text = ""
         opt.icon = QIcon()
+
         style = self.style()
         style.drawControl(QStyle.CE_Header, opt, painter, self)
 
-        # Pull data from the model
         model = self.model()
         if not model:
             return
+
         orientation = self.orientation()
         name = model.headerData(logicalIndex, orientation, Qt.DisplayRole) or ""
         pixdata = model.headerData(logicalIndex, orientation, Qt.DecorationRole)
@@ -112,14 +136,16 @@ class HyperedgeHeaderView(QHeaderView):  # ### NEW
             s = pixdata.actualSize(rect.size())
             pix = pixdata.pixmap(s)
 
-        margin = 4
+        margin = self._margin
         painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        painter.setPen(self.palette().color(QPalette.ButtonText))  # visible text color
+
         if orientation == Qt.Horizontal:
-            # Reserve up to 3 lines for text
             fm = self.fontMetrics()
-            text_h = min(fm.lineSpacing() * 3, int(rect.height() * 0.5))
-            # Image rect
-            max_side = max(0, min(rect.width() - 2 * margin, rect.height() - text_h - 2 * margin))
+            text_h = min(fm.lineSpacing() * self._text_lines, int(rect.height() * 0.6))
+            max_side = max(1, min(rect.width() - 2 * margin, rect.height() - text_h - 2 * margin))
             img_rect = QRect(
                 rect.x() + (rect.width() - max_side) // 2,
                 rect.y() + margin,
@@ -131,25 +157,32 @@ class HyperedgeHeaderView(QHeaderView):  # ### NEW
                     img_rect,
                     pix.scaled(img_rect.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation),
                 )
-            # Text rect below
             text_rect = QRect(
-                rect.x() + margin, rect.bottom() - text_h - margin + 1,
-                rect.width() - 2 * margin, text_h
+                rect.x() + margin,
+                rect.bottom() - text_h - margin + 1,
+                rect.width() - 2 * margin,
+                text_h,
             )
             painter.drawText(text_rect, Qt.AlignHCenter | Qt.AlignTop | Qt.TextWordWrap, str(name))
+
         else:
-            # Vertical header: image on left, text to the right (wrapped)
-            max_side = max(0, min(rect.height() - 2 * margin, int(rect.width() * 0.6)))
+            max_side = max(1, min(rect.height() - 2 * margin, int(rect.width() * 0.6)))
             img_rect = QRect(rect.x() + margin, rect.y() + (rect.height() - max_side) // 2, max_side, max_side)
             if pix and not pix.isNull():
                 painter.drawPixmap(
                     img_rect,
                     pix.scaled(img_rect.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation),
                 )
-            text_rect = QRect(img_rect.right() + margin, rect.y() + margin,
-                              rect.right() - img_rect.right() - 2 * margin, rect.height() - 2 * margin)
+            text_rect = QRect(
+                img_rect.right() + margin,
+                rect.y() + margin,
+                max(rect.right() - img_rect.right() - 2 * margin, 1),
+                max(rect.height() - 2 * margin, 1),
+            )
             painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter | Qt.TextWordWrap, str(name))
+
         painter.restore()
+
 
 
 
@@ -325,7 +358,15 @@ class HyperedgeMatrixDock(QDockWidget):
             hdr.setSectionResizeMode(QHeaderView.Fixed)
             hdr.setDefaultSectionSize(thumb_size)
             hdr.setMinimumSectionSize(self._MIN_SIZE)
-            hdr.setIconSize(QSize(thumb_size, thumb_size))
+
+
+        hh = self._view.horizontalHeader()
+        vh = self._view.verticalHeader()
+        if isinstance(hh, HyperedgeHeaderView):
+            hh.updateGeometryForZoom()
+        if isinstance(vh, HyperedgeHeaderView):
+            vh.updateGeometryForZoom()
+
 
         self._view.clicked.connect(self._on_cell_clicked)
         self._view.horizontalHeader().sectionDoubleClicked.connect(
@@ -384,20 +425,23 @@ class HyperedgeMatrixDock(QDockWidget):
         self._zoom = factor
         size = int(round(self._base_thumb * self._zoom))
 
-        # update model thumbnails + header section sizes
         self._model.set_thumb_size(size)
+
         hh = self._view.horizontalHeader()
         vh = self._view.verticalHeader()
         hh.setDefaultSectionSize(size)   # column width
         vh.setDefaultSectionSize(size)   # row height
 
-        # Provide extra space for wrapped names with the custom painter
-        fm = self._view.fontMetrics()
-        hh.setMinimumHeight(int(size + fm.lineSpacing() * 2.5))
-        vh.setMinimumWidth(int(size + fm.averageCharWidth() * 12))
+        # Provide space for wrapped names
+        if isinstance(hh, HyperedgeHeaderView):
+            hh.updateGeometryForZoom()
+        if isinstance(vh, HyperedgeHeaderView):
+            vh.updateGeometryForZoom()
 
         # repaint everything
         self._model.dataChanged.emit(QModelIndex(), QModelIndex(), [Qt.DecorationRole, Qt.SizeHintRole])
+        self._view.viewport().update()
+
 
 
 

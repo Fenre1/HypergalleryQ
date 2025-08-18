@@ -977,8 +977,11 @@ class SpatialViewQDock(QDockWidget):
 
         abs_pos_cache = self._abs_pos_cache
         sel_pos = [abs_pos_cache[k] for k in self._selected_nodes if k in abs_pos_cache]
-        if self.selected_scatter: 
-            self.selected_scatter.setData(pos=np.array(sel_pos))
+        if self.selected_scatter:
+            if sel_pos:
+                self.selected_scatter.setData(pos=np.array(sel_pos))
+            else:
+                self.selected_scatter.setData([], [])
         rel, links = self._radial_layout_cache
         pairs = []
         for a, b in links:
@@ -986,7 +989,6 @@ class SpatialViewQDock(QDockWidget):
                 if a in abs_pos_cache and b in abs_pos_cache:
                     pairs.append(abs_pos_cache[a])
                     pairs.append(abs_pos_cache[b])
-
 
                     
         if pairs and self.selected_links:
