@@ -127,6 +127,8 @@ class ImageMetadataDialog(QDialog):
         self.filter_edit.textChanged.connect(self._apply_filter)
         self.view.selectionChanged.connect(self._on_selection_changed)
 
+
+
     def _populate_table(self, metadata: Mapping[str, Any]):
         self.table.setRowCount(0)
         for key, value in metadata.items():
@@ -145,6 +147,17 @@ class ImageMetadataDialog(QDialog):
             self.table.setRowHidden(row, not match)
 
     # ------------------------------------------------------------------
+    def _on_selection_changed(self, rect: QRectF):
+        """Handle selection rectangle updates from the graphics view."""
+        if rect is None or rect.isNull():
+            self._sel_rect = None
+        else:
+            self._sel_rect = rect
+
+        self.rank_btn.setEnabled(self._session is not None and self._sel_rect is not None)
+
+
+
     def _on_rank_selection(self):
         if not (self._session and self._sel_rect):
             return
