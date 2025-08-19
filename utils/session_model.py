@@ -128,9 +128,6 @@ class SessionModel(QObject):
         if not target.suffix:
             target = target.with_suffix(".h5")
 
-        if self.thumbnail_data is None:
-            self.generate_thumbnails()
-
         with h5py.File(target, "w") as hdf:
             print('starting save')
             dt = h5py.string_dtype(encoding="utf-8")
@@ -560,7 +557,6 @@ class SessionModel(QObject):
         # self.hyperedgeModified.emit(name)
 
     def prune_similar_edges(self, threshold: float) -> None:
-        """Remove supplementary hyperedges that are too similar."""
         precedence = ["swinv2", "places365", "openclip"]
         ordered_names = self.cat_list[:]
         kept: list[str] = []
@@ -568,6 +564,9 @@ class SessionModel(QObject):
         for origin in precedence:
             for name in ordered_names:
                 if self.edge_origins.get(name) != origin or name in remove:
+                    continue
+                if origin == "swinv2":
+                    kept.append(name)
                     continue
                 is_dup = False
                 for k in kept:

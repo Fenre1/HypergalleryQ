@@ -1344,7 +1344,7 @@ class MainWin(QMainWindow):
         if plc_matrix.size:
             self.model.append_clustering_matrix(plc_matrix, origin="places365", prefix="plc365")
         self.model.prune_similar_edges(prune_thr)
-
+        self.model.generate_thumbnails()
 
         self.model.layoutChanged.connect(self.regroup)
         self._overview_triplets = None
@@ -1353,9 +1353,13 @@ class MainWin(QMainWindow):
         self.model.hyperedgeModified.connect(self._on_model_hyperedge_modified)
 
         self.image_grid.set_model(self.model)
-        self.image_grid.set_use_full_images(True)
-        self.thumb_toggle_act.setChecked(True)
-        self.overlap_dock.set_model(self.model)        
+        if self.model.thumbnail_data:
+            self.image_grid.set_use_full_images(False)
+            self.thumb_toggle_act.setChecked(False)
+        else:
+            self.image_grid.set_use_full_images(True)
+            self.thumb_toggle_act.setChecked(True)
+        self.overlap_dock.set_model(self.model)
         self.matrix_dock.set_model(self.model)
         self.spatial_dock.set_model(self.model)
         self.regroup()
@@ -1449,6 +1453,13 @@ class MainWin(QMainWindow):
                     self.model.append_clustering_matrix(
                         plc_matrix, origin="places365", prefix="plc365"
                     )
+            if self.model.thumbnail_data is None:
+                if QMessageBox.question(
+                    self,
+                    "Missing Thumbnails",
+                    "Thumbnails are absent in this session.\nGenerate them now?",
+                ) == QMessageBox.Yes:
+                    self.model.generate_thumbnails()
 
             self.model.layoutChanged.connect(self.regroup)
             self._overview_triplets = None
