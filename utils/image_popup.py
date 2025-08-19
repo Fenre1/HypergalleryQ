@@ -15,8 +15,7 @@ import torch
 
 from .similarity import SIM_METRIC
 from .feature_extraction import Swinv2LargeFeatureExtractor
-from .image_utils import pixmap_from_file
-
+from .image_utils import pixmap_from_file, qimage_from_data
 
 class ZoomPanGraphicsView(QGraphicsView):
     """Graphics view supporting zooming and shift-drag rectangle selection."""
@@ -191,6 +190,14 @@ class ImageMetadataDialog(QDialog):
         self._image_path = self._session.im_list[idx]
         self.setWindowTitle(Path(self._image_path).name)
         pix = pixmap_from_file(self._image_path)
+        if pix.isNull() and self._session.thumbnail_data:
+            if self._session.thumbnails_are_embedded:
+                data = self._session.thumbnail_data[idx]
+                img = qimage_from_data(data)
+                pix = QPixmap.fromImage(img)
+            else:
+                tpath = Path(self._session.h5_path).parent / self._session.thumbnail_data[idx]
+                pix = pixmap_from_file(str(tpath))
         self.pix_item.setPixmap(pix)
         self.scene.setSceneRect(self.pix_item.boundingRect())
         self.view.fitInView(self.pix_item, Qt.KeepAspectRatio)

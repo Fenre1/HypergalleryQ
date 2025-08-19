@@ -1,7 +1,6 @@
-# prototype.py --------------------------------------------------------------
 import os
-os.environ["PYQTGRAPH_QT_LIB"] = "PyQt5"   # force pyqtgraph to PyQt5
-os.environ.pop("QT_API", None)             # avoid other libs nudging Qt differently
+os.environ["PYQTGRAPH_QT_LIB"] = "PyQt5"   
+os.environ.pop("QT_API", None)             
 
 
 import sys, uuid, numpy as np
@@ -1353,16 +1352,19 @@ class MainWin(QMainWindow):
         self.model.hyperedgeModified.connect(self._on_model_hyperedge_modified)
 
         self.image_grid.set_model(self.model)
-        if self.model.thumbnail_data:
-            self.image_grid.set_use_full_images(False)
-            self.thumb_toggle_act.setChecked(False)
-        else:
-            self.image_grid.set_use_full_images(True)
-            self.thumb_toggle_act.setChecked(True)
         self.overlap_dock.set_model(self.model)
         self.matrix_dock.set_model(self.model)
         self.spatial_dock.set_model(self.model)
-        self.regroup()
+        if self.model.thumbnail_data:
+            for comp in (self.image_grid, self.overlap_dock, self.matrix_dock, self.spatial_dock):
+                if hasattr(comp, "set_use_full_images"):
+                    comp.set_use_full_images(False)
+            self.thumb_toggle_act.setChecked(False)
+        else:
+            for comp in (self.image_grid, self.overlap_dock, self.matrix_dock, self.spatial_dock):
+                if hasattr(comp, "set_use_full_images"):
+                    comp.set_use_full_images(True)
+            self.thumb_toggle_act.setChecked(True)
 
 
     def open_session(self):
@@ -1471,15 +1473,19 @@ class MainWin(QMainWindow):
             return
 
         self.image_grid.set_model(self.model)
-        if self.model.thumbnail_data:
-            self.image_grid.set_use_full_images(False)
-            self.thumb_toggle_act.setChecked(False)
-        else:
-            self.image_grid.set_use_full_images(True)
-            self.thumb_toggle_act.setChecked(True)
-        self.overlap_dock.set_model(self.model)            
+        self.overlap_dock.set_model(self.model)
         self.matrix_dock.set_model(self.model)
         self.spatial_dock.set_model(self.model)
+        if self.model.thumbnail_data:
+            for comp in (self.image_grid, self.overlap_dock, self.matrix_dock, self.spatial_dock):
+                if hasattr(comp, "set_use_full_images"):
+                    comp.set_use_full_images(False)
+            self.thumb_toggle_act.setChecked(False)
+        else:
+            for comp in (self.image_grid, self.overlap_dock, self.matrix_dock, self.spatial_dock):
+                if hasattr(comp, "set_use_full_images"):
+                    comp.set_use_full_images(True)
+            self.thumb_toggle_act.setChecked(True)
         self.regroup()
 
 
@@ -1607,15 +1613,19 @@ class MainWin(QMainWindow):
         self.model.hyperedgeModified.connect(self._on_model_hyperedge_modified)
 
         self.image_grid.set_model(self.model)
-        if self.model.thumbnail_data:
-            self.image_grid.set_use_full_images(False)
-            self.thumb_toggle_act.setChecked(False)
-        else:
-            self.image_grid.set_use_full_images(True)
-            self.thumb_toggle_act.setChecked(True)
         self.overlap_dock.set_model(self.model)
         self.matrix_dock.set_model(self.model)
         self.spatial_dock.set_model(self.model)
+        if self.model.thumbnail_data:
+            for comp in (self.image_grid, self.overlap_dock, self.matrix_dock, self.spatial_dock):
+                if hasattr(comp, "set_use_full_images"):
+                    comp.set_use_full_images(False)
+            self.thumb_toggle_act.setChecked(False)
+        else:
+            for comp in (self.image_grid, self.overlap_dock, self.matrix_dock, self.spatial_dock):
+                if hasattr(comp, "set_use_full_images"):
+                    comp.set_use_full_images(True)
+            self.thumb_toggle_act.setChecked(True)
         self.regroup()
 
 
@@ -1633,7 +1643,9 @@ class MainWin(QMainWindow):
         self._skip_next_layout = False
 
     def toggle_full_images(self, flag: bool) -> None:
-        self.image_grid.set_use_full_images(flag)
+        for comp in (self.image_grid, self.overlap_dock, self.matrix_dock, self.spatial_dock):
+            if hasattr(comp, "set_use_full_images"):
+                comp.set_use_full_images(flag)
 
     def _on_model_hyperedge_modified(self, _name: str):
         self._skip_next_layout = True

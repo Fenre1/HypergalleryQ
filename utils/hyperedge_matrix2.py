@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Dict, List, Tuple
-
+from pathlib import Path
 from PyQt5.QtCore import (
     Qt,
     QAbstractTableModel,
@@ -11,11 +11,19 @@ from PyQt5.QtCore import (
     QEvent,
     QPoint,
     QUrl,
-    QTimer,                 
-    QRect,                  
+    QTimer,
+    QRect,
 )
 
-from PyQt5.QtGui import QPixmap, QColor, QKeySequence, QPainter, QIcon, QPalette, QFont
+from PyQt5.QtGui import (
+    QPixmap,
+    QColor,
+    QKeySequence,
+    QPainter,
+    QIcon,
+    QPalette,
+    QFont,
+)
 
 from PyQt5.QtWidgets import (
     QApplication,
@@ -31,7 +39,12 @@ from PyQt5.QtWidgets import (
 from .selection_bus import SelectionBus
 from .session_model import SessionModel
 from .image_popup import show_image_metadata
-from .image_utils import pixmap_from_file
+from .image_utils import (
+    qimage_from_data,
+    load_thumbnail,
+)
+
+
 
 class TooltipManager:
     """Simple helper to show persistent HTML tooltips."""
@@ -206,12 +219,18 @@ class HyperedgeHeaderView(QHeaderView):
 # QAbstractTableModel implementation
 # ──────────────────────────────────────────────────────────────────────
 class HyperedgeMatrixModel(QAbstractTableModel):
-    """Light‑weight, virtualised model for a hyperedge overlap matrix."""
 
-    def __init__(self, session: SessionModel | None, thumb_size: int = 64, parent=None):
+    def __init__(
+        self,
+        session: SessionModel | None,
+        thumb_size: int = 64,
+        parent=None,
+        use_full_images: bool = True,
+    ):
         super().__init__(parent)
         self._session = session
         self._thumb_size = thumb_size
+        self._use_full = use_full_images
         self._edges: List[str] = list(session.hyperedges.keys()) if session else []
         self._overlap: List[List[int]] = []
         self._scores: List[List[float]] = []
@@ -238,6 +257,13 @@ class HyperedgeMatrixModel(QAbstractTableModel):
         self._thumb_size = size
         self._load_thumb.cache_clear()
 
+    def set_use_full_images(self, flag: bool) -> None:
+        if self._use_full == flag:
+            return
+        self._use_full = flag
+        self._load_thumb.cache_clear()
+        self.headerDataChanged.emit(Qt.Horizontal, 0, len(self._edges) - 1)
+        self.headerDataChanged.emit(Qt.Vertical, 0, len(self._edges) - 1)
 
     def rowCount(self, parent=QModelIndex()) -> int:     
         return 0 if parent.isValid() else len(self._edges)
@@ -294,14 +320,25 @@ class HyperedgeMatrixModel(QAbstractTableModel):
         idxs = sorted(self._session.hyperedges[edge_name])
         if not idxs:
             return QPixmap()
-        path = self._session.im_list[idxs[0]]
-        pix = pixmap_from_file(path)
-        return pix.scaled(
-            self._thumb_size,
-            self._thumb_size,
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation,
-        )
+        idx = idxs[0]
+        if not self._use_full and self._session.thumbnail_data:
+            if self._session.thumbnails_are_embedded:
+                data = self._session.thumbnail_data[idx]
+                img = qimage_from_data(data)
+                pix = QPixmap.fromImage(img)
+            else:
+                tpath = Path(self._session.h5_path).parent / self._session.thumbnail_data[idx]
+                pix = load_thumbnail(str(tpath), self._thumb_size, self._thumb_size)
+                return pix
+            return pix.scaled(
+                self._thumb_size,
+                self._thumb_size,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+        path = self._session.im_list[idx]
+        return load_thumbnail(path, self._thumb_size, self._thumb_size)
+
 
     def _build_matrix(self):
         """Pre‑compute overlaps + F1 scores to speed up delegate drawing."""
@@ -340,15 +377,22 @@ class HyperedgeMatrixDock(QDockWidget):
 
     _MIN_SIZE = 16
     _MAX_SIZE = 512
-    _ZOOM_STEP = 1.15  
+    _ZOOM_STEP = 1.15
 
-    def __init__(self, bus: SelectionBus, parent=None, thumb_size: int = 64):
+    def __init__(
+        self,
+        bus: SelectionBus,
+        parent=None,
+        thumb_size: int = 64,
+        use_full_images: bool = True,
+    ):
         super().__init__("Hyperedge Overlap", parent)
         self.bus = bus
         self._base_thumb = thumb_size
         self._zoom = 1.0
         self._overview_triplets: Dict[str, tuple[int | None, ...]] | None = None
         self._last_index = QModelIndex()
+        self._use_full = use_full_images
         
         
         self._view = QTableView(self)
@@ -365,7 +409,7 @@ class HyperedgeMatrixDock(QDockWidget):
         self._view.setVerticalHeader(HyperedgeHeaderView(Qt.Vertical, self._view))
 
 
-        self._model = HyperedgeMatrixModel(None, thumb_size)
+        self._model = HyperedgeMatrixModel(None, thumb_size, use_full_images=use_full_images)
         self._view.setModel(self._model)
         self.setWidget(self._view)
         
@@ -410,8 +454,7 @@ class HyperedgeMatrixDock(QDockWidget):
         self._tooltip_html_cache: Dict[Tuple[str, str, int], str] = {}  # ### NEW
 
 
-    # ------------------------------------------------------------------
-    # Public API --------------------------------------------------------
+
     def set_model(self, session: SessionModel | None):
         """Load / clear the matrix."""
         self._model.set_session(session)
@@ -423,8 +466,13 @@ class HyperedgeMatrixDock(QDockWidget):
         """Compatibility wrapper used by the main window to refresh data."""
         self._model.set_session(self._model._session)
 
-    # ------------------------------------------------------------------
-    # Zoom handlers -----------------------------------------------------
+    def set_use_full_images(self, flag: bool) -> None:
+        """Forward the image mode to the underlying model."""
+        self._use_full = flag
+        self._model.set_use_full_images(flag)
+
+
+    # Zoom stuff
     def zoom_in(self):
         self._set_zoom(self._zoom * self._ZOOM_STEP)
 

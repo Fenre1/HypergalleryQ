@@ -10,7 +10,20 @@ from time import perf_counter
 import numba as nb
 import umap
 from types import SimpleNamespace
-from PyQt5.QtCore import Qt, QPointF, QEvent, pyqtSignal as Signal, QUrl, QPoint, QTimer,pyqtSlot
+import base64
+from pathlib import Path
+from PyQt5.QtCore import (
+    Qt,
+    QPointF,
+    QEvent,
+    pyqtSignal as Signal,
+    QUrl,
+    QPoint,
+    QTimer,
+    pyqtSlot,
+    QBuffer,
+    QIODevice,
+)
 
 from PyQt5.QtGui import QPainterPath, QPen, QColor
 from PyQt5.QtWidgets import (
@@ -20,7 +33,6 @@ from PyQt5.QtWidgets import (
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 import pyqtgraph as pg
-# from pyqtgraph.Qt import QtCore, QtGui
 
 
 from matplotlib.path import Path as MplPath
@@ -31,29 +43,10 @@ import time
 from .selection_bus import SelectionBus
 from .session_model import SessionModel
 from .similarity import SIM_METRIC       # kept for non‑cosine fallback
+from .image_utils import qimage_from_data
 
 THUMB_SIZE = 128
 
-# @nb.njit(fastmath=True, cache=True)
-# def _resolve_overlaps_numba(pos, radii, iterations, strength):
-#     n = pos.shape[0]
-#     for _ in range(iterations):
-#         for i in range(n - 1):
-#             for j in range(i + 1, n):
-#                 dx = pos[i, 0] - pos[j, 0]
-#                 dy = pos[i, 1] - pos[j, 1]
-#                 dist_sq = dx*dx + dy*dy
-#                 min_d   = radii[i] + radii[j]
-#                 if 1e-9 < dist_sq < min_d*min_d:
-#                     dist     = np.sqrt(dist_sq)
-#                     overlap  = (min_d - dist) * strength * 0.5
-#                     push_x   = dx / dist * overlap
-#                     push_y   = dy / dist * overlap
-#                     pos[i, 0] += push_x
-#                     pos[i, 1] += push_y
-#                     pos[j, 0] -= push_x
-#                     pos[j, 1] -= push_y
-#     return pos
 
 
 @nb.njit(fastmath=True, cache=True)
@@ -80,7 +73,6 @@ def _resolve_overlaps_numba(pos, radii, iterations, strength):
         if not moved:
             break
     return pos
-
 
 
 def _resolve_overlaps(positions: np.ndarray, radii: np.ndarray,
@@ -341,7 +333,7 @@ class SpatialViewQDock(QDockWidget):
         self.limit_images_value = 10
         self.limit_edges_enabled = False
         self.limit_edges_value = 10
-
+        self._use_full = True
 
         # fast‑similarity pre‑computes
         self._features_norm: np.ndarray | None = None
@@ -566,6 +558,8 @@ class SpatialViewQDock(QDockWidget):
         self._centroid_norm.clear(); self._centroid_sim.clear()
         self._image_umap = session.image_umap or {}
 
+
+
         # if not self._image_umap:
         #     for edge in edges:
         #         c = session.hyperedge_avg_features[edge].astype(np.float32)
@@ -768,13 +762,31 @@ class SpatialViewQDock(QDockWidget):
         # self.tooltip_manager.show(screen_pos, "".join(html_parts))
 
     def _show_image_tooltip(self, point, screen_pos: QPoint):
-        if self.session is None: return
+        if self.session is None:
+            return
         data = point.data()
-        if not data: return
+        if not data:
+            return
 
         idx = data[1]
-        fn = self.session.im_list[idx]
-        url = QUrl.fromLocalFile(fn).toString()
+        url: str
+        if not self._use_full and self.session.thumbnail_data:
+            if self.session.thumbnails_are_embedded:
+                thumb_bytes = self.session.thumbnail_data[idx]
+                img = qimage_from_data(thumb_bytes)
+                buf = QBuffer()
+                buf.open(QIODevice.WriteOnly)
+                img.save(buf, "PNG")
+                b64 = base64.b64encode(bytes(buf.data())).decode("ascii")
+                url = f"data:image/png;base64,{b64}"
+                buf.close()
+            else:
+                tpath = Path(self.session.h5_path).parent / self.session.thumbnail_data[idx]
+                url = QUrl.fromLocalFile(str(tpath)).toString()
+        else:
+            fn = self.session.im_list[idx]
+            url = QUrl.fromLocalFile(fn).toString()
+
         html = f'<img src="{url}" width="{THUMB_SIZE}" height="{THUMB_SIZE}">'
         self.tooltip_manager.show(screen_pos, html)
 

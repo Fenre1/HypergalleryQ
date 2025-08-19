@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Dict, List, Iterable
-
+from pathlib import Path
 from PyQt5.QtWidgets import (
     QDockWidget,
     QListWidget,
@@ -10,14 +10,26 @@ from PyQt5.QtWidgets import (
     QStyleOptionViewItem,
     QStyle,
 )
-from PyQt5.QtGui import QPixmap, QColor, QPainter, QFontMetrics, QPalette, QPen
+from PyQt5.QtGui import (
+    QPixmap,
+    QColor,
+    QPainter,
+    QFontMetrics,
+    QPalette,
+    QPen,
+)
 from PyQt5.QtCore import Qt, QModelIndex, QSize
 from functools import lru_cache
 import time
 from .session_model import SessionModel
 from .selection_bus import SelectionBus
 from .image_grid import ImageGridDock
-from .image_utils import pixmap_from_file
+from .image_utils import (
+    pixmap_from_file,
+    qimage_from_data,
+    qimage_from_file,
+    load_thumbnail,
+)
 
 NAME_ROLE = Qt.UserRole
 IMAGES_ROLE = Qt.UserRole + 1
@@ -25,24 +37,53 @@ COUNT_ROLE = Qt.UserRole + 2
 
 
 @lru_cache(maxsize=1024)
-def _scaled_thumb(path: str, size: int) -> QPixmap:
-    pix = pixmap_from_file(path)
-    if pix.isNull():
-        return QPixmap()
-    return pix.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-
+def _scaled_full(path: str, size: int) -> QPixmap:
+    """Load and scale a full image from *path*."""
+    return load_thumbnail(path, size, size)
 
 class _OverlapDelegate(QStyledItemDelegate):
     """Paint hyperedge name with small thumbnails."""
 
-    def __init__(self, session: SessionModel | None, thumb: int, parent=None):
+    def __init__(
+        self,
+        session: SessionModel | None,
+        thumb: int,
+        parent=None,
+        use_full_images: bool = True,
+    ):
         super().__init__(parent)
         self._session = session
         self._thumb = thumb
         self._margin = 2
+        self._use_full = use_full_images
 
     def set_session(self, session: SessionModel | None) -> None:
         self._session = session
+
+    def set_use_full_images(self, flag: bool) -> None:
+        self._use_full = flag
+        _scaled_full.cache_clear()
+
+    def _pix_for_index(self, idx: int) -> QPixmap:
+        if self._session is None:
+            return QPixmap()
+        if not self._use_full and self._session.thumbnail_data:
+            if self._session.thumbnails_are_embedded:
+                data = self._session.thumbnail_data[idx]
+                img = qimage_from_data(data)
+                pix = QPixmap.fromImage(img)
+            else:
+                tpath = Path(self._session.h5_path).parent / self._session.thumbnail_data[idx]
+                pix = load_thumbnail(str(tpath), self._thumb, self._thumb)
+                return pix
+            return pix.scaled(
+                self._thumb,
+                self._thumb,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+        path = self._session.im_list[idx]
+        return _scaled_full(path, self._thumb)
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:  # type: ignore[override]
         painter.save()
@@ -76,8 +117,7 @@ class _OverlapDelegate(QStyledItemDelegate):
                 if idx is None:
                     x += self._thumb + self._margin
                     continue
-                path = self._session.im_list[idx]
-                pix = _scaled_thumb(path, self._thumb)
+                pix = self._pix_for_index(idx)
                 top = option.rect.top() + (option.rect.height() - pix.height()) // 2
                 painter.drawPixmap(x, top, pix)
                 x += self._thumb + self._margin
@@ -120,12 +160,17 @@ class OverlapListDock(QDockWidget):
         self.setWidget(self.list_widget)
 
         self.bus.imagesChanged.connect(self._on_images_changed)
+        self._use_full = True
 
-    # ------------------------------------------------------------------
     def set_model(self, session: SessionModel | None):
         self.session = session
         self.delegate.set_session(session)
         self.list_widget.clear()
+
+    def set_use_full_images(self, flag: bool) -> None:
+        self._use_full = flag
+        self.delegate.set_use_full_images(flag)
+        self.list_widget.viewport().update()
 
     def _on_images_changed(self, idxs: List[int]):
         if self.session is None:
@@ -133,9 +178,8 @@ class OverlapListDock(QDockWidget):
             return
         self._update_list(idxs)
 
-    # ------------------------------------------------------------------
+
     def _update_list(self, idxs: Iterable[int]):
-        start_timer17 = time.perf_counter()
         self.list_widget.clear()
         indices = set(idxs)
         if not indices:
@@ -161,7 +205,6 @@ class OverlapListDock(QDockWidget):
             self.list_widget.addItem(item)
 
         self._last_indices = indices
-        print('_update_list',time.perf_counter() - start_timer17)
     # ------------------------------------------------------------------
     def _on_double_clicked(self, item: QListWidgetItem):
         name = item.data(NAME_ROLE)
