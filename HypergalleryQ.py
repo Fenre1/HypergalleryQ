@@ -11,7 +11,8 @@ from pathlib import Path
 import io
 import torch
 import hashlib
-
+from natsort import natsorted, natsort_keygen
+_nat_key = natsort_keygen()
 from PIL import Image, ImageGrab, ImageOps
 import time
 import pyqtgraph as pg
@@ -125,7 +126,7 @@ class _MultiSelectDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Select Hyperedges")
         self.list = QListWidget()
-        self.list.addItems(items)
+        self.list.addItems(natsorted(items))
         self.list.setSelectionMode(QAbstractItemView.MultiSelection)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -153,7 +154,7 @@ class HyperedgeSelectDialog(QDialog):
         layout.addWidget(self.filter_edit)
 
         self.list_widget = QListWidget(self)
-        self.list_widget.addItems(names)
+        self.list_widget.addItems(natsorted(names))
         self.list_widget.setSelectionMode(QListWidget.SingleSelection)
         layout.addWidget(self.list_widget)
 
@@ -314,9 +315,14 @@ class TreeFilterProxyModel(QSortFilterProxyModel):
             if self.filterAcceptsRow(r, index):
                 return True
         return False
+   
+    def lessThan(self, left, right):
+        if left.column() == 0:
+            l = self.sourceModel().data(left, Qt.DisplayRole)
+            r = self.sourceModel().data(right, Qt.DisplayRole)
+            return _nat_key(l) < _nat_key(r)
+        return super().lessThan(left, right)
 
-
-# ---------- Qt helpers -----------------------------------------------------
 def _make_item(text: str = "", value=None, editable: bool = False):
     it = QStandardItem(text)
     it.setData(value, Qt.UserRole)
@@ -697,6 +703,12 @@ class MainWin(QMainWindow):
         hyperedge_layout.addWidget(self.btn_del_img, 1, 1)
         hyperedge_layout.addWidget(self.btn_manage_visibility, 2, 0, 1, 2)
         hyperedge_group.setLayout(hyperedge_layout)
+        hyperedge_group.setStyleSheet("""
+            QGroupBox { font: bold 10pt;}
+            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 6px; }
+            QPushButton { background-color: lightblue; }
+        """)
+
 
         query_group = QGroupBox("Query")
         query_layout = QGridLayout()
@@ -707,6 +719,12 @@ class MainWin(QMainWindow):
         query_layout.addWidget(self.text_query, 2, 0, 1, 2)
         query_layout.addWidget(self.btn_rank_text, 3, 0, 1, 2)
         query_group.setLayout(query_layout)
+        query_group.setStyleSheet("""
+            QGroupBox { font: bold 10pt;}
+            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 6px; }
+            QPushButton { background-color: papayawhip; }
+        """)
+
 
         color_group = QGroupBox("Colorize")
         color_layout = QGridLayout()
@@ -715,6 +733,12 @@ class MainWin(QMainWindow):
         color_layout.addWidget(self.btn_color_origin, 1, 0)
         color_layout.addWidget(self.btn_color_similarity, 1, 1)
         color_group.setLayout(color_layout)
+        color_group.setStyleSheet("""
+            QGroupBox { font: bold 10pt;}
+            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 6px; }
+            QPushButton { background-color: thistle; }
+        """)
+
 
         overview_group = QGroupBox("Overview")
         overview_layout = QGridLayout()
@@ -723,11 +747,20 @@ class MainWin(QMainWindow):
         overview_layout.addWidget(self.btn_meta_overview, 1, 1)
         overview_layout.addWidget(self.btn_session_stats, 2, 0, 1, 2)
         overview_group.setLayout(overview_layout)
+        overview_group.setStyleSheet("""
+            QGroupBox { font: bold 10pt;}
+            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 6px; }
+            QPushButton { background-color: honeydew; }
+        """)
 
         options_group = QGroupBox("Options")
         options_layout = QVBoxLayout()
         options_layout.addWidget(lim_img_w)
         options_layout.addWidget(lim_edge_w)
+        options_group.setStyleSheet("""
+            QGroupBox { font: bold 10pt;}
+            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 6px; }
+        """)
 
 
         self.image_grid = ImageGridDock(self.bus, self)
@@ -889,7 +922,7 @@ class MainWin(QMainWindow):
         model = self.image_grid.view.model()
         img_idxs = [model._indexes[i.row()] for i in sel_indexes]
 
-        possible_edges = sorted(
+        possible_edges = natsorted(
             {e for idx in img_idxs for e in self.model.image_mapping.get(idx, set())}
         )
         if not possible_edges:
@@ -1144,7 +1177,6 @@ class MainWin(QMainWindow):
             self.spatial_dock._update_image_layer()
         self._skip_next_layout = False
 
-    # ------------------------------------------------------------------
 
 
     def add_selection_to_hyperedge(self):
@@ -1161,7 +1193,7 @@ class MainWin(QMainWindow):
 
         img_idxs = [model._indexes[i.row()] for i in sel]
 
-        dialog = HyperedgeSelectDialog(list(self.model.hyperedges), self)
+        dialog = HyperedgeSelectDialog(natsorted(self.model.hyperedges), self)
         if dialog.exec_() != QDialog.Accepted:
             return
         name = dialog.selected_name()
@@ -1732,7 +1764,7 @@ class MainWin(QMainWindow):
         if not self.model:
             return
 
-        names = sorted(self.model.hyperedges)
+        names = natsorted(self.model.hyperedges)
         dialog = _MultiSelectDialog(names, self)
         hidden = self.spatial_dock.hidden_edges
         for i in range(dialog.list.count()):
@@ -1848,6 +1880,7 @@ class MainWin(QMainWindow):
         model.itemChanged.connect(self._on_item_changed)
         self.tree_proxy.setSourceModel(model)
         self.tree.setModel(self.tree_proxy)
+        self.tree.sortByColumn(0, Qt.AscendingOrder)
         self.tree.selectionModel().selectionChanged.connect(self.tree._send_bus_update)
         self.tree.collapseAll()
 

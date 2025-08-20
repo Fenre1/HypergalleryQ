@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Dict, List, Tuple
 from pathlib import Path
+from natsort import natsorted
 from PyQt5.QtCore import (
     Qt,
     QAbstractTableModel,
@@ -74,7 +75,6 @@ class TooltipManager:
 # Helper functions
 # ──────────────────────────────────────────────────────────────────────
 def f1_colour(score: float, max_score: float) -> QColor:
-    """Convert similarity score → heat‑map colour (dark‑grey→red)."""
     if max_score == 0:
         return QColor("#555555")
     start = (0x55, 0x55, 0x55)
@@ -86,11 +86,6 @@ def f1_colour(score: float, max_score: float) -> QColor:
     return QColor(r, g, b)
 
 class HyperedgeHeaderView(QHeaderView):
-    """
-    Paints the header section as:
-      - Horizontal header: image on top, wrapped name below.
-      - Vertical header:   image on left, wrapped name on right.
-    """
 
     _MIN_FONT_SIZE = 5.0   # Minimum font size in points
     _MAX_FONT_SIZE = 12.0  # Maximum font size
@@ -214,10 +209,6 @@ class HyperedgeHeaderView(QHeaderView):
 
 
 
-
-# ──────────────────────────────────────────────────────────────────────
-# QAbstractTableModel implementation
-# ──────────────────────────────────────────────────────────────────────
 class HyperedgeMatrixModel(QAbstractTableModel):
 
     def __init__(
@@ -231,19 +222,17 @@ class HyperedgeMatrixModel(QAbstractTableModel):
         self._session = session
         self._thumb_size = thumb_size
         self._use_full = use_full_images
-        self._edges: List[str] = list(session.hyperedges.keys()) if session else []
+        self._edges: List[str] = natsorted(session.hyperedges.keys()) if session else []
         self._overlap: List[List[int]] = []
         self._scores: List[List[float]] = []
         self._max_score: float = 0.0
         if session:
             self._build_matrix()
 
-    # ------------------------------------------------------------------
-    # Public helpers ----------------------------------------------------
     def set_session(self, session: SessionModel | None):
         self.beginResetModel()
         self._session = session
-        self._edges = list(session.hyperedges.keys()) if session else []
+        self._edges = natsorted(session.hyperedges.keys()) if session else []
         self._overlap.clear()
         self._scores.clear()
         self._max_score = 0.0
@@ -295,7 +284,7 @@ class HyperedgeMatrixModel(QAbstractTableModel):
             return None
         name = self._edges[section]
 
-        if role == Qt.DisplayRole:                          # ### NEW (show names)
+        if role == Qt.DisplayRole:                          
             return name
 
         if role == Qt.ToolTipRole:
@@ -369,9 +358,6 @@ class HyperedgeMatrixModel(QAbstractTableModel):
                     self._max_score = score
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Dock widget with zoom support
-# ──────────────────────────────────────────────────────────────────────
 class HyperedgeMatrixDock(QDockWidget):
     """Dock widget that shows the overlap matrix with zooming capability."""
 
@@ -440,18 +426,17 @@ class HyperedgeMatrixDock(QDockWidget):
         QShortcut(QKeySequence.ZoomOut, self, self.zoom_out)
         QShortcut(QKeySequence("Ctrl+0"), self, self.zoom_reset)
 
-        # --- Ctrl+Wheel event filter ----------------------------------
         self._view.viewport().installEventFilter(self)
         self._view.viewport().setMouseTracking(True)
 
         self.tooltip_manager = TooltipManager(self._view)
-        self._tooltip_timer = QTimer(self)                 # ### NEW
+        self._tooltip_timer = QTimer(self)                 
         self._tooltip_timer.setSingleShot(True)
-        self._tooltip_timer.setInterval(500)               # 0.5s debounce
+        self._tooltip_timer.setInterval(500)               
         self._tooltip_timer.timeout.connect(self._show_pending_tooltip)
         self._pending_index = QModelIndex()
         self._pending_pos = QPoint()
-        self._tooltip_html_cache: Dict[Tuple[str, str, int], str] = {}  # ### NEW
+        self._tooltip_html_cache: Dict[Tuple[str, str, int], str] = {}  
 
 
 

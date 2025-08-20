@@ -1,7 +1,6 @@
 import torch
 import datetime
 import time
-from torch.utils.tensorboard import SummaryWriter
 from clustering.augs import IMAGE_AUGMENTATIONS, EMBED_AUGMENTATIONS, AugWrapper
 import clustering.utils as utils
 import torch.backends.cudnn as cudnn
