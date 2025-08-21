@@ -695,6 +695,18 @@ class MainWin(QMainWindow):
         lim_edge_row = QHBoxLayout(); lim_edge_row.addWidget(self.limit_edges_cb); lim_edge_row.addWidget(self.limit_edges_edit)
         lim_edge_w = QWidget(); lim_edge_row.setContentsMargins(0,0,0,0); lim_img_row.setContentsMargins(0,0,0,0); lim_edge_w.setLayout(lim_edge_row)
 
+        def group_stylesheet(light_color: str) -> str:
+            base = (
+                "QGroupBox { font: bold 10pt;}"
+                "QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 6px; }"
+            )
+            if SYSTEM_DARK_MODE:
+                muted = QColor(light_color).darker(400).name()
+                base += f"QPushButton {{ background-color: {muted}; color: white; }}"
+            else:
+                base += f"QPushButton {{ background-color: {light_color}; }}"
+            return base
+
         hyperedge_group = QGroupBox("Hyperedges")
         hyperedge_layout = QGridLayout()
         hyperedge_layout.addWidget(self.btn_add_hyperedge, 0, 0)
@@ -703,12 +715,12 @@ class MainWin(QMainWindow):
         hyperedge_layout.addWidget(self.btn_del_img, 1, 1)
         hyperedge_layout.addWidget(self.btn_manage_visibility, 2, 0, 1, 2)
         hyperedge_group.setLayout(hyperedge_layout)
-        hyperedge_group.setStyleSheet("""
-            QGroupBox { font: bold 10pt;}
-            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 6px; }
-            QPushButton { background-color: lightblue; }
-        """)
-
+        # hyperedge_group.setStyleSheet("""
+        #     QGroupBox { font: bold 10pt;}
+        #     QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 6px; }
+        #     QPushButton { background-color: lightblue; }
+        # """)
+        hyperedge_group.setStyleSheet(group_stylesheet("lightblue"))
 
         query_group = QGroupBox("Query")
         query_layout = QGridLayout()
@@ -719,12 +731,12 @@ class MainWin(QMainWindow):
         query_layout.addWidget(self.text_query, 2, 0, 1, 2)
         query_layout.addWidget(self.btn_rank_text, 3, 0, 1, 2)
         query_group.setLayout(query_layout)
-        query_group.setStyleSheet("""
-            QGroupBox { font: bold 10pt;}
-            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 6px; }
-            QPushButton { background-color: papayawhip; }
-        """)
-
+        # query_group.setStyleSheet("""
+        #     QGroupBox { font: bold 10pt;}
+        #     QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 6px; }
+        #     QPushButton { background-color: papayawhip; }
+        # """)
+        query_group.setStyleSheet(group_stylesheet("papayawhip"))
 
         color_group = QGroupBox("Colorize")
         color_layout = QGridLayout()
@@ -733,12 +745,12 @@ class MainWin(QMainWindow):
         color_layout.addWidget(self.btn_color_origin, 1, 0)
         color_layout.addWidget(self.btn_color_similarity, 1, 1)
         color_group.setLayout(color_layout)
-        color_group.setStyleSheet("""
-            QGroupBox { font: bold 10pt;}
-            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 6px; }
-            QPushButton { background-color: thistle; }
-        """)
-
+        # color_group.setStyleSheet("""
+        #     QGroupBox { font: bold 10pt;}
+        #     QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 6px; }
+        #     QPushButton { background-color: thistle; }
+        # """)
+        color_group.setStyleSheet(group_stylesheet("thistle"))
 
         overview_group = QGroupBox("Overview")
         overview_layout = QGridLayout()
@@ -747,11 +759,12 @@ class MainWin(QMainWindow):
         overview_layout.addWidget(self.btn_meta_overview, 1, 1)
         overview_layout.addWidget(self.btn_session_stats, 2, 0, 1, 2)
         overview_group.setLayout(overview_layout)
-        overview_group.setStyleSheet("""
-            QGroupBox { font: bold 10pt;}
-            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 6px; }
-            QPushButton { background-color: honeydew; }
-        """)
+        # overview_group.setStyleSheet("""
+        #     QGroupBox { font: bold 10pt;}
+        #     QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 6px; }
+        #     QPushButton { background-color: honeydew; }
+        # """)
+        overview_group.setStyleSheet(group_stylesheet("honeydew"))
 
         options_group = QGroupBox("Options")
         options_layout = QVBoxLayout()
