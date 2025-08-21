@@ -17,6 +17,7 @@ from .selection_bus import SelectionBus
 from .session_model import SessionModel
 from .similarity import SIM_METRIC
 from .image_popup import show_image_metadata
+from .history import ViewState
 from .image_utils import (
     qimage_from_file,
     qimage_from_data,
@@ -285,7 +286,8 @@ class ImageListModel(QAbstractListModel):
 class ImageGridDock(QDockWidget):
     """Dock widget that displays selected images or an overview of triplets."""
 
-    labelDoubleClicked = Signal(str)  # hyperedge name
+    labelDoubleClicked = Signal(str)
+    historyChanged = Signal()
     def __init__(self, bus: SelectionBus, parent=None, thumb_size: int = 128):
         super().__init__("Images", parent)
         self.bus = bus
@@ -294,6 +296,9 @@ class ImageGridDock(QDockWidget):
         self._selected_edges: list[str] = []
         self.use_full_images: bool = False
         self._current_indices: list[int] = []
+        self._history: list[ViewState] = []
+        self._history_index: int = -1
+        self._navigating = False
 
         self.view = QListView()
         self.view.setViewMode(QListView.IconMode)
@@ -372,9 +377,11 @@ class ImageGridDock(QDockWidget):
 
     def set_model(self, model: SessionModel):
         self.session = model
+        self._history.clear()
+        self._history_index = -1
+        self.historyChanged.emit()
         self.update_images([])
 
-    # ------------------------------------------------------------------
     def update_images(
         self,
         idxs: list[int],
@@ -387,6 +394,7 @@ class ImageGridDock(QDockWidget):
         if self.session is None:
             self.view.setModel(None)
             return
+        prev_indices = list(self._current_indices)        
         if self._mode == "overview":
             # switching back to normal grid mode
             self.show_grid()
@@ -450,7 +458,7 @@ class ImageGridDock(QDockWidget):
                 if hide_modified and hide_modified.isChecked():
                     continue
             filtered.append(idx)
-
+        changed = query or filtered != prev_indices
         self._current_indices = list(filtered)
         model = ImageListModel(
             self.session,
@@ -464,7 +472,60 @@ class ImageGridDock(QDockWidget):
         )
         self.view.setModel(model)
         self.view.selectionModel().selectionChanged.connect(self._on_selection_changed)
+        if not self._navigating and changed:
+            state = ViewState(
+                indices=list(self._current_indices),
+                highlight=highlight_map.copy() if highlight_map else None,
+                labels=list(labels) if labels is not None else None,
+                separators=set(separators) if separators is not None else None,
+                selected_edges=list(self._selected_edges),
+            )
+            self._history = self._history[: self._history_index + 1]
+            self._history.append(state)
+            self._history_index = len(self._history) - 1
+            self.historyChanged.emit()
 
+    def can_go_back(self) -> bool:
+        return self._history_index > 0
+
+    def can_go_forward(self) -> bool:
+        return self._history_index < len(self._history) - 1
+
+    def go_back(self) -> None:
+        if not self.can_go_back():
+            return
+        self._history_index -= 1
+        state = self._history[self._history_index]
+        self._navigating = True
+        self._remember_edges(state.selected_edges)
+        self.update_images(
+            state.indices,
+            highlight=state.highlight,
+            sort=False,
+            query=False,
+            labels=state.labels,
+            separators=state.separators,
+        )
+        self._navigating = False
+        self.historyChanged.emit()
+
+    def go_forward(self) -> None:
+        if not self.can_go_forward():
+            return
+        self._history_index += 1
+        state = self._history[self._history_index]
+        self._navigating = True
+        self._remember_edges(state.selected_edges)
+        self.update_images(
+            state.indices,
+            highlight=state.highlight,
+            sort=False,
+            query=False,
+            labels=state.labels,
+            separators=state.separators,
+        )
+        self._navigating = False
+        self.historyChanged.emit()
     def _remember_edges(self, names: list[str]):
         self._selected_edges = names
         if len(names) == 1:

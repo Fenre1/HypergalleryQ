@@ -768,8 +768,27 @@ class MainWin(QMainWindow):
         options_layout.addWidget(self.image_grid.hide_selected_cb)
         options_layout.addWidget(self.image_grid.hide_modified_cb)
 
-
         options_group.setLayout(options_layout)
+
+        history_group = QGroupBox("Navigate")
+        history_layout = QHBoxLayout()
+        self.btn_back = QPushButton("Back")
+        self.btn_forward = QPushButton("Forward")
+        self.btn_back.clicked.connect(self.image_grid.go_back)
+        self.btn_forward.clicked.connect(self.image_grid.go_forward)
+        history_layout.addWidget(self.btn_back)
+        history_layout.addWidget(self.btn_forward)
+        history_group.setLayout(history_layout)
+
+        toolbar_layout.addWidget(hyperedge_group)
+        toolbar_layout.addWidget(query_group)
+        toolbar_layout.addWidget(color_group)
+        toolbar_layout.addWidget(overview_group)
+        toolbar_layout.addWidget(history_group)
+        toolbar_layout.addWidget(options_group)
+
+        self.image_grid.historyChanged.connect(self._update_nav_buttons)
+        self._update_nav_buttons()
 
         toolbar_layout.addWidget(hyperedge_group)
         toolbar_layout.addWidget(query_group)
@@ -1759,6 +1778,10 @@ class MainWin(QMainWindow):
             edge_val = 10
         self.spatial_dock.set_image_limit(self.limit_images_cb.isChecked(), img_val)
         self.spatial_dock.set_intersection_limit(self.limit_edges_cb.isChecked(), edge_val)
+
+    def _update_nav_buttons(self):
+        self.btn_back.setEnabled(self.image_grid.can_go_back())
+        self.btn_forward.setEnabled(self.image_grid.can_go_forward())
 
     def choose_hidden_edges(self):
         if not self.model:
