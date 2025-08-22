@@ -585,6 +585,7 @@ class MainWin(QMainWindow):
         self.bus.edgesChanged.connect(self._update_bus_images)
         #self.bus.edgesChanged.connect(print)
         self.bus.edgesChanged.connect(self._remember_last_edge)
+        self.bus.edgesChanged.connect(self._record_seen_time)
 
         self._last_edge = None
         self._similarity_ref = None
@@ -678,7 +679,10 @@ class MainWin(QMainWindow):
 
         self.btn_color_similarity = QPushButton("Similarity")
         self.btn_color_similarity.clicked.connect(self.color_edges_by_similarity)
-
+        
+        self.btn_color_seen = QPushButton("Seen")
+        self.btn_color_seen.clicked.connect(self.color_edges_by_seen_time)
+        
         self.btn_session_stats = QPushButton("Session stats")
         self.btn_session_stats.clicked.connect(self.show_session_stats)
 
@@ -744,6 +748,7 @@ class MainWin(QMainWindow):
         color_layout.addWidget(self.btn_color_status, 0, 1)
         color_layout.addWidget(self.btn_color_origin, 1, 0)
         color_layout.addWidget(self.btn_color_similarity, 1, 1)
+        color_layout.addWidget(self.btn_color_seen, 2, 0, 1, 2)
         color_group.setLayout(color_layout)
         # color_group.setStyleSheet("""
         #     QGroupBox { font: bold 10pt;}
@@ -1661,6 +1666,7 @@ class MainWin(QMainWindow):
             places365_features=plc_feats,
             thumbnail_data=self.model.thumbnail_data,
             thumbnails_are_embedded=self.model.thumbnails_are_embedded,
+            edge_last_seen=list(self.model.edge_seen_times.get(n, 0.0) for n in self.model.cat_list),            
             metadata=self.model.metadata,
         )
 
@@ -1766,6 +1772,15 @@ class MainWin(QMainWindow):
     def _remember_last_edge(self, names: list[str]):
         if names:
             self._last_edge = names[0]
+    
+    def _record_seen_time(self, names: list[str]):
+        if not self.model:
+            return
+        now = time.time()
+        epsilon = 1e-6
+        for i, name in enumerate(names):
+            if name in getattr(self.model, "edge_seen_times", {}):
+                self.model.edge_seen_times[name] = now + i * epsilon
 
     def _show_legend(self, mapping: dict[str, str]):
         while self.legend_layout.count():
@@ -1791,6 +1806,40 @@ class MainWin(QMainWindow):
             edge_val = 10
         self.spatial_dock.set_image_limit(self.limit_images_cb.isChecked(), img_val)
         self.spatial_dock.set_intersection_limit(self.limit_edges_cb.isChecked(), edge_val)
+
+    def color_edges_by_seen_time(self):
+        """Color hyperedges based on when they were last seen."""
+        if not self.model:
+            return
+        times = getattr(self.model, "edge_seen_times", {})
+        if not times:
+            return
+        positive = [t for t in times.values() if t > 0]
+        if not positive:
+            mapping = {name: "#000000" for name in self.model.hyperedges}
+        else:
+            min_t = min(positive)
+            max_t = max(positive)
+            if min_t == max_t:
+                mapping = {
+                    name: ("#FF00FF" if times.get(name, 0) > 0 else "#000000")
+                    for name in self.model.hyperedges
+                }
+            else:
+                denom = max_t - min_t
+                mapping = {}
+                for name in self.model.hyperedges:
+                    t = times.get(name, 0.0)
+                    if t <= 0 or t <= min_t:
+                        col = "#000000"
+                    else:
+                        norm = (t - min_t) / denom
+                        value = 0.2 + 0.8 * norm
+                        col = QColor.fromHsvF(300 / 360, 1.0, value).name()
+                    mapping[name] = col
+        self.spatial_dock.update_colors(mapping)
+        self.spatial_dock.hide_legend()
+        self._hide_legend()
 
     def _update_nav_buttons(self):
         self.btn_back.setEnabled(self.image_grid.can_go_back())

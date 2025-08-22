@@ -560,41 +560,7 @@ class SpatialViewQDock(QDockWidget):
 
 
 
-        # if not self._image_umap:
-        #     for edge in edges:
-        #         c = session.hyperedge_avg_features[edge].astype(np.float32)
-        #         c /= max(np.linalg.norm(c), 1e-9)
-        #         self._centroid_norm[edge] = c
-        #         idx = list(session.hyperedges[edge])
-        #         self._centroid_sim[edge] = self._features_norm[idx] @ c if idx else np.array([])
 
-        #         if len(idx) >= 3:
-        #             neigh = min(15, len(idx) - 1)
-        #             emb = umap.UMAP(
-        #                 n_components=2,
-        #                 random_state=42,
-        #                 n_neighbors=neigh,
-        #             ).fit_transform(self._features_norm[idx])
-        #             emb = emb - emb.mean(axis=0)
-        #             m = np.max(np.linalg.norm(emb, axis=1))
-        #             if m > 0:
-        #                 emb = emb / m
-        #             self._image_umap[edge] = {i: emb[k] for k, i in enumerate(idx)}
-        #         elif len(idx) == 2:
-        #             emb = np.array([[-1.0, 0.0], [1.0, 0.0]], dtype=np.float32)
-        #             self._image_umap[edge] = {i: emb[k] for k, i in enumerate(idx)}
-        #         elif len(idx) == 1:
-        #             self._image_umap[edge] = {idx[0]: np.zeros(2)}
-        #         else:
-        #             self._image_umap[edge] = {}
-        #     session.image_umap = self._image_umap
-        # else:
-        #     for edge in edges:
-        #         c = session.hyperedge_avg_features[edge].astype(np.float32)
-        #         c /= max(np.linalg.norm(c), 1e-9); self._centroid_norm[edge] = c
-        #         idx = list(session.hyperedges[edge])
-        #         self._centroid_sim[edge] = self._features_norm[idx] @ c if idx else np.array([])
-        start_time = time.perf_counter()
         if not self._image_umap:
             # Precompute global PCA → UMAP if not already done
             if not hasattr(session, "features_pca"):

@@ -1,5 +1,4 @@
-# session_model.py
-from __future__ import annotations  # for -> SessionModel typing
+from __future__ import annotations  
 import uuid
 import numpy as np
 import pandas as pd
@@ -106,6 +105,8 @@ class SessionModel(QObject):
                     meta_json = meta_json.decode("utf-8")
                 metadata_df = pd.read_json(meta_json, orient="table")
 
+            seen_raw = hdf["edge_seen_times"][()] if "edge_seen_times" in hdf else None
+
         return cls(
             im_list,
             df_edges,
@@ -118,6 +119,7 @@ class SessionModel(QObject):
             thumbnail_data=thumbnail_data,
             thumbnails_are_embedded=thumbnails_embedded,
             edge_origins=edge_orig,
+            edge_last_seen=seen_raw,            
             metadata=metadata_df,
         )
 
@@ -153,6 +155,13 @@ class SessionModel(QObject):
                 dtype=dt,
             )
             print('saved edge origins')
+
+            hdf.create_dataset(
+                "edge_seen_times",
+                data=np.array([self.edge_seen_times.get(n, 0.0) for n in self.cat_list], dtype="f8"),
+                dtype="f8",
+            )
+            print('saved edge seen times')
 
             hdf.create_dataset("features", data=self.features, dtype="f4")
             print('saved features')
@@ -228,6 +237,7 @@ class SessionModel(QObject):
                  thumbnail_data: Optional[List[bytes] | List[str]] = None,
                  thumbnails_are_embedded: bool = True,
                  edge_origins: Optional[List[str]] | None = None,
+                 edge_last_seen: Optional[List[float]] | None = None,                 
                  metadata: pd.DataFrame | None = None):
         super().__init__()
         self.im_list  = im_list                              # list[str]
@@ -247,16 +257,18 @@ class SessionModel(QObject):
 
         self.edge_origins = edge_origins or {name: "swin" for name in self.cat_list}
 
-                # Collect EXIF metadata for all images
         self.metadata = metadata if metadata is not None else self._extract_image_metadata(im_list)
-        
+
         self.status_map = {n: {"uuid": str(uuid.uuid4()), "status": "Original"}
                            for n in self.cat_list}
-        # cmap_hues = max(len(self.cat_list), 16)
-        # self.edge_colors = {
-        #     name: pg.mkColor(pg.intColor(i, hues=cmap_hues)).name()
-        #     for i, name in enumerate(self.cat_list)
-        # }
+        self.edge_seen_times = {
+            name: (edge_last_seen[i] if edge_last_seen is not None and i < len(edge_last_seen) else 0.0)
+            for i, name in enumerate(self.cat_list)
+        }
+
+        self.status_map = {n: {"uuid": str(uuid.uuid4()), "status": "Original"}
+                           for n in self.cat_list}
+
         colors = generate_n_colors(len(self.cat_list))
         self.edge_colors = {
             name: colors[i % len(colors)]
@@ -273,7 +285,6 @@ class SessionModel(QObject):
         self.thumbnail_data: Optional[List[bytes] | List[str]] = thumbnail_data
         self.thumbnails_are_embedded: bool = thumbnails_are_embedded
 
-        # overview triplets cache -------------------------------------------------
         self.overview_triplets: Dict[str, tuple[int | None, ...]] | None = None
         self.compute_overview_triplets()
 
@@ -397,6 +408,8 @@ class SessionModel(QObject):
             self.edge_origins[new] = self.edge_origins.pop(old)
         if old in self.edge_colors:
             self.edge_colors[new] = self.edge_colors.pop(old)
+        if old in self.edge_seen_times:
+            self.edge_seen_times[new] = self.edge_seen_times.pop(old)            
         for imgs in self.image_mapping.values():
             if old in imgs:
                 imgs.remove(old)
@@ -436,7 +449,7 @@ class SessionModel(QObject):
         idx = len(self.edge_colors)
         cmap_hues = max(idx + 1, 16)
         self.edge_colors[name] = pg.mkColor(pg.intColor(idx, hues=cmap_hues)).name()
-
+        self.edge_seen_times[name] = 0.0
         # 6. Signal to the UI that the overall layout has changed
         self.overview_triplets = None
         self.layoutChanged.emit()
@@ -516,6 +529,7 @@ class SessionModel(QObject):
         self.status_map.pop(name, None)
         self.edge_origins.pop(name, None)
         self.edge_colors.pop(name, None)
+        self.edge_seen_times.pop(name, None)        
         if getattr(self, "image_umap", None):
             self.image_umap.pop(name, None)
 
@@ -531,6 +545,7 @@ class SessionModel(QObject):
             # self.edge_colors[orphan_name] = pg.mkColor(pg.intColor(len(self.edge_colors), hues=cmap_hues)).name()
             self.edge_colors[orphan_name] = generate_n_colors(len(self.edge_colors) + 1)[-1]
             self.edge_origins[orphan_name] = "system"
+            self.edge_seen_times[orphan_name] = 0.0
 
         for idx in members:
             if idx in self.image_mapping:
@@ -697,6 +712,7 @@ class SessionModel(QObject):
         # }
         colors = generate_n_colors(len(self.cat_list))
         self.edge_colors = {name: colors[i % len(colors)] for i, name in enumerate(self.cat_list)}
+        self.edge_seen_times = {name: 0.0 for name in self.cat_list}
 
         self.overview_triplets = None
         self.layoutChanged.emit()
@@ -737,7 +753,9 @@ class SessionModel(QObject):
             # ).name()
             self.edge_colors[name] = color_list[start_idx + i]
             self.edge_origins[name] = origin
+            self.edge_seen_times[name] = 0.0
 
+            
         self.overview_triplets = None
         self.layoutChanged.emit()
         self.similarityDirty.emit()
