@@ -479,6 +479,7 @@ class ImageGridDock(QDockWidget):
                 labels=list(labels) if labels is not None else None,
                 separators=set(separators) if separators is not None else None,
                 selected_edges=list(self._selected_edges),
+                is_overview=False,
             )
             self._history = self._history[: self._history_index + 1]
             self._history.append(state)
@@ -498,14 +499,20 @@ class ImageGridDock(QDockWidget):
         state = self._history[self._history_index]
         self._navigating = True
         self._remember_edges(state.selected_edges)
-        self.update_images(
-            state.indices,
-            highlight=state.highlight,
-            sort=False,
-            query=False,
-            labels=state.labels,
-            separators=state.separators,
-        )
+        if getattr(state, "is_overview", False):
+            if self._overview_widget is not None:
+                self._mode = "overview"
+                self._current_indices = []
+                self._stack.setCurrentWidget(self._overview_widget)
+        else:
+            self.update_images(
+                state.indices,
+                highlight=state.highlight,
+                sort=False,
+                query=False,
+                labels=state.labels,
+                separators=state.separators,
+            )
         self._navigating = False
         self.historyChanged.emit()
 
@@ -516,16 +523,24 @@ class ImageGridDock(QDockWidget):
         state = self._history[self._history_index]
         self._navigating = True
         self._remember_edges(state.selected_edges)
-        self.update_images(
-            state.indices,
-            highlight=state.highlight,
-            sort=False,
-            query=False,
-            labels=state.labels,
-            separators=state.separators,
-        )
+        if getattr(state, "is_overview", False):
+            if self._overview_widget is not None:
+                self._mode = "overview"
+                self._current_indices = []
+                self._stack.setCurrentWidget(self._overview_widget)
+        else:
+            self.update_images(
+                state.indices,
+                highlight=state.highlight,
+                sort=False,
+                query=False,
+                labels=state.labels,
+                separators=state.separators,
+            )
         self._navigating = False
         self.historyChanged.emit()
+
+            
     def _remember_edges(self, names: list[str]):
         self._selected_edges = names
         if len(names) == 1:
@@ -673,6 +688,7 @@ class ImageGridDock(QDockWidget):
         """Display an overview of 6-image sets for each hyperedge."""
         self.session = session
         self._mode = "overview"
+        self._current_indices = []
 
         key = self._overview_key_for(triplets, session)
         if self._overview_widget is not None and self._overview_key == key:
@@ -755,6 +771,22 @@ class ImageGridDock(QDockWidget):
         self._overview_key = key
         self._stack.setCurrentWidget(scroll)
         
+        if not self._navigating:
+            state = ViewState(
+                indices=list(self._current_indices),
+                highlight=None,
+                labels=None,
+                separators=None,
+                selected_edges=list(self._selected_edges),
+                is_overview=True,
+            )
+            self._history = self._history[: self._history_index + 1]
+            self._history.append(state)
+            self._history_index = len(self._history) - 1
+            self.historyChanged.emit()
+
+
+
     def show_grid(self):
         if self._mode != "grid":
             self._mode = "grid"

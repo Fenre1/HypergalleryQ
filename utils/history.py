@@ -11,3 +11,4 @@ class ViewState:
     labels: list[str] | None
     separators: set[int] | None
     selected_edges: list[str]
+    is_overview: bool = False

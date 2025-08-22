@@ -442,6 +442,7 @@ class SpatialViewQDock(QDockWidget):
     def hide_legend(self):
         self.legend.hide()
 
+    
     def set_edge_visible(self, name: str, visible: bool) -> None:
         """Toggle visibility of a single hyperedge item."""
         if visible:
@@ -452,14 +453,20 @@ class SpatialViewQDock(QDockWidget):
             self.hidden_edges.add(name)
         if name in self.hyperedgeItems:
             self.hyperedgeItems[name].setVisible(visible)
+        self._selected_nodes = {
+            k for k in self._selected_nodes if k[0] not in self.hidden_edges
+        }
         self._update_mini_scatter(); self._update_minimap_view()
         if changed:
-            # Cached radial layouts may reference now-hidden edges
             self._radial_cache_by_edge.clear()
-            self._radial_layout_cache = None
+            # self._radial_layout_cache = None  # <<< REMOVE THIS LINE
             self._layout_version = (self._layout_version or 0) + 1
             self._update_image_layer()
+        self._update_selected_overlay()
 
+  
+
+        
     def set_hidden_edges(self, names: set[str]) -> None:
         """Replace the set of hidden hyperedges and refresh the view."""
         if names == self.hidden_edges:
@@ -467,11 +474,18 @@ class SpatialViewQDock(QDockWidget):
         self.hidden_edges = set(names)
         for n, it in self.hyperedgeItems.items():
             it.setVisible(n not in self.hidden_edges)
+        self._selected_nodes = {
+            k for k in self._selected_nodes if k[0] not in self.hidden_edges
+        }
         self._update_mini_scatter(); self._update_minimap_view()
         self._radial_cache_by_edge.clear()
-        self._radial_layout_cache = None
+        # self._radial_layout_cache = None  # <<< REMOVE THIS LINE
         self._layout_version = (self._layout_version or 0) + 1
         self._update_image_layer()
+        self._update_selected_overlay()
+
+  
+
 
 
     def set_image_limit(self, enabled: bool, value: int):
@@ -912,6 +926,12 @@ class SpatialViewQDock(QDockWidget):
 
 
         rel,links=self._radial_layout_cache
+        if self.hidden_edges:
+            rel = {k: off for k, off in rel.items() if k[0] not in self.hidden_edges}
+            links = [
+                (a, b) for (a, b) in links
+                if a[0] not in self.hidden_edges and b[0] not in self.hidden_edges
+            ]        
         k_list=list(rel.keys())
         if not k_list:
             self.image_scatter.setData([],[]); self.link_curve.setData([],[])
