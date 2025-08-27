@@ -248,7 +248,7 @@ class NewSessionDialog(QDialog):
 class ReconstructDialog(QDialog):
     """Dialog to set parameters for hypergraph reconstruction."""
 
-    def __init__(self, current_edges: int, parent=None):
+    def __init__(self, current_edges: int, has_openclip: bool, has_places: bool, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Reconstruct Hypergraph")
 
@@ -271,18 +271,29 @@ class ReconstructDialog(QDialog):
         self.jacc_edit = QLineEdit(str(JACCARD_PRUNE_DEFAULT))
         layout.addWidget(self.jacc_edit)
 
+        self.openclip_cb = QCheckBox("Include OpenCLIP features")
+        self.openclip_cb.setChecked(has_openclip)
+        self.openclip_cb.setEnabled(has_openclip)
+        layout.addWidget(self.openclip_cb)
+
+        self.places_cb = QCheckBox("Include Places365 features")
+        self.places_cb.setChecked(has_places)
+        self.places_cb.setEnabled(has_places)
+        layout.addWidget(self.places_cb)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def parameters(self) -> tuple[int, float, float]:
+    def parameters(self) -> tuple[int, float, float, bool, bool]:
         return (
             int(self.edge_edit.text()),
             float(self.thr_edit.text()),
             float(self.jacc_edit.text()),
+            self.openclip_cb.isChecked(),
+            self.places_cb.isChecked(),
         )
-
 
 
 class HyperEdgeTree(QTreeView):
@@ -1594,15 +1605,20 @@ class MainWin(QMainWindow):
             QMessageBox.warning(self, "No Session", "Please load a session first.")
             return
 
-        dlg = ReconstructDialog(len(self.model.cat_list), self)
+        dlg = ReconstructDialog(
+            len(self.model.cat_list),
+            self.model.openclip_features is not None,
+            self.model.places365_features is not None,
+            self,
+        )
         if dlg.exec_() != QDialog.Accepted:
             return
         try:
-            n_edges, thr, prune_thr = dlg.parameters()
+            n_edges, thr, prune_thr, use_openclip, use_places = dlg.parameters()
         except Exception:
             QMessageBox.warning(self, "Invalid Input", "Enter valid numbers.")
             return
-
+        
         app = QApplication.instance()
         if app:
             app.setOverrideCursor(Qt.WaitCursor)
@@ -1613,10 +1629,10 @@ class MainWin(QMainWindow):
 
             matrix, _ = temi_cluster(features, out_dim=n_edges, threshold=thr)
             oc_matrix = None
-            if oc_feats is not None:
+            if use_openclip and oc_feats is not None:
                 oc_matrix, _ = temi_cluster(oc_feats, out_dim=n_edges, threshold=thr)
             plc_matrix = None
-            if plc_feats is not None:
+            if use_places and plc_feats is not None:
                 plc_matrix, _ = temi_cluster(plc_feats, out_dim=n_edges, threshold=thr)
 
             empty_cols = np.where(matrix.sum(axis=0) == 0)[0]
@@ -1667,7 +1683,6 @@ class MainWin(QMainWindow):
             places365_features=plc_feats,
             thumbnail_data=self.model.thumbnail_data,
             thumbnails_are_embedded=self.model.thumbnails_are_embedded,
-            edge_last_seen=list(self.model.edge_seen_times.get(n, 0.0) for n in self.model.cat_list),            
             metadata=self.model.metadata,
         )
 
