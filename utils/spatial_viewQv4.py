@@ -1054,11 +1054,15 @@ class SpatialViewQDock(QDockWidget):
             vec = self._image_umap.get(sel_name, {}).get(idx, np.zeros(2))
             offsets[(sel_name, idx)] = vec * radius_map[sel_name]
 
-        inter_counts = {
-            e: len(session.hyperedges[e] & sel_full)
-            for e in session.hyperedges
-            if e != sel_name and e in layout.names and e not in self.hidden_edges
-                        }
+        inter_counts = {}
+        shared_sets = {}
+        for e in session.hyperedges:
+            if e == sel_name or e not in layout.names or e in self.hidden_edges:
+                continue
+            shared = session.hyperedges[e] & sel_full
+            if shared:
+                inter_counts[e] = len(shared)
+                shared_sets[e] = shared
 
         if self.limit_edges_enabled:
             top_edges = {
@@ -1067,8 +1071,10 @@ class SpatialViewQDock(QDockWidget):
         else:
             top_edges = set(inter_counts)
 
-        for tgt in inter_counts:
-            shared_full = session.hyperedges[tgt] & sel_full
+        for tgt, shared_full in shared_sets.items():
+            if self.limit_edges_enabled and tgt not in top_edges:
+                continue
+
             if self.limit_images_enabled:
                 shared = shared_full & sel_display
                 if not shared:
@@ -1083,13 +1089,13 @@ class SpatialViewQDock(QDockWidget):
                 offsets[(tgt, idx)] = vec * radius_map[tgt]
                 links.append(((sel_name, idx), (tgt, idx)))
 
-            if show_all:
-                extras = session.hyperedges[tgt] - shared_full
-                if self.limit_images_enabled:
-                    extras = list(extras)[: self.limit_images_value]
-                for idx in extras:
-                    vec = self._image_umap.get(tgt, {}).get(idx, np.zeros(2))
-                    offsets[(tgt, idx)] = vec * radius_map[tgt]
+            # if show_all:
+            #     extras = session.hyperedges[tgt] - shared_full
+            #     if self.limit_images_enabled:
+            #         extras = list(extras)[: self.limit_images_value]
+            #     for idx in extras:
+            #         vec = self._image_umap.get(tgt, {}).get(idx, np.zeros(2))
+            #         offsets[(tgt, idx)] = vec * radius_map[tgt]
 
         self._radial_cache_by_edge[sel_name] = (offsets, links)
         self._layout_version = (self._layout_version or 0) + 1

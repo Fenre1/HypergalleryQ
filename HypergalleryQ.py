@@ -117,6 +117,7 @@ STDDEV_COL = 5
 INTER_COL = 6
 DECIMALS = 3
 UNGROUPED = "Ungrouped"
+MAX_IMGS_ON_GRID = 1000
 QPixmapCache.setCacheLimit(512 * 1024)
 
 class _MultiSelectDialog(QDialog):
@@ -999,7 +1000,7 @@ class MainWin(QMainWindow):
         ref = feats[sel_idxs].mean(axis=0, keepdims=True)
         sims = SIM_METRIC(ref, feats)[0]
         ranked = np.argsort(sims)[::-1]
-        ranked = [i for i in ranked if i not in sel_idxs][:500]
+        ranked = [i for i in ranked if i not in sel_idxs][:MAX_IMGS_ON_GRID]
         final_idxs = sel_idxs + ranked
         self.image_grid.update_images(
             final_idxs, highlight=sel_idxs, sort=False, query=True
@@ -1032,7 +1033,7 @@ class MainWin(QMainWindow):
         sims = SIM_METRIC(ref.reshape(1, -1), feats)[0]
         ranked = np.argsort(sims)[::-1]
         exclude = self.model.hyperedges[name]
-        ranked = [i for i in ranked if i not in exclude][:500]
+        ranked = [i for i in ranked if i not in exclude][:MAX_IMGS_ON_GRID]
         self.image_grid.update_images(ranked, sort=False, query=True)
 
     def rank_image_file(self):
@@ -1059,7 +1060,7 @@ class MainWin(QMainWindow):
 
         feats = self.model.features
         sims = SIM_METRIC(vec.reshape(1, -1), feats)[0]
-        ranked = np.argsort(sims)[::-1][:500]
+        ranked = np.argsort(sims)[::-1][:MAX_IMGS_ON_GRID]
         self.image_grid.update_images(list(ranked), sort=False, query=True)
 
     def rank_clipboard_image(self):
@@ -1097,7 +1098,7 @@ class MainWin(QMainWindow):
 
         feats = self.model.features
         sims = SIM_METRIC(feat.reshape(1, -1), feats)[0]
-        ranked = np.argsort(sims)[::-1][:500]
+        ranked = np.argsort(sims)[::-1][:MAX_IMGS_ON_GRID]
         self.image_grid.update_images(ranked, sort=False, query=True)
 
 
@@ -1118,7 +1119,7 @@ class MainWin(QMainWindow):
         vec = self._openclip_extractor.encode_text([text])[0]
         feats = self.model.openclip_features
         sims = SIM_METRIC(vec.reshape(1, -1), feats)[0]
-        ranked = np.argsort(sims)[::-1][:500]
+        ranked = np.argsort(sims)[::-1][:MAX_IMGS_ON_GRID]
         self.image_grid.update_images(list(ranked), sort=False, query=True)
 
     def show_overview(self):
