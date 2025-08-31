@@ -406,6 +406,9 @@ class SpatialViewQDock(QDockWidget):
         
         self._animating_items = []
         self._anim_step_count = 0
+        self._edge_timer = QTimer(self)
+        self._edge_timer.setSingleShot(True)
+        self._edge_timer.timeout.connect(self._on_edges_deferred)
         # runtime
         self.session: SessionModel | None = None
         self.fa2_layout: SimpleNamespace | None = None
@@ -424,6 +427,7 @@ class SpatialViewQDock(QDockWidget):
         self._overview_triplets: dict[str, tuple[int | None, ...]] | None = None
 
         self._current_edge: str | None = None
+        self._pending_edge_names: list[str] = []        
 
         # limit settings
         self.limit_images_enabled = False
@@ -736,6 +740,7 @@ class SpatialViewQDock(QDockWidget):
     #     self._pos_minimap()
 
     def set_model(self, session: SessionModel | None):
+        startE = time.perf_counter()
         self._clear_scene()
         if self.session:
             try:
@@ -758,27 +763,18 @@ class SpatialViewQDock(QDockWidget):
         self.session.edgeRenamed.connect(self._on_edge_renamed)
         self.color_map = session.edge_colors.copy()
 
-        # --- START OF FIXES ---
-        
-        # 1. DEFINE `edges` HERE. This was the source of the NameError.
         edges = list(session.hyperedges)
 
-        # 2. Set a loading message and ask the worker to compute the layout.
         self.plot.setTitle("Calculating hypergraph layout...")
         self._worker.session = self.session
-        self.requestRecalc.emit("") # Empty string signals a full layout recompute
-
-        # The rest of this function is for pre-calculating things that
-        # don't depend on the final layout positions. This is fine to keep here.
+        self.requestRecalc.emit("") 
         self.hidden_edges.intersection_update(session.hyperedges.keys())
-
         self._features_norm = session.features_unit
         self._centroid_norm.clear()
         self._centroid_sim.clear()
         self._image_umap = session.image_umap or {}
 
         if not self._image_umap:
-            # Precompute global PCA → UMAP if not already done
             if not hasattr(session, "features_pca"):
                 pca = IncrementalPCA(n_components=64, batch_size=2048)
                 session.features_pca = pca.fit_transform(session.features.astype(np.float32))
@@ -818,10 +814,8 @@ class SpatialViewQDock(QDockWidget):
 
                 idx = list(session.hyperedges[edge])
                 self._centroid_sim[edge] = self._features_norm[idx] @ c if idx else np.array([])
+        print("E",time.perf_counter()-startE)
 
-    # ============================================================================ #
-    # Tooltip Logic (REFACTORED and CENTRALIZED)                                   #
-    # ============================================================================ #
 
     def _update_tooltip(self, event: QtGui.QGraphicsSceneMouseEvent):
         """
@@ -1300,7 +1294,8 @@ class SpatialViewQDock(QDockWidget):
     def _on_edges(self, names: list[str]):
 
         self._pending_edge_names = list(names)
-        QTimer.singleShot(0, self._on_edges_deferred)
+        if not self._edge_timer.isActive():
+            self._edge_timer.start(0)
 
 
     # def _on_edges(self, names: list[str]):
@@ -1447,6 +1442,8 @@ class SpatialViewQDock(QDockWidget):
 
 
     def _on_hyperedge_modified(self, name: str):
+        startA = time.perf_counter()
+        print('A',time.perf_counter() - startA)
         if not self.session:
             return
         self._worker.session = self.session
@@ -1454,8 +1451,11 @@ class SpatialViewQDock(QDockWidget):
         names = getattr(self.fa2_layout, "names", [])
         if not names or name not in names:
             self.requestRecalc.emit("")
+        print('A',time.perf_counter() - startA)
 
     def _on_edge_renamed(self, old: str, new: str) -> None:
+        startB = time.perf_counter()
+
         if old in self.hyperedgeItems:
             item = self.hyperedgeItems.pop(old)
             item.name = new
@@ -1511,9 +1511,12 @@ class SpatialViewQDock(QDockWidget):
         if self._overview_triplets is not None and old in self._overview_triplets:
             self._overview_triplets[new] = self._overview_triplets.pop(old)
         self._update_image_layer()
+        print('B',time.perf_counter() - startB)
 
 
     def _on_worker_image(self, edge: str, mapping: dict):
+        startC = time.perf_counter()
+
         if not self.session:
             return
         self._image_umap[edge] = mapping
@@ -1524,10 +1527,12 @@ class SpatialViewQDock(QDockWidget):
         self._radial_layout_cache = None
         self._layout_version = (self._layout_version or 0) + 1        
         self._update_image_layer()
+        print('C',time.perf_counter() - startC)
 
     def _on_worker_layout(self, layout: dict):
         if not self.session:
             return
+        startD = time.perf_counter()
             
         self.plot.setTitle("") # Clear the "Loading..." message
         names = list(layout)
@@ -1565,6 +1570,8 @@ class SpatialViewQDock(QDockWidget):
         self._update_minimap_view()
         self._pos_minimap()
         self._update_image_layer() # Ensure the view is updated
+        print('D',time.perf_counter() - startD)
+
 
     def _on_worker_radial(self, sel_name: str, offsets: dict, links: list):
         self._radial_cache_by_edge[sel_name] = (offsets, links)

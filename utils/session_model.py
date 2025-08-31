@@ -10,6 +10,7 @@ import io
 from PyQt5.QtCore import QObject, pyqtSignal as Signal
 from PyQt5.QtGui import QColor
 import pyqtgraph as pg
+import time
 from .similarity import SIM_METRIC
 
 def generate_n_colors(n: int, saturation: int = 150, value: int = 230) -> list[str]:
@@ -419,13 +420,15 @@ class SessionModel(QObject):
                 imgs.remove(old)
                 imgs.add(new)
 
-        self.overview_triplets = None
+        if self.overview_triplets is not None and old in self.overview_triplets:
+            self.overview_triplets[new] = self.overview_triplets.pop(old)
         self.edgeRenamed.emit(old, new)
         
         return True
 
     # ------------------ NEW METHOD --------------------------------------
     def add_empty_hyperedge(self, name: str) -> None:
+        start12 = time.perf_counter()
         """Adds a new, empty hyperedge to the model."""
         # This assumes 'name' has already been validated for uniqueness and is not empty.
         # 1. Update hyperedges dictionary
@@ -452,9 +455,11 @@ class SessionModel(QObject):
         self.edge_seen_times[name] = 0.0
         # 6. Signal to the UI that the overall layout has changed
         self.overview_triplets = None
+        print('12',time.perf_counter() - start12)
         self.layoutChanged.emit()
+        print('13',time.perf_counter() - start12)
         self.hyperedgeModified.emit(name)
-    # --------------------------------------------------------------------
+        print('14',time.perf_counter() - start12)
 
     def add_images_to_hyperedge(self, name: str, idxs: Iterable[int]) -> None:
         """Add given image indices to an existing hyperedge."""
@@ -476,14 +481,15 @@ class SessionModel(QObject):
             else:
                 self.hyperedge_avg_features[name] = np.zeros(self.features.shape[1])
             self._update_edit_status(name, modified=True)
-            self.overview_triplets = None
+            if self.overview_triplets is not None:
+                self.overview_triplets.pop(name, None)
             self.layoutChanged.emit()
             self.similarityDirty.emit()
             self.hyperedgeModified.emit(name)
 
     def remove_images_from_edges(self, img_idxs: List[int], edges: List[str]) -> None:
         """Remove given image indices from the specified hyperedges."""
-        changed = False
+        changed_edges: set[str] = set()
         for edge in edges:
             if edge not in self.hyperedges:
                 continue
@@ -491,7 +497,7 @@ class SessionModel(QObject):
             removed = [i for i in img_idxs if i in members]
             if not removed:
                 continue
-            changed = True
+            changed_edges.add(edge)
             for idx in removed:
                 members.remove(idx)
                 if idx in self.image_mapping:
@@ -508,11 +514,14 @@ class SessionModel(QObject):
                 self.hyperedge_avg_features[edge] = np.zeros(self.features.shape[1])
             self._update_edit_status(edge, modified=True)
 
-        if changed:
-            self.overview_triplets = None
+        if changed_edges:
+            if self.overview_triplets is not None:
+                for edge in changed_edges:
+                    self.overview_triplets.pop(edge, None)
             self.layoutChanged.emit()
             self.similarityDirty.emit()
-            self.hyperedgeModified.emit(edge)            
+            for edge in changed_edges:
+                self.hyperedgeModified.emit(edge)
 
     def delete_hyperedge(self, name: str, orphan_name: str = "orphaned images") -> None:
         """Remove a hyperedge and reassign lone images to an orphan group."""
@@ -565,7 +574,9 @@ class SessionModel(QObject):
         else:
             self.hyperedge_avg_features[orphan_name] = np.zeros(self.features.shape[1])
 
-        self.overview_triplets = None
+        if self.overview_triplets is not None:
+            self.overview_triplets.pop(name, None)
+            self.overview_triplets.pop(orphan_name, None)
         self.layoutChanged.emit()
         self.similarityDirty.emit()
         self.hyperedgeModified.emit(orphan_name)
@@ -714,7 +725,6 @@ class SessionModel(QObject):
         self.edge_colors = {name: colors[i % len(colors)] for i, name in enumerate(self.cat_list)}
         self.edge_seen_times = {name: 0.0 for name in self.cat_list}
 
-        self.overview_triplets = None
         self.layoutChanged.emit()
         self.similarityDirty.emit()
 
@@ -755,7 +765,5 @@ class SessionModel(QObject):
             self.edge_origins[name] = origin
             self.edge_seen_times[name] = 0.0
 
-            
-        self.overview_triplets = None
         self.layoutChanged.emit()
         self.similarityDirty.emit()

@@ -109,7 +109,7 @@ def apply_dark_palette(app: QApplication) -> None:
     palette.setColor(QPalette.HighlightedText, Qt.black)
     app.setPalette(palette)
 
-THRESHOLD_DEFAULT = 0.8
+THRESHOLD_DEFAULT = 1.0
 JACCARD_PRUNE_DEFAULT = 0.5
 ORIGIN_COL = 3
 SIM_COL = 4
@@ -1399,10 +1399,6 @@ class MainWin(QMainWindow):
 
         if self.model:
             try:
-                self.model.layoutChanged.disconnect(self.regroup)
-            except TypeError:
-                pass
-            try:
                 self.model.layoutChanged.disconnect(self._on_layout_changed)
             except TypeError:
                 pass
@@ -1431,7 +1427,6 @@ class MainWin(QMainWindow):
         self.model.prune_similar_edges(prune_thr)
         self.model.generate_thumbnails()
 
-        self.model.layoutChanged.connect(self.regroup)
         self._overview_triplets = None
         self.image_grid.invalidate_overview_cache()
         self.model.layoutChanged.connect(self._on_layout_changed)
@@ -1461,10 +1456,6 @@ class MainWin(QMainWindow):
     def load_session(self, path: Path):
         try:
             if self.model:
-                try:
-                    self.model.layoutChanged.disconnect(self.regroup)
-                except TypeError:
-                    pass
                 try:
                     self.model.layoutChanged.disconnect(self._on_layout_changed)
                 except TypeError:
@@ -1552,7 +1543,6 @@ class MainWin(QMainWindow):
                 ) == QMessageBox.Yes:
                     self.model.generate_thumbnails()
 
-            self.model.layoutChanged.connect(self.regroup)
             self._overview_triplets = None
             self.image_grid.invalidate_overview_cache()
             self.model.layoutChanged.connect(self._on_layout_changed)
@@ -1671,10 +1661,6 @@ class MainWin(QMainWindow):
         df = pd.DataFrame(matrix.astype(int), columns=[f"edge_{i}" for i in range(matrix.shape[1])])
 
         try:
-            self.model.layoutChanged.disconnect(self.regroup)
-        except Exception:
-            pass
-        try:
             self.model.layoutChanged.disconnect(self._on_layout_changed)
         except Exception:
             pass
@@ -1705,7 +1691,6 @@ class MainWin(QMainWindow):
             self.model.append_clustering_matrix(plc_matrix, origin="places365", prefix="plc365")
         self.model.prune_similar_edges(prune_thr)
 
-        self.model.layoutChanged.connect(self.regroup)
         self._overview_triplets = None
         self.image_grid.invalidate_overview_cache()
         self.model.layoutChanged.connect(self._on_layout_changed)
@@ -1729,11 +1714,18 @@ class MainWin(QMainWindow):
 
 
     def _on_layout_changed(self):
+        start15 = time.perf_counter()
+        
+        
         self._overview_triplets = None
         self.image_grid.invalidate_overview_cache()
+        print('15',time.perf_counter() - start15)
         if self._layout_timer.isActive():
             self._layout_timer.stop()
+        print('16',time.perf_counter() - start15)
         self._layout_timer.start(0)
+        print('17',time.perf_counter() - start15)
+
 
     def _apply_layout_change(self):
         if hasattr(self, "spatial_dock") and not self._skip_next_layout:
@@ -1806,7 +1798,7 @@ class MainWin(QMainWindow):
         sim_item.setData(None, Qt.UserRole); sim_item.setData("", Qt.DisplayRole)
 
     def _update_bus_images(self, names: list[str]):
-        
+        start11 = time.perf_counter()
         if not self.model:
             self.bus.set_images([])
             return
@@ -1818,6 +1810,8 @@ class MainWin(QMainWindow):
                 for child in self.groups[name]:
                     idxs.update(self.model.hyperedges.get(child, set()))
         self.bus.set_images(sorted(idxs))
+        print('11',time.perf_counter()-start11)
+
 
     def _remember_last_edge(self, names: list[str]):
         if names:
@@ -1995,6 +1989,7 @@ class MainWin(QMainWindow):
         self._hide_legend()
 
     def regroup(self):
+        startF = time.perf_counter()
         if not self.model: 
             return
         thr = self.slider.value() / 100
@@ -2021,6 +2016,7 @@ class MainWin(QMainWindow):
 
         if hasattr(self, 'matrix_dock'): 
             self.matrix_dock.update_matrix()
+        print('F',time.perf_counter()-startF)
 
     def _update_group_similarity(self, group_item: QStandardItem):
         vals = [v for v in (group_item.child(r, SIM_COL).data(Qt.UserRole) for r in range(group_item.rowCount())) if v is not None]
