@@ -447,28 +447,85 @@ def rename_groups_sequentially(raw):
     return res
 
 
-def build_row_data(groups, model):
+def build_row_data(groups, model, rows=None, dirty_edges=None):
+    """Build or update row data for the hyperedge tree.
+
+    Parameters
+    ----------
+    groups : dict
+        Mapping of group name -> list of child hyperedges.
+    model : object
+        Session model providing hyperedge metadata.
+    rows : list[dict] | None
+        Existing row data. If ``None`` a full rebuild is performed.
+    dirty_edges : Iterable[str] | None
+        Hyperedge names that have changed. Only these rows will be
+        recomputed when ``rows`` is provided.
+
+    Returns
+    -------
+    list[dict]
+        Updated row data.
+    """
+
     status = model.status_map
-    rows = []
-    for g, children in groups.items():
-        for child in children:
-            meta = status[child]
-            stddev = model.similarity_std(child)
-            rows.append(
-                dict(
-                    uuid=meta["uuid"],
-                    name=child,
-                    image_count=len(model.hyperedges[child]),
-                    status=meta["status"],
-                    origin=model.edge_origins.get(child, ""),
-                    similarity=None,
-                    stddev=stddev,
-                    intersection=None,
-                    group_name=g,
-                    color=model.edge_colors.get(child, "#808080"),
+
+    if rows is None or not dirty_edges:
+        # Full rebuild
+        res = []
+        for g, children in groups.items():
+            for child in children:
+                meta = status[child]
+                stddev = model.similarity_std(child)
+                res.append(
+                    dict(
+                        uuid=meta["uuid"],
+                        name=child,
+                        image_count=len(model.hyperedges[child]),
+                        status=meta["status"],
+                        origin=model.edge_origins.get(child, ""),
+                        similarity=None,
+                        stddev=stddev,
+                        intersection=None,
+                        group_name=g,
+                        color=model.edge_colors.get(child, "#808080"),
+                    )
                 )
-            )
-    return rows
+        return res
+
+    # Incremental update
+    membership = {
+        child: g for g, children in groups.items() for child in children
+    }
+    current_edges = set(membership)
+    # Filter out rows for edges no longer present
+    res = [r for r in rows if r["name"] in current_edges]
+    index = {r["name"]: i for i, r in enumerate(res)}
+
+    for edge in dirty_edges:
+        if edge not in membership:
+            # Edge was removed; handled by filtering above
+            continue
+        meta = status[edge]
+        stddev = model.similarity_std(edge)
+        row = dict(
+            uuid=meta["uuid"],
+            name=edge,
+            image_count=len(model.hyperedges[edge]),
+            status=meta["status"],
+            origin=model.edge_origins.get(edge, ""),
+            similarity=None,
+            stddev=stddev,
+            intersection=None,
+            group_name=membership[edge],
+            color=model.edge_colors.get(edge, "#808080"),
+        )
+        if edge in index:
+            res[index[edge]] = row
+        else:
+            res.append(row)
+
+    return res
 
 
 
@@ -602,6 +659,10 @@ class MainWin(QMainWindow):
         self._last_edge = None
         self._similarity_ref = None
         self._similarity_computed = False
+
+        self._rows = None
+        self._dirty_edges: set[str] = set()
+
         # Track layout changes vs. hyperedge modifications
         self._skip_next_layout = False
         self._layout_timer = QTimer(self)
@@ -1759,8 +1820,9 @@ class MainWin(QMainWindow):
         self.image_grid.invalidate_overview_cache()
 
 
-    def _on_model_hyperedge_modified(self, _name: str):
+    def _on_model_hyperedge_modified(self, name: str):
         self._skip_next_layout = True
+        self._dirty_edges.add(name)
         if self._skip_reset_timer.isActive():
             self._skip_reset_timer.stop()
         self._skip_reset_timer.start(100)
@@ -1995,8 +2057,26 @@ class MainWin(QMainWindow):
         thr = self.slider.value() / 100
         self.label.setText(f"Grouping threshold: {thr:.2f}")
 
+        old_groups = getattr(self, "groups", None)
         self.groups = rename_groups_sequentially(perform_hierarchical_grouping(self.model, thresh=thr))
-        rows = build_row_data(self.groups, self.model)
+        print('F1',time.perf_counter()-startF)
+
+        dirty = set(getattr(self, "_dirty_edges", set()))
+        if old_groups is not None:
+            old_map = {c: g for g, ch in old_groups.items() for c in ch}
+            new_map = {c: g for g, ch in self.groups.items() for c in ch}
+            for edge, grp in new_map.items():
+                if old_map.get(edge) != grp:
+                    dirty.add(edge)
+
+        rows = build_row_data(
+            self.groups,
+            self.model,
+            getattr(self, "_rows", None),
+            dirty,
+        )
+        self._rows = rows
+        self._dirty_edges = set()
         headers = [
             "Name",
             "Images",
@@ -2006,17 +2086,24 @@ class MainWin(QMainWindow):
             "Std. Dev.",
             "Intersection",
         ]
+        print('F2',time.perf_counter()-startF)
         model = build_qmodel(rows, headers)
+        print('F3',time.perf_counter()-startF)
         model.itemChanged.connect(self._on_item_changed)
+        print('F4',time.perf_counter()-startF)
         self.tree_proxy.setSourceModel(model)
+        print('F5',time.perf_counter()-startF)
         self.tree.setModel(self.tree_proxy)
+        print('F6',time.perf_counter()-startF)
         self.tree.sortByColumn(0, Qt.AscendingOrder)
+        print('F7',time.perf_counter()-startF)
         self.tree.selectionModel().selectionChanged.connect(self.tree._send_bus_update)
+        print('F8',time.perf_counter()-startF)
         self.tree.collapseAll()
-
+        print('F9',time.perf_counter()-startF)
         if hasattr(self, 'matrix_dock'): 
             self.matrix_dock.update_matrix()
-        print('F',time.perf_counter()-startF)
+        print('F10',time.perf_counter()-startF)
 
     def _update_group_similarity(self, group_item: QStandardItem):
         vals = [v for v in (group_item.child(r, SIM_COL).data(Qt.UserRole) for r in range(group_item.rowCount())) if v is not None]
