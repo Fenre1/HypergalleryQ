@@ -486,7 +486,8 @@ class SpatialViewQDock(QDockWidget):
         self.setWidget(w); self._pos_minimap()
 
         # Bus connections
-        self.bus.edgesChanged.connect(self._on_edges)
+        # self.bus.edgesChanged.connect(self._on_edges)
+        self.bus.edgesChanged.connect(self._on_edges, type=Qt.QueuedConnection)
         self.bus.imagesChanged.connect(self._on_images)
 
     def eventFilter(self, obj, event: QEvent) -> bool:

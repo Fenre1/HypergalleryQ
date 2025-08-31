@@ -594,7 +594,7 @@ class MainWin(QMainWindow):
         self._overview_triplets = None
         self.temi_results = {}
         self.bus = SelectionBus()
-        self.bus.edgesChanged.connect(self._update_bus_images)
+        # self.bus.edgesChanged.connect(self._update_bus_images)
         #self.bus.edgesChanged.connect(print)
         self.bus.edgesChanged.connect(self._remember_last_edge)
         self.bus.edgesChanged.connect(self._record_seen_time)
@@ -842,6 +842,8 @@ class MainWin(QMainWindow):
         self.image_grid.labelDoubleClicked.connect(lambda name: self.bus.set_edges([name]))
         self.spatial_dock = SpatialViewQDock(self.bus, self)
         self.spatial_dock.setObjectName("SpatialViewDock")
+        self.bus.edgesChanged.connect(self._update_bus_images)
+
         self.limit_images_cb.toggled.connect(self._update_spatial_limits)
         self.limit_images_edit.editingFinished.connect(self._update_spatial_limits)
         self.limit_edges_cb.toggled.connect(self._update_spatial_limits)
