@@ -1408,6 +1408,11 @@ class MainWin(QMainWindow):
                 self.model.hyperedgeModified.disconnect(self._on_model_hyperedge_modified)
             except TypeError:
                 pass
+            try:
+                self.model.edgeRenamed.disconnect(self._on_edge_renamed)
+            except TypeError:
+                pass
+
 
         self.model = SessionModel(
             files,
@@ -1453,7 +1458,6 @@ class MainWin(QMainWindow):
 
     def load_session(self, path: Path):
         try:
-            # If a model already exists, disconnect its signal first
             if self.model:
                 try:
                     self.model.layoutChanged.disconnect(self.regroup)
@@ -1465,6 +1469,10 @@ class MainWin(QMainWindow):
                     pass
                 try:
                     self.model.hyperedgeModified.disconnect(self._on_model_hyperedge_modified)
+                except TypeError:
+                    pass
+                try:
+                    self.model.edgeRenamed.disconnect(self._on_edge_renamed)
                 except TypeError:
                     pass
 
@@ -1547,6 +1555,7 @@ class MainWin(QMainWindow):
             self.image_grid.invalidate_overview_cache()
             self.model.layoutChanged.connect(self._on_layout_changed)
             self.model.hyperedgeModified.connect(self._on_model_hyperedge_modified)
+            self.model.edgeRenamed.connect(self._on_edge_renamed)
         except Exception as e:
             QMessageBox.critical(self, "Load error", str(e))
             return
@@ -1671,6 +1680,10 @@ class MainWin(QMainWindow):
             self.model.hyperedgeModified.disconnect(self._on_model_hyperedge_modified)
         except Exception:
             pass
+        try:
+            self.model.edgeRenamed.disconnect(self._on_edge_renamed)
+        except Exception:
+            pass
 
         self.model = SessionModel(
             self.model.im_list,
@@ -1695,7 +1708,7 @@ class MainWin(QMainWindow):
         self.image_grid.invalidate_overview_cache()
         self.model.layoutChanged.connect(self._on_layout_changed)
         self.model.hyperedgeModified.connect(self._on_model_hyperedge_modified)
-
+        self.model.edgeRenamed.connect(self._on_edge_renamed)
         self.image_grid.set_model(self.model)
         self.overlap_dock.set_model(self.model)
         self.matrix_dock.set_model(self.model)
@@ -1730,6 +1743,27 @@ class MainWin(QMainWindow):
         for comp in (self.image_grid, self.overlap_dock, self.matrix_dock, self.spatial_dock):
             if hasattr(comp, "set_use_full_images"):
                 comp.set_use_full_images(flag)
+
+
+    def _on_edge_renamed(self, old: str, new: str) -> None:
+        model = self.tree_proxy.sourceModel()
+        if model is not None:
+            matches = model.findItems(old, Qt.MatchExactly | Qt.MatchRecursive, 0)
+            for it in matches:
+                it.setText(new)
+                it.setData(new, Qt.UserRole)
+
+        if hasattr(self, "groups"):
+            for g, children in self.groups.items():
+                for idx, child in enumerate(children):
+                    if child == old:
+                        children[idx] = new
+
+        if self._overview_triplets is not None and old in self._overview_triplets:
+            self._overview_triplets[new] = self._overview_triplets.pop(old)
+
+        self.image_grid.invalidate_overview_cache()
+
 
     def _on_model_hyperedge_modified(self, _name: str):
         self._skip_next_layout = True

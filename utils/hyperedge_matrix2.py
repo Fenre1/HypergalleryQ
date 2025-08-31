@@ -443,10 +443,17 @@ class HyperedgeMatrixDock(QDockWidget):
 
     def set_model(self, session: SessionModel | None):
         """Load / clear the matrix."""
+        if self._model._session:
+            try:
+                self._model._session.edgeRenamed.disconnect(self._on_edge_renamed)
+            except TypeError:
+                pass
         self._model.set_session(session)
+        if session:
+            session.edgeRenamed.connect(self._on_edge_renamed)
         self._overview_triplets = None
         self._tooltip_html_cache.clear()
-        self.zoom_reset()  # ensures headers match current _base_thumb
+        self.zoom_reset() 
 
     def update_matrix(self):
         """Compatibility wrapper used by the main window to refresh data."""
@@ -457,6 +464,17 @@ class HyperedgeMatrixDock(QDockWidget):
         self._use_full = flag
         self._model.set_use_full_images(flag)
 
+    def _on_edge_renamed(self, old: str, new: str) -> None:
+        edges = self._model._edges
+        if old in edges:
+            idx = edges.index(old)
+            edges[idx] = new
+            if self._overview_triplets is not None and old in self._overview_triplets:
+                self._overview_triplets[new] = self._overview_triplets.pop(old)
+            self._model._load_thumb.cache_clear()
+            self._model.headerDataChanged.emit(Qt.Horizontal, idx, idx)
+            self._model.headerDataChanged.emit(Qt.Vertical, idx, idx)
+            self._view.viewport().update()
 
     # Zoom stuff
     def zoom_in(self):

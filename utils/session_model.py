@@ -397,6 +397,9 @@ class SessionModel(QObject):
         if (not new) or (new in self.hyperedges):
             return False
 
+        old_indices = self.hyperedges.get(old, set()).copy()
+
+
         # raw structures -------------------------------------------------
         self.hyperedges[new] = self.hyperedges.pop(old)
         self.df_edges.rename(columns={old: new}, inplace=True)
@@ -409,18 +412,15 @@ class SessionModel(QObject):
         if old in self.edge_colors:
             self.edge_colors[new] = self.edge_colors.pop(old)
         if old in self.edge_seen_times:
-            self.edge_seen_times[new] = self.edge_seen_times.pop(old)            
-        for imgs in self.image_mapping.values():
-            if old in imgs:
+            self.edge_seen_times[new] = self.edge_seen_times.pop(old)
+        for idx in old_indices:
+            imgs = self.image_mapping.get(idx)
+            if imgs is not None and old in imgs:
                 imgs.remove(old)
                 imgs.add(new)
 
-        # tell views -----------------------------------------------------
         self.overview_triplets = None
         self.edgeRenamed.emit(old, new)
-        self.similarityDirty.emit()
-        self.layoutChanged.emit()
-        self.hyperedgeModified.emit(new)
         
         return True
 

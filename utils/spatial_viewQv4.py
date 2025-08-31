@@ -520,6 +520,10 @@ class SpatialViewQDock(QDockWidget):
                 self.session.hyperedgeModified.disconnect(self._on_hyperedge_modified)
             except TypeError:
                 pass
+            try:
+                self.session.edgeRenamed.disconnect(self._on_edge_renamed)
+            except TypeError:
+                pass
         self.session = session
         self.fa2_layout = None
         self._radial_cache_by_edge = {}
@@ -530,6 +534,7 @@ class SpatialViewQDock(QDockWidget):
         if session is None:
             return
         self.session.hyperedgeModified.connect(self._on_hyperedge_modified)
+        self.session.edgeRenamed.connect(self._on_edge_renamed)
         self.color_map = session.edge_colors.copy()
         edges = list(session.hyperedges)
         edge_feats = np.stack([session.hyperedge_avg_features[e] for e in edges]).astype(np.float32)
@@ -1169,6 +1174,64 @@ class SpatialViewQDock(QDockWidget):
             return
         self._worker.session = self.session
         self.requestRecalc.emit(name)
+
+    def _on_edge_renamed(self, old: str, new: str) -> None:
+        if old in self.hyperedgeItems:
+            item = self.hyperedgeItems.pop(old)
+            item.name = new
+            self.hyperedgeItems[new] = item
+        if old in self.color_map:
+            self.color_map[new] = self.color_map.pop(old)
+        if self.fa2_layout:
+            if hasattr(self.fa2_layout, "positions") and old in self.fa2_layout.positions:
+                self.fa2_layout.positions[new] = self.fa2_layout.positions.pop(old)
+            if hasattr(self.fa2_layout, "names"):
+                names = list(self.fa2_layout.names)
+                try:
+                    idx = names.index(old)
+                    names[idx] = new
+                    self.fa2_layout.names = names
+                except ValueError:
+                    pass
+            if hasattr(self, "edge_index") and old in self.edge_index:
+                idx = self.edge_index.pop(old)
+                self.edge_index[new] = idx
+        # Update all cached radial layouts so they no longer reference the old name
+        def _rename_cache(cache: tuple[dict, list]):
+            offs, links = cache
+            new_offs = {(new if e == old else e, i): off for (e, i), off in offs.items()}
+            new_links = [
+                ((new if a[0] == old else a[0], a[1]), (new if b[0] == old else b[0], b[1]))
+                for a, b in links
+            ]
+            return new_offs, new_links
+
+        if self._radial_layout_cache is not None:
+            self._radial_layout_cache = _rename_cache(self._radial_layout_cache)
+
+        if self._radial_cache_by_edge:
+            new_cache: dict[str, tuple[dict, list]] = {}
+            for k, v in self._radial_cache_by_edge.items():
+                key = new if k == old else k
+                new_cache[key] = _rename_cache(v)
+            self._radial_cache_by_edge = new_cache
+        if old in self._centroid_norm:
+            self._centroid_norm[new] = self._centroid_norm.pop(old)
+        if old in self._centroid_sim:
+            self._centroid_sim[new] = self._centroid_sim.pop(old)
+        if old in self._image_umap:
+            self._image_umap[new] = self._image_umap.pop(old)
+        if old in self.hidden_edges:
+            self.hidden_edges.remove(old)
+            self.hidden_edges.add(new)
+        if self._current_edge == old:
+            self._current_edge = new
+        self._selected_nodes = {(new if e == old else e, i) for e, i in self._selected_nodes}
+        self._abs_pos_cache = {(new if e == old else e, i): pos for (e, i), pos in self._abs_pos_cache.items()}
+        if self._overview_triplets is not None and old in self._overview_triplets:
+            self._overview_triplets[new] = self._overview_triplets.pop(old)
+        self._update_image_layer()
+
 
     def _on_worker_image(self, edge: str, mapping: dict):
         if not self.session:
