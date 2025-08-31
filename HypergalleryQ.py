@@ -612,9 +612,7 @@ class MainWin(QMainWindow):
         self._skip_reset_timer.timeout.connect(lambda: setattr(self, "_skip_next_layout", False))
 
         # ----------------- WIDGET AND DOCK CREATION ------------------------------------
-        # Create all widgets and docks first, then arrange them.
 
-        # --- List Tree ---
         self.tree = HyperEdgeTree(self.bus)
         self.tree_proxy = TreeFilterProxyModel(self)
         self.tree_proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)

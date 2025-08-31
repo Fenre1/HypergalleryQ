@@ -236,6 +236,7 @@ class HyperedgeMatrixModel(QAbstractTableModel):
         self._overlap.clear()
         self._scores.clear()
         self._max_score = 0.0
+        self._load_thumb.cache_clear()
         if session:
             self._build_matrix()
         self.endResetModel()
