@@ -1296,9 +1296,58 @@ class SpatialViewQDock(QDockWidget):
 
         return offsets, links
 
-
-
     def _on_edges(self, names: list[str]):
+        # Store & schedule; return immediately so the grid can paint first.
+        self._pending_edge_names = list(names)
+        QTimer.singleShot(0, self._on_edges_deferred)
+
+
+    # def _on_edges(self, names: list[str]):
+    #     for name, ell in self.hyperedgeItems.items():
+    #         col = self.color_map.get(name, '#AAAAAA')
+    #         ell.setPen(pg.mkPen(col))
+    #         ell.setBrush(pg.mkBrush(col))
+
+    #     self._selected_nodes.clear()
+    #     if len(names) == 1:
+    #         sel = names[0]
+    #         self._current_edge = sel
+    #         self._radial_layout_cache = None
+    #         if self.image_scatter: self.image_scatter.setData([], [])
+    #         if self.link_curve: self.link_curve.setData([], [])
+    #         if self.selected_scatter: self.selected_scatter.setData([], [])
+    #         if self.selected_links: self.selected_links.setData([], [])
+
+    #         if sel in self._radial_cache_by_edge:
+    #             # If layout is cached, use it immediately
+    #             self._radial_layout_cache = self._radial_cache_by_edge[sel]
+    #             self._layout_version = (self._layout_version or 0) + 1
+    #             self._update_image_layer() # Redraw with cached data
+    #         else:
+    #             # Otherwise, request from worker (UI is now clean and responsive)
+    #             if self.session and self.fa2_layout:
+    #                 self._worker.session = self.session
+    #                 self._worker.layout = self.fa2_layout
+    #                 self._worker.image_umap = self._image_umap
+    #                 self._worker.limit_images_enabled = self.limit_images_enabled
+    #                 self._worker.limit_images_value = self.limit_images_value
+    #                 self._worker.limit_edges_enabled = self.limit_edges_enabled
+    #                 self._worker.limit_edges_value = self.limit_edges_value
+    #                 self._worker.hidden_edges = self.hidden_edges.copy()
+    #                 self._worker.edge_index = self.edge_index
+    #                 self._worker.radial_placement_factor = self.radial_placement_factor
+
+    #                 self.requestRadial.emit(sel)
+    #     else:
+    #         # Multiple or no edges selected, clear the detailed view
+    #         self._current_edge = None
+    #         self._radial_layout_cache = None
+    #         self._layout_version = (self._layout_version or 0) + 1
+    #         self._update_image_layer() # This will hide items as the cache is None
+
+    def _on_edges_deferred(self):
+        names = getattr(self, "_pending_edge_names", [])
+        # ---- original body starts here (unchanged) ----
         for name, ell in self.hyperedgeItems.items():
             col = self.color_map.get(name, '#AAAAAA')
             ell.setPen(pg.mkPen(col))
@@ -1315,12 +1364,10 @@ class SpatialViewQDock(QDockWidget):
             if self.selected_links: self.selected_links.setData([], [])
 
             if sel in self._radial_cache_by_edge:
-                # If layout is cached, use it immediately
                 self._radial_layout_cache = self._radial_cache_by_edge[sel]
                 self._layout_version = (self._layout_version or 0) + 1
-                self._update_image_layer() # Redraw with cached data
+                self._update_image_layer()
             else:
-                # Otherwise, request from worker (UI is now clean and responsive)
                 if self.session and self.fa2_layout:
                     self._worker.session = self.session
                     self._worker.layout = self.fa2_layout
@@ -1334,12 +1381,13 @@ class SpatialViewQDock(QDockWidget):
                     self._worker.radial_placement_factor = self.radial_placement_factor
                     self.requestRadial.emit(sel)
         else:
-            # Multiple or no edges selected, clear the detailed view
             self._current_edge = None
             self._radial_layout_cache = None
             self._layout_version = (self._layout_version or 0) + 1
-            self._update_image_layer() # This will hide items as the cache is None
-      
+            self._update_image_layer()
+
+
+
     def _on_images(self, idxs: list[int]):
         if not self.session:
             return
