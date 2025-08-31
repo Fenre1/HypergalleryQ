@@ -295,7 +295,7 @@ class SpatialViewQDock(QDockWidget):
     highlight_anim_peak_ratio = 0.3
 
     def __init__(self, bus: SelectionBus, parent=None):
-        super().__init__("Hyperedge View", parent)
+        super().__init__("Spatial Hypergraph", parent)
         self.bus = bus
         self._layout_version: int | None = None   # current data version
         self._rendered_version: int | None = None # last version sent to GPU
@@ -1089,13 +1089,14 @@ class SpatialViewQDock(QDockWidget):
                 offsets[(tgt, idx)] = vec * radius_map[tgt]
                 links.append(((sel_name, idx), (tgt, idx)))
 
-            # if show_all:
-            #     extras = session.hyperedges[tgt] - shared_full
-            #     if self.limit_images_enabled:
-            #         extras = list(extras)[: self.limit_images_value]
-            #     for idx in extras:
-            #         vec = self._image_umap.get(tgt, {}).get(idx, np.zeros(2))
-            #         offsets[(tgt, idx)] = vec * radius_map[tgt]
+
+            extras = session.hyperedges[tgt] - shared_full
+            if self.limit_images_enabled:
+                extras = list(extras)[: self.limit_images_value]
+            for idx in extras:
+                vec = self._image_umap.get(tgt, {}).get(idx, np.zeros(2))
+                offsets[(tgt, idx)] = vec * radius_map[tgt]
+
 
         self._radial_cache_by_edge[sel_name] = (offsets, links)
         self._layout_version = (self._layout_version or 0) + 1

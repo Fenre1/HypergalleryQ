@@ -630,11 +630,11 @@ class MainWin(QMainWindow):
         tree_layout.addWidget(self.tree_filter)
         tree_layout.addWidget(self.tree)
 
-        self.tree_dock = QDockWidget("List tree", self)
+        self.tree_dock = QDockWidget("Hyperedge List", self)
         self.tree_dock.setWidget(tree_container)
 
         # --- Buttons / Tools Dock ---
-        self.toolbar_dock = QDockWidget("Buttons", self)
+        self.toolbar_dock = QDockWidget("", self)
         toolbar_container = QWidget()
         toolbar_layout = QVBoxLayout(toolbar_container)
         toolbar_layout.setContentsMargins(10, 10, 10, 10)
