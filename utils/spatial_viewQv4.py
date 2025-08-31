@@ -1299,7 +1299,6 @@ class SpatialViewQDock(QDockWidget):
 
 
     def _on_edges(self, names: list[str]):
-
         for name, ell in self.hyperedgeItems.items():
             col = self.color_map.get(name, '#AAAAAA')
             ell.setPen(pg.mkPen(col))
@@ -1342,7 +1341,6 @@ class SpatialViewQDock(QDockWidget):
             self._update_image_layer() # This will hide items as the cache is None
       
     def _on_images(self, idxs: list[int]):
-        
         if not self.session:
             return
 

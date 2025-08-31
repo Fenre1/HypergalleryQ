@@ -5,13 +5,14 @@ from PyQt5.QtWidgets import (
     QVBoxLayout, QFrame, QScrollArea, QCheckBox, QSlider, QApplication,
     QStyledItemDelegate, QStackedWidget
 )
-from PyQt5.QtGui import QPixmap, QIcon, QImage, QPainter, QPen, QColor
+from PyQt5.QtGui import QPixmap, QIcon, QImage, QPainter, QPen, QColor, QImageReader
 from PyQt5.QtCore import (
     Qt, QAbstractListModel, QModelIndex, QSize, QObject, QThread,
-    pyqtSignal as Signal, QEvent, QTimer, QRect
+    pyqtSignal as Signal, QEvent, QTimer, QRect, QPoint
 )
 from pathlib import Path
 import hashlib
+from collections import OrderedDict
 
 from .selection_bus import SelectionBus
 from .session_model import SessionModel
@@ -26,6 +27,28 @@ from .image_utils import (
 from sklearn.cluster import AgglomerativeClustering
 import numpy as np
 import time
+
+class _PixmapLRU:
+    def __init__(self, max_items: int = 4000):
+        self._d = OrderedDict()
+        self._cap = max_items
+
+    def get(self, key: int):
+        if key in self._d:
+            v = self._d.pop(key)
+            self._d[key] = v
+            return v
+        return None
+
+    def put(self, key: int, value: QPixmap):
+        self._d[key] = value
+        self._d.move_to_end(key)
+        if len(self._d) > self._cap:
+            self._d.popitem(last=False)
+
+    def clear(self):
+        self._d.clear()
+
 
 class _ClusterDelegate(QStyledItemDelegate):
     """
@@ -117,13 +140,26 @@ class LazyThumbLabel(QLabel):
         self.setFixedSize(w, h)
         self._placeholder = QPixmap(w, h)
         self._placeholder.fill(QColor(245, 245, 245))
+        self._loading = False
+
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        if self._pix is None and self._path and not self._loading:
+            self._loading = True
+            QTimer.singleShot(0, self._load_async)
+
+    def _load_async(self):
+        # still runs on UI thread but outside paint; consider moving to a worker later
+        self._pix = load_thumbnail(self._path, self._w, self._h)
+        self._loading = False
+        self.update()
 
     def paintEvent(self, event):
-        if self._pix is None and self._path:
-            self._pix = load_thumbnail(self._path, self._w, self._h)
         painter = QPainter(self)
         pix = self._pix if self._pix is not None else self._placeholder
         painter.drawPixmap(0, 0, pix)
+
 
 class _ThumbWorker(QObject):
     """Worker object living in a QThread that loads thumbnails or full images."""
@@ -186,7 +222,8 @@ class ImageListModel(QAbstractListModel):
         self._labels = labels
         self._separators = separators or set()
 
-        self._pixmaps: dict[int, QPixmap] = {}
+        # self._pixmaps: dict[int, QPixmap] = {}
+        self._cache = _PixmapLRU(max_items=4000)
         self._index_map = {idx: row for row, idx in enumerate(self._indexes)}
         self._placeholder = QPixmap(self._thumb, self._thumb)
         self._placeholder.fill(Qt.gray)
@@ -215,7 +252,7 @@ class ImageListModel(QAbstractListModel):
             return None
         if role == Qt.DecorationRole:
             idx = self._indexes[index.row()]
-            pix = self._pixmaps.get(idx)
+            pix = self._cache.get(idx)
             if pix is None:
                 self._request_range(index.row())
                 pix = self._placeholder
@@ -225,6 +262,7 @@ class ImageListModel(QAbstractListModel):
             if index.row() in self._separators:
                 pix = self._add_vline(pix)
             return QIcon(pix)
+
         if role == Qt.DisplayRole and self._labels:
             if 0 <= index.row() < len(self._labels):
                 return self._labels[index.row()]
@@ -237,12 +275,15 @@ class ImageListModel(QAbstractListModel):
         return fl
 
     def _on_thumb_ready(self, idx: int, img: QImage):
-        self._pixmaps[idx] = QPixmap.fromImage(img)
+        # If the loader produced a null image, cache the placeholder so the UI stays consistent
+        pm = self._placeholder if img.isNull() else QPixmap.fromImage(img)
+        self._cache.put(idx, pm)
         self._requested.discard(idx)
         row = self._index_map.get(idx)
         if row is not None:
             i = self.index(row)
             self.dataChanged.emit(i, i, [Qt.DecorationRole])
+
 
     def _add_border(self, pix: QPixmap, color: QColor = QColor("red"), width: int = 4) -> QPixmap:
         if pix.isNull():
@@ -278,9 +319,13 @@ class ImageListModel(QAbstractListModel):
         end = min(len(self._indexes), row + self._preload + 1)
         for r in range(start, end):
             idx = self._indexes[r]
-            if idx not in self._pixmaps and idx not in self._requested:
-                self._requested.add(idx)
-                self.requestThumb.emit(idx)
+            # If it's already cached, or already in-flight, skip
+            if self._cache.get(idx) is not None or idx in self._requested:
+                continue
+            self._requested.add(idx)
+            self.requestThumb.emit(idx)
+
+
 
 
 class ImageGridDock(QDockWidget):
@@ -360,10 +405,48 @@ class ImageGridDock(QDockWidget):
 
         self.view.doubleClicked.connect(self._on_double_clicked)
 
+        self._scroll_timer = QTimer(self)
+        self._scroll_timer.setSingleShot(True)
+        self._scroll_timer.setInterval(60)  # debounce during fast scrolls
+
+        # When user scrolls, coalesce events and then prefetch
+        self.view.verticalScrollBar().valueChanged.connect(lambda _: self._scroll_timer.start())
+        self.view.horizontalScrollBar().valueChanged.connect(lambda _: self._scroll_timer.start())
+
+        # When the viewport size changes (e.g., window resized), re-evaluate visible range
+        self.view.viewport().installEventFilter(self)
+
+        self._scroll_timer.timeout.connect(self._prefetch_visible)
+
+
         self._ignore_bus_images = False
         self._highlight_next: dict[int, QColor] | None = None        
         self.bus.imagesChanged.connect(self._on_bus_images)
         self.bus.edgesChanged.connect(self._remember_edges)
+
+
+    def _prefetch_visible(self):
+        model = self.view.model()
+        if not isinstance(model, ImageListModel):
+            return
+
+        vp = self.view.viewport()
+        top_left = self.view.indexAt(QPoint(0, 0))
+        bottom_right = self.view.indexAt(QPoint(max(0, vp.width() - 1), max(0, vp.height() - 1)))
+
+        # compute visible rows (fallbacks if indexes are invalid)
+        start = top_left.row() if top_left.isValid() else 0
+        end = bottom_right.row() if bottom_right.isValid() else min(start + 200, model.rowCount() - 1)
+        center = (start + end) // 2
+
+        # scale preload to ~2 screens worth
+        icon = self.view.iconSize().height()
+        spacing = self.view.spacing()
+        rows_visible = max(1, vp.height() // max(1, icon + spacing))
+        cols_visible = max(1, vp.width()  // max(1, icon + spacing))
+        model._preload = max(cols_visible * rows_visible * 2, 64)
+
+        model._request_range(center)
 
 
     def set_use_full_images(self, flag: bool) -> None:
@@ -472,6 +555,8 @@ class ImageGridDock(QDockWidget):
         )
         self.view.setModel(model)
         self.view.selectionModel().selectionChanged.connect(self._on_selection_changed)
+        QTimer.singleShot(0, self._prefetch_visible)
+
         if not self._navigating and changed:
             state = ViewState(
                 indices=list(self._current_indices),
@@ -809,7 +894,16 @@ class ImageGridDock(QDockWidget):
 
 
     def eventFilter(self, obj, event):
+        # existing behavior: double-click on the overview labels
         if isinstance(obj, _ClickableLabel) and event.type() == QEvent.MouseButtonDblClick:
             self.labelDoubleClicked.emit(obj.text())
             return True
+
+        # new: when the list view's viewport resizes, re-evaluate visible range
+        if obj is self.view.viewport():
+            if event.type() == QEvent.Resize:
+                if hasattr(self, "_scroll_timer"):
+                    self._scroll_timer.start()  # debounce, then _prefetch_visible()
+            # (You could also react to QEvent.Paint here, but Resize is enough.)
+
         return super().eventFilter(obj, event)
