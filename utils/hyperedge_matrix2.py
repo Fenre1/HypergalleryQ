@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Dict, List, Tuple
+from typing import Dict, Iterable, List, Tuple
 from pathlib import Path
 from natsort import natsorted
 from PyQt5.QtCore import (
@@ -255,6 +255,78 @@ class HyperedgeMatrixModel(QAbstractTableModel):
         self.headerDataChanged.emit(Qt.Horizontal, 0, len(self._edges) - 1)
         self.headerDataChanged.emit(Qt.Vertical, 0, len(self._edges) - 1)
 
+    def update_edges(self, edges: List[str]) -> None:
+        """Recompute matrix rows/columns for the specified edges.
+
+        This avoids rebuilding the entire matrix when only a subset of
+        hyperedges changed.  If the set of hyperedges in the session no
+        longer matches the model (e.g. edges were removed), the matrix is
+        rebuilt completely.
+        """
+        if not self._session or not edges:
+            return
+
+        session_edges = set(self._session.hyperedges.keys())
+        # Rebuild if any existing edge disappeared
+        missing = [e for e in self._edges if e not in session_edges]
+        if missing:
+            self.set_session(self._session)
+            return
+
+        # Handle newly added edges
+        added = [e for e in edges if e not in self._edges]
+        if added:
+            self.beginResetModel()
+            for name in added:
+                insert_idx = natsorted(self._edges + [name]).index(name)
+                self._edges.insert(insert_idx, name)
+                for row in self._overlap:
+                    row.insert(insert_idx, 0)
+                for row in self._scores:
+                    row.insert(insert_idx, 0.0)
+                self._overlap.insert(insert_idx, [0] * len(self._edges))
+                self._scores.insert(insert_idx, [0.0] * len(self._edges))
+            self.endResetModel()
+
+        # Update overlaps for changed edges
+        # Recompute lengths once to avoid repeated work
+        len_cache = {name: len(self._session.hyperedges[name]) for name in self._edges}
+        for name in edges:
+            if name not in self._edges:
+                continue
+            r = self._edges.index(name)
+            r_imgs = self._session.hyperedges[name]
+            len_r = len_cache[name]
+            for c, c_name in enumerate(self._edges):
+                c_imgs = self._session.hyperedges[c_name]
+                len_c = len_cache[c_name]
+                overlap = len(r_imgs & c_imgs)
+                self._overlap[r][c] = overlap
+                self._overlap[c][r] = overlap
+                if r == c:
+                    self._scores[r][c] = -1.0
+                else:
+                    p1 = overlap / len_r if len_r else 0.0
+                    p2 = overlap / len_c if len_c else 0.0
+                    score = 2 * (p1 * p2) / (p1 + p2) if (p1 + p2) > 0 else 0.0
+                    self._scores[r][c] = score
+                    self._scores[c][r] = score
+
+        # Recompute maximum score
+        self._max_score = max(
+            (score for r, row in enumerate(self._scores) for c, score in enumerate(row) if r != c),
+            default=0.0,
+        )
+
+        self._load_thumb.cache_clear()
+
+        top_left = self.index(0, 0)
+        bottom_right = self.index(len(self._edges) - 1, len(self._edges) - 1)
+        self.dataChanged.emit(top_left, bottom_right, [Qt.DisplayRole, Qt.BackgroundRole])
+        self.headerDataChanged.emit(Qt.Horizontal, 0, len(self._edges) - 1)
+        self.headerDataChanged.emit(Qt.Vertical, 0, len(self._edges) - 1)
+
+
     def rowCount(self, parent=QModelIndex()) -> int:     
         return 0 if parent.isValid() else len(self._edges)
 
@@ -455,9 +527,11 @@ class HyperedgeMatrixDock(QDockWidget):
         self._tooltip_html_cache.clear()
         self.zoom_reset() 
 
-    def update_matrix(self):
-        """Compatibility wrapper used by the main window to refresh data."""
-        self._model.set_session(self._model._session)
+    def update_matrix(self, changed: Iterable[str] | None = None):
+        if changed:
+            self._model.update_edges(list(changed))
+        else:
+            self._model.set_session(self._model._session)
 
     def set_use_full_images(self, flag: bool) -> None:
         """Forward the image mode to the underlying model."""

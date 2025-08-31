@@ -2061,7 +2061,8 @@ class MainWin(QMainWindow):
         self.groups = rename_groups_sequentially(perform_hierarchical_grouping(self.model, thresh=thr))
         print('F1',time.perf_counter()-startF)
 
-        dirty = set(getattr(self, "_dirty_edges", set()))
+        dirty_edges = set(getattr(self, "_dirty_edges", set()))
+        dirty = set(dirty_edges)
         if old_groups is not None:
             old_map = {c: g for g, ch in old_groups.items() for c in ch}
             new_map = {c: g for g, ch in self.groups.items() for c in ch}
@@ -2101,8 +2102,8 @@ class MainWin(QMainWindow):
         print('F8',time.perf_counter()-startF)
         self.tree.collapseAll()
         print('F9',time.perf_counter()-startF)
-        if hasattr(self, 'matrix_dock'): 
-            self.matrix_dock.update_matrix()
+        if hasattr(self, 'matrix_dock') and dirty_edges:
+            self.matrix_dock.update_matrix(dirty_edges)
         print('F10',time.perf_counter()-startF)
 
     def _update_group_similarity(self, group_item: QStandardItem):
