@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 os.environ["PYQTGRAPH_QT_LIB"] = "PyQt5"   # force pyqtgraph to PyQt5
 os.environ.pop("QT_API", None)             # avoid other libs nudging Qt differently
-
+import time
 import numpy as np
 from math import cos, sin, pi
 from time import perf_counter
@@ -489,6 +489,7 @@ class SpatialViewQDock(QDockWidget):
         # self.bus.edgesChanged.connect(self._on_edges)
         self.bus.edgesChanged.connect(self._on_edges, type=Qt.QueuedConnection)
         self.bus.imagesChanged.connect(self._on_images)
+
 
     def eventFilter(self, obj, event: QEvent) -> bool:
 
@@ -1297,7 +1298,7 @@ class SpatialViewQDock(QDockWidget):
         return offsets, links
 
     def _on_edges(self, names: list[str]):
-        # Store & schedule; return immediately so the grid can paint first.
+
         self._pending_edge_names = list(names)
         QTimer.singleShot(0, self._on_edges_deferred)
 
@@ -1346,13 +1347,15 @@ class SpatialViewQDock(QDockWidget):
     #         self._update_image_layer() # This will hide items as the cache is None
 
     def _on_edges_deferred(self):
+        start0 = time.perf_counter()
         names = getattr(self, "_pending_edge_names", [])
         # ---- original body starts here (unchanged) ----
         for name, ell in self.hyperedgeItems.items():
             col = self.color_map.get(name, '#AAAAAA')
             ell.setPen(pg.mkPen(col))
             ell.setBrush(pg.mkBrush(col))
-
+        start1 = time.perf_counter()
+        print('1',start1-start0)
         self._selected_nodes.clear()
         if len(names) == 1:
             sel = names[0]
@@ -1362,13 +1365,20 @@ class SpatialViewQDock(QDockWidget):
             if self.link_curve: self.link_curve.setData([], [])
             if self.selected_scatter: self.selected_scatter.setData([], [])
             if self.selected_links: self.selected_links.setData([], [])
-
+            start2 = time.perf_counter()
+            print('2',start2-start0)
             if sel in self._radial_cache_by_edge:
                 self._radial_layout_cache = self._radial_cache_by_edge[sel]
                 self._layout_version = (self._layout_version or 0) + 1
+                start3 = time.perf_counter()
+                print('3',start3-start0)
                 self._update_image_layer()
+                start4 = time.perf_counter()
+                print('4',start4-start0)
             else:
                 if self.session and self.fa2_layout:
+                    start5 = time.perf_counter()
+                    print('5',start5-start0)
                     self._worker.session = self.session
                     self._worker.layout = self.fa2_layout
                     self._worker.image_umap = self._image_umap
@@ -1380,15 +1390,20 @@ class SpatialViewQDock(QDockWidget):
                     self._worker.edge_index = self.edge_index
                     self._worker.radial_placement_factor = self.radial_placement_factor
                     self.requestRadial.emit(sel)
+                    start6 = time.perf_counter()
+                    print('6',start6-start0)        
         else:
             self._current_edge = None
             self._radial_layout_cache = None
             self._layout_version = (self._layout_version or 0) + 1
             self._update_image_layer()
+            start7 = time.perf_counter()
+            print('7',start7-start0)
 
 
 
     def _on_images(self, idxs: list[int]):
+        start8 = time.perf_counter()
         if not self.session:
             return
 
@@ -1423,7 +1438,12 @@ class SpatialViewQDock(QDockWidget):
                 self._highlight_timer.start()
 
         self._selected_nodes = {(e, i) for i in idxs for e in self.session.image_mapping.get(i, [])}
+        start9 = time.perf_counter()
+        print('9',start9-start8)
+
         self._update_selected_overlay()
+        start10 = time.perf_counter()
+        print('10',start10-start8)
 
 
     def _on_hyperedge_modified(self, name: str):
@@ -1431,6 +1451,9 @@ class SpatialViewQDock(QDockWidget):
             return
         self._worker.session = self.session
         self.requestRecalc.emit(name)
+        names = getattr(self.fa2_layout, "names", [])
+        if not names or name not in names:
+            self.requestRecalc.emit("")
 
     def _on_edge_renamed(self, old: str, new: str) -> None:
         if old in self.hyperedgeItems:
