@@ -1612,6 +1612,8 @@ class MainWin(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Load error", str(e))
             return
+        self._rows = None
+        self._dirty_edges.clear()
 
         self.image_grid.set_model(self.model)
         self.overlap_dock.set_model(self.model)
@@ -1757,6 +1759,8 @@ class MainWin(QMainWindow):
         self.model.layoutChanged.connect(self._on_layout_changed)
         self.model.hyperedgeModified.connect(self._on_model_hyperedge_modified)
         self.model.edgeRenamed.connect(self._on_edge_renamed)
+        self._rows = None
+        self._dirty_edges.clear()        
         self.image_grid.set_model(self.model)
         self.overlap_dock.set_model(self.model)
         self.matrix_dock.set_model(self.model)
