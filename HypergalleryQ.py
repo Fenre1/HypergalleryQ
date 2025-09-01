@@ -2,7 +2,6 @@ import os
 os.environ["PYQTGRAPH_QT_LIB"] = "PyQt5"   
 os.environ.pop("QT_API", None)             
 
-
 import sys, uuid, numpy as np
 import pandas as pd
 import numpy as np
@@ -71,7 +70,6 @@ from utils.session_model import SessionModel, generate_n_colors
 from utils.image_grid import ImageGridDock
 from utils.overlap_list_dock import OverlapListDock
 from utils.hyperedge_matrix2 import HyperedgeMatrixDock
-# from utils.spatial_viewQv3 import SpatialViewQDock
 from utils.spatial_viewQv4 import SpatialViewQDock, HyperedgeItem
 from utils.feature_extraction import (
     Swinv2LargeFeatureExtractor,
@@ -121,8 +119,6 @@ MAX_IMGS_ON_GRID = 1000
 QPixmapCache.setCacheLimit(512 * 1024)
 
 class _MultiSelectDialog(QDialog):
-    """Simple dialog presenting a list for multi-selection."""
-
     def __init__(self, items: list[str], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Select Hyperedges")
@@ -143,8 +139,6 @@ class _MultiSelectDialog(QDialog):
 
 
 class HyperedgeSelectDialog(QDialog):
-    """Dialog allowing the user to pick a hyperedge from a list with filtering."""
-
     def __init__(self, names: list[str], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Select Hyperedge")
@@ -179,8 +173,6 @@ class HyperedgeSelectDialog(QDialog):
 
 
 class NewSessionDialog(QDialog):
-    """Dialog to set parameters for a new session."""
-
     def __init__(self, image_count: int, parent=None):
         super().__init__(parent)
         self.setWindowTitle("New Session")
@@ -246,7 +238,6 @@ class NewSessionDialog(QDialog):
         )
 
 class ReconstructDialog(QDialog):
-    """Dialog to set parameters for hypergraph reconstruction."""
 
     def __init__(self, current_edges: int, has_openclip: bool, has_places: bool, parent=None):
         super().__init__(parent)
@@ -297,7 +288,6 @@ class ReconstructDialog(QDialog):
 
 
 class HyperEdgeTree(QTreeView):
-    """Navigator tree that lists meta-groups and individual hyper-edges."""
     def __init__(self, bus: SelectionBus, parent=None):
         super().__init__(parent)
         self.bus = bus
@@ -315,9 +305,7 @@ class HyperEdgeTree(QTreeView):
 
 
 class TreeFilterProxyModel(QSortFilterProxyModel):
-    """Proxy model to filter hyperedge tree items."""
-
-    def filterAcceptsRow(self, source_row: int, source_parent) -> bool:  # type: ignore[override]
+    def filterAcceptsRow(self, source_row: int, source_parent) -> bool:  
         if super().filterAcceptsRow(source_row, source_parent):
             return True
 
@@ -355,12 +343,10 @@ def build_qmodel(rows, headers):
     for r in rows:
         g = r["group_name"]
 
-        # ——— A. special-case “Ungrouped”: insert leaf at root
         if g == UNGROUPED:
             _append_leaf(model, r)
             continue
 
-        # ——— B. ordinary meta-group
         if g not in parents:
             group_items = [_make_item(g)] + [_make_item() for _ in headers[1:]]
             parents[g] = group_items[0]
@@ -372,7 +358,6 @@ def build_qmodel(rows, headers):
 
 
 def _append_leaf(parent_or_model, rowdict):
-    """Add one leaf row under either a QStandardItem (group) or the model root."""
     container = parent_or_model
     name_item = _make_item(rowdict["name"], rowdict["name"], editable=True)
     name_item.setCheckable(True)
@@ -448,26 +433,6 @@ def rename_groups_sequentially(raw):
 
 
 def build_row_data(groups, model, rows=None, dirty_edges=None):
-    """Build or update row data for the hyperedge tree.
-
-    Parameters
-    ----------
-    groups : dict
-        Mapping of group name -> list of child hyperedges.
-    model : object
-        Session model providing hyperedge metadata.
-    rows : list[dict] | None
-        Existing row data. If ``None`` a full rebuild is performed.
-    dirty_edges : Iterable[str] | None
-        Hyperedge names that have changed. Only these rows will be
-        recomputed when ``rows`` is provided.
-
-    Returns
-    -------
-    list[dict]
-        Updated row data.
-    """
-
     status = model.status_map
 
     if rows is None or not dirty_edges:
@@ -493,18 +458,15 @@ def build_row_data(groups, model, rows=None, dirty_edges=None):
                 )
         return res
 
-    # Incremental update
     membership = {
         child: g for g, children in groups.items() for child in children
     }
     current_edges = set(membership)
-    # Filter out rows for edges no longer present
     res = [r for r in rows if r["name"] in current_edges]
     index = {r["name"]: i for i, r in enumerate(res)}
 
     for edge in dirty_edges:
         if edge not in membership:
-            # Edge was removed; handled by filtering above
             continue
         meta = status[edge]
         stddev = model.similarity_std(edge)
@@ -651,8 +613,6 @@ class MainWin(QMainWindow):
         self._overview_triplets = None
         self.temi_results = {}
         self.bus = SelectionBus()
-        # self.bus.edgesChanged.connect(self._update_bus_images)
-        #self.bus.edgesChanged.connect(print)
         self.bus.edgesChanged.connect(self._remember_last_edge)
         self.bus.edgesChanged.connect(self._record_seen_time)
 
@@ -663,7 +623,6 @@ class MainWin(QMainWindow):
         self._rows = None
         self._dirty_edges: set[str] = set()
 
-        # Track layout changes vs. hyperedge modifications
         self._skip_next_layout = False
         self._layout_timer = QTimer(self)
         self._layout_timer.setSingleShot(True)
@@ -672,7 +631,6 @@ class MainWin(QMainWindow):
         self._skip_reset_timer.setSingleShot(True)
         self._skip_reset_timer.timeout.connect(lambda: setattr(self, "_skip_next_layout", False))
 
-        # ----------------- WIDGET AND DOCK CREATION ------------------------------------
 
         self.tree = HyperEdgeTree(self.bus)
         self.tree_proxy = TreeFilterProxyModel(self)
@@ -692,7 +650,6 @@ class MainWin(QMainWindow):
         self.tree_dock = QDockWidget("Hyperedge List", self)
         self.tree_dock.setWidget(tree_container)
 
-        # --- Buttons / Tools Dock ---
         self.toolbar_dock = QDockWidget("", self)
         toolbar_container = QWidget()
         toolbar_layout = QVBoxLayout(toolbar_container)
@@ -790,11 +747,6 @@ class MainWin(QMainWindow):
         hyperedge_layout.addWidget(self.btn_del_img, 1, 1)
         hyperedge_layout.addWidget(self.btn_manage_visibility, 2, 0, 1, 2)
         hyperedge_group.setLayout(hyperedge_layout)
-        # hyperedge_group.setStyleSheet("""
-        #     QGroupBox { font: bold 10pt;}
-        #     QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 6px; }
-        #     QPushButton { background-color: lightblue; }
-        # """)
         hyperedge_group.setStyleSheet(group_stylesheet("lightblue"))
 
         query_group = QGroupBox("Query")
@@ -806,11 +758,6 @@ class MainWin(QMainWindow):
         query_layout.addWidget(self.text_query, 2, 0, 1, 2)
         query_layout.addWidget(self.btn_rank_text, 3, 0, 1, 2)
         query_group.setLayout(query_layout)
-        # query_group.setStyleSheet("""
-        #     QGroupBox { font: bold 10pt;}
-        #     QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 6px; }
-        #     QPushButton { background-color: papayawhip; }
-        # """)
         query_group.setStyleSheet(group_stylesheet("papayawhip"))
 
         color_group = QGroupBox("Colorize")
@@ -821,11 +768,6 @@ class MainWin(QMainWindow):
         color_layout.addWidget(self.btn_color_similarity, 1, 1)
         color_layout.addWidget(self.btn_color_seen, 2, 0, 1, 2)
         color_group.setLayout(color_layout)
-        # color_group.setStyleSheet("""
-        #     QGroupBox { font: bold 10pt;}
-        #     QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 6px; }
-        #     QPushButton { background-color: thistle; }
-        # """)
         color_group.setStyleSheet(group_stylesheet("thistle"))
 
         overview_group = QGroupBox("Overview")
@@ -835,11 +777,6 @@ class MainWin(QMainWindow):
         overview_layout.addWidget(self.btn_meta_overview, 1, 1)
         overview_layout.addWidget(self.btn_session_stats, 2, 0, 1, 2)
         overview_group.setLayout(overview_layout)
-        # overview_group.setStyleSheet("""
-        #     QGroupBox { font: bold 10pt;}
-        #     QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 6px; }
-        #     QPushButton { background-color: honeydew; }
-        # """)
         overview_group.setStyleSheet(group_stylesheet("honeydew"))
 
         options_group = QGroupBox("Options")
@@ -921,7 +858,6 @@ class MainWin(QMainWindow):
         toolbar_layout.insertWidget(1, self.slider)
 
 
-        # DOCK LAYOUT 
         self.addDockWidget(Qt.LeftDockWidgetArea, self.tree_dock)
 
         self.addDockWidget(Qt.LeftDockWidgetArea, self.toolbar_dock)
@@ -939,7 +875,6 @@ class MainWin(QMainWindow):
         self.resizeDocks([self.spatial_dock, self.matrix_dock], [450, 450], Qt.Horizontal)
 
 
-        #  MENU AND STATE 
         open_act = QAction("&Open Session…", self, triggered=self.open_session)
         new_act = QAction("&New Session…", self, triggered=self.new_session)
         save_act = QAction("&Save", self, triggered=self.save_session)
@@ -1109,6 +1044,8 @@ class MainWin(QMainWindow):
         self.image_grid.update_images(ranked, sort=False, query=True)
 
     def rank_image_file(self):
+        """Rank external image by similarity."""
+
         if not self.model:
             QMessageBox.warning(self, "No Session", "Please load a session first.")
             return
@@ -1195,7 +1132,7 @@ class MainWin(QMainWindow):
         self.image_grid.update_images(list(ranked), sort=False, query=True)
 
     def show_overview(self):
-        """Display triplet overview on the image grid."""
+        """Display overview on the image grid."""
         if not self.model:
             QMessageBox.warning(self, "No Session", "Please load a session first.")
             return
@@ -1205,7 +1142,10 @@ class MainWin(QMainWindow):
         self.image_grid.show_overview(self._overview_triplets, self.model)
 
     def show_metadata_overview(self):
-        """Show a summary of all metadata in a popup window."""
+        """Show a summary of all metadata in a popup window. Allows creation of
+            hyperedges based on meta data as well.
+        
+        """
         if not self.model:
             QMessageBox.warning(self, "No Session", "Please load a session first.")
             return
@@ -1220,7 +1160,7 @@ class MainWin(QMainWindow):
         show_session_stats(self.model, self)
 
     def add_metadata_hyperedges(self, column: str) -> None:
-        """Create hyperedges from a metadata column."""
+        """Create hyperedges from metadata."""
         if not self.model:
             QMessageBox.warning(self, "No Session", "Please load a session first.")
             return
@@ -1238,7 +1178,6 @@ class MainWin(QMainWindow):
         self._skip_next_layout = True
         self.model.add_empty_hyperedge(column)
         self.model.edge_origins[column] = "Metadata"
-        # self.model.edge_colors[column] = "#000000"
         self.model.add_images_to_hyperedge(column, series[valid_mask].index.tolist())
 
         categorical = True
@@ -1315,6 +1254,8 @@ class MainWin(QMainWindow):
 
 
     def new_session(self):
+        """Select folder (including subfolders) with images to start a new session."""
+
         directory = QFileDialog.getExistingDirectory(
             self, "Select image folder", str(DATA_DIRECTORY)
         )
@@ -1531,7 +1472,6 @@ class MainWin(QMainWindow):
                     pass
 
             self.model = SessionModel.load_h5(path)
-            # --- Optional feature extraction ---------------------------------
             if self.model.openclip_features is None:
                 if QMessageBox.question(
                     self,
@@ -1553,7 +1493,6 @@ class MainWin(QMainWindow):
                         self.model.im_list
                     )
 
-            # --- Optional hyperedge generation -------------------------------
             if (
                 self.model.openclip_features is not None
                 and all(orig != "openclip" for orig in self.model.edge_origins.values())
@@ -1778,18 +1717,12 @@ class MainWin(QMainWindow):
         self.regroup()
 
 
-    def _on_layout_changed(self):
-        start15 = time.perf_counter()
-        
-        
+    def _on_layout_changed(self):               
         self._overview_triplets = None
         self.image_grid.invalidate_overview_cache()
-        print('15',time.perf_counter() - start15)
         if self._layout_timer.isActive():
             self._layout_timer.stop()
-        print('16',time.perf_counter() - start15)
         self._layout_timer.start(0)
-        print('17',time.perf_counter() - start15)
 
 
     def _apply_layout_change(self):
@@ -1838,7 +1771,6 @@ class MainWin(QMainWindow):
         parent = item.parent()
         old_name, new_name = item.data(Qt.UserRole), item.text().strip()
 
-        # --- Handle rename -------------------------------------------------
         if old_name != new_name:
             if not self.model.rename_edge(old_name, new_name):
                 item.setText(old_name)
@@ -1853,7 +1785,6 @@ class MainWin(QMainWindow):
             if parent is not None:
                 self._update_group_similarity(parent)
 
-        # --- Handle visibility toggle -------------------------------------
         if item.isCheckable():
             visible = item.checkState() == Qt.Checked
             self.spatial_dock.set_edge_visible(new_name, visible)
@@ -1864,7 +1795,6 @@ class MainWin(QMainWindow):
         sim_item.setData(None, Qt.UserRole); sim_item.setData("", Qt.DisplayRole)
 
     def _update_bus_images(self, names: list[str]):
-        start11 = time.perf_counter()
         if not self.model:
             self.bus.set_images([])
             return
@@ -1876,7 +1806,6 @@ class MainWin(QMainWindow):
                 for child in self.groups[name]:
                     idxs.update(self.model.hyperedges.get(child, set()))
         self.bus.set_images(sorted(idxs))
-        print('11',time.perf_counter()-start11)
 
 
     def _remember_last_edge(self, names: list[str]):
@@ -1958,7 +1887,6 @@ class MainWin(QMainWindow):
     def choose_hidden_edges(self):
         if not self.model:
             return
-
         names = natsorted(self.model.hyperedges)
         dialog = _MultiSelectDialog(names, self)
         hidden = self.spatial_dock.hidden_edges
@@ -1985,7 +1913,6 @@ class MainWin(QMainWindow):
                         it.setCheckState(Qt.Unchecked if it.text() in to_hide else Qt.Checked)
         self.spatial_dock.set_hidden_edges(to_hide)
 
-    # ------------------------------------------------------------------
     def color_edges_default(self):
         """Color hyperedge nodes with the session's stored colors."""
         if not self.model:
@@ -2037,8 +1964,6 @@ class MainWin(QMainWindow):
         denom = max(max_v - min_v, 1e-6)
 
         def interpolate_grey_to_red(norm):
-            """Returns a QColor name from grey to red based on normalized similarity."""
-            # Grey: (150, 150, 150), Red: (255, 0, 0)
             r = int(150 + norm * (255 - 150))
             g = int(150 - norm * 150)
             b = int(150 - norm * 150)
@@ -2121,7 +2046,6 @@ class MainWin(QMainWindow):
         else:
             sim_item.setData(None, Qt.UserRole); sim_item.setData("", Qt.DisplayRole)
 
-# ---------- main -----------------------------------------------------------
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     if SYSTEM_DARK_MODE:

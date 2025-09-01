@@ -1,11 +1,10 @@
-# from PySide6.QtCore import QObject, Signal
 from PyQt5.QtCore import QObject, pyqtSignal as Signal
 
 class SelectionBus(QObject):
-    """Broadcasts the current logical selection across widgets."""
+    """Broadcasts the current selection of hyperedges and images across views."""
 
-    edgesChanged = Signal(list)   # list[str]  – selected hyper-edge names
-    imagesChanged = Signal(list)  # list[int]  – selected image indices
+    edgesChanged = Signal(list)   # selected hyperedge names
+    imagesChanged = Signal(list)  # selected image indices
 
     def set_edges(self, names: list[str]):
         self.edgesChanged.emit(names)

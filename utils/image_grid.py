@@ -51,22 +51,17 @@ class _PixmapLRU:
 
 
 class _ClusterDelegate(QStyledItemDelegate):
-    """
-    Paints a small ⊞/⊟ button on the representative image (pos==0).
-    Emits toggleRequested(index) if that button is clicked.
-    """
 
-    toggleRequested = Signal(QModelIndex)          # emitted when user clicks plus/minus
+    toggleRequested = Signal(QModelIndex) 
 
     def __init__(self, row_info: list[tuple[int, int]], expanded: set[int], parent=None):
         super().__init__(parent)
-        self._row_info = row_info                  # [(cluster_idx, position-within-cluster), ...]
+        self._row_info = row_info    
         self._expanded = expanded
 
-        self._btn_side = 14                        # pixel size of the overlay circle
-        self._btn_margin = 2                       # distance from top‑right corner
+        self._btn_side = 14                        
+        self._btn_margin = 2                     
 
-    # ---------------- painting -------------------------------------------------
     def paint(self, painter, option, index):
         row = index.row()
         if row >= len(self._row_info):
@@ -89,13 +84,11 @@ class _ClusterDelegate(QStyledItemDelegate):
         painter.setBrush(Qt.white)
         painter.drawEllipse(btn_rect)
 
-        # Draw + or – sign
         cx, cy = btn_rect.center().x(), btn_rect.center().y()
         painter.drawLine(btn_rect.left()+3, cy, btn_rect.right()-3, cy)
         if cluster_idx not in self._expanded:
             painter.drawLine(cx, btn_rect.top()+3, cx, btn_rect.bottom()-3)
 
-    # ---------------- click handling ------------------------------------------
     def editorEvent(self, event, model, option, index):
         if (event.type() == QEvent.MouseButtonRelease and
                 event.button() == Qt.LeftButton):
@@ -105,31 +98,27 @@ class _ClusterDelegate(QStyledItemDelegate):
                 return False
 
             cluster_idx, pos = self._row_info[row]
-            if pos != 0:                                # not a rep → nothing to toggle
+            if pos != 0:                                
                 return False
 
-            # same geometry we used in paint()
             r = option.rect
             s = self._btn_side
             btn_rect = QRect(r.right() - s - self._btn_margin,
                              r.top()   + self._btn_margin,
                              s, s)
             if btn_rect.contains(event.pos()):
-                self.toggleRequested.emit(index)        # swallow the event
+                self.toggleRequested.emit(index)        
                 return True
 
-        # otherwise let the default selection machinery run
         return super().editorEvent(event, model, option, index)
 
 
 class _ClickableLabel(QLabel):
-    """Label used for emitting a signal on double click."""
 
     def __init__(self, text: str, parent=None):
         super().__init__(text, parent)
 
 class LazyThumbLabel(QLabel):
-    """QLabel that loads its pixmap on first paint and caches it."""
 
     def __init__(self, path: str | None, w: int, h: int, parent=None):
         super().__init__(parent)
@@ -150,7 +139,6 @@ class LazyThumbLabel(QLabel):
             QTimer.singleShot(0, self._load_async)
 
     def _load_async(self):
-        # still runs on UI thread but outside paint; consider moving to a worker later
         self._pix = load_thumbnail(self._path, self._w, self._h)
         self._loading = False
         self.update()
@@ -162,7 +150,6 @@ class LazyThumbLabel(QLabel):
 
 
 class _ThumbWorker(QObject):
-    """Worker object living in a QThread that loads thumbnails or full images."""
 
     thumbReady = Signal(int, QImage)  # idx, QImage
 
@@ -198,9 +185,8 @@ class _ThumbWorker(QObject):
 
 
 class ImageListModel(QAbstractListModel):
-    """Model that provides thumbnails lazily using a background thread."""
 
-    requestThumb = Signal(int)              # idx → worker
+    requestThumb = Signal(int)              
 
     def __init__(self, session: SessionModel, idxs: list[int], thumb_size: int = 128, parent=None,
                  highlight: dict[int, QColor] | list[int] | set[int] | None = None,
@@ -222,14 +208,12 @@ class ImageListModel(QAbstractListModel):
         self._labels = labels
         self._separators = separators or set()
 
-        # self._pixmaps: dict[int, QPixmap] = {}
         self._cache = _PixmapLRU(max_items=4000)
         self._index_map = {idx: row for row, idx in enumerate(self._indexes)}
         self._placeholder = QPixmap(self._thumb, self._thumb)
         self._placeholder.fill(Qt.gray)
         self._requested: set[int] = set()
 
-        # background worker for loading thumbnails
         self._thread = QThread(self)
         self._worker = _ThumbWorker(self._session, self._thumb, self._use_full)
         self._worker.moveToThread(self._thread)
@@ -242,12 +226,12 @@ class ImageListModel(QAbstractListModel):
             self._thread.quit()
             self._thread.wait()
 
-    def rowCount(self, parent: QModelIndex | None = None) -> int:  # type: ignore[override]
+    def rowCount(self, parent: QModelIndex | None = None) -> int:  
         if parent and parent.isValid():
             return 0
         return len(self._indexes)
 
-    def data(self, index: QModelIndex, role: int = Qt.DisplayRole):  # type: ignore[override]
+    def data(self, index: QModelIndex, role: int = Qt.DisplayRole):  
         if not index.isValid() or not (0 <= index.row() < len(self._indexes)):
             return None
         if role == Qt.DecorationRole:
@@ -268,14 +252,13 @@ class ImageListModel(QAbstractListModel):
                 return self._labels[index.row()]
         return None
 
-    def flags(self, index: QModelIndex) -> Qt.ItemFlags:  # type: ignore[override]
+    def flags(self, index: QModelIndex) -> Qt.ItemFlags:  
         fl = super().flags(index)
         if index.isValid():
             fl |= Qt.ItemIsSelectable | Qt.ItemIsEnabled
         return fl
 
     def _on_thumb_ready(self, idx: int, img: QImage):
-        # If the loader produced a null image, cache the placeholder so the UI stays consistent
         pm = self._placeholder if img.isNull() else QPixmap.fromImage(img)
         self._cache.put(idx, pm)
         self._requested.discard(idx)
@@ -319,7 +302,6 @@ class ImageListModel(QAbstractListModel):
         end = min(len(self._indexes), row + self._preload + 1)
         for r in range(start, end):
             idx = self._indexes[r]
-            # If it's already cached, or already in-flight, skip
             if self._cache.get(idx) is not None or idx in self._requested:
                 continue
             self._requested.add(idx)
@@ -329,7 +311,6 @@ class ImageListModel(QAbstractListModel):
 
 
 class ImageGridDock(QDockWidget):
-    """Dock widget that displays selected images or an overview of triplets."""
 
     labelDoubleClicked = Signal(str)
     historyChanged = Signal()
@@ -407,13 +388,11 @@ class ImageGridDock(QDockWidget):
 
         self._scroll_timer = QTimer(self)
         self._scroll_timer.setSingleShot(True)
-        self._scroll_timer.setInterval(60)  # debounce during fast scrolls
+        self._scroll_timer.setInterval(60)  
 
-        # When user scrolls, coalesce events and then prefetch
         self.view.verticalScrollBar().valueChanged.connect(lambda _: self._scroll_timer.start())
         self.view.horizontalScrollBar().valueChanged.connect(lambda _: self._scroll_timer.start())
 
-        # When the viewport size changes (e.g., window resized), re-evaluate visible range
         self.view.viewport().installEventFilter(self)
 
         self._scroll_timer.timeout.connect(self._prefetch_visible)
@@ -434,12 +413,10 @@ class ImageGridDock(QDockWidget):
         top_left = self.view.indexAt(QPoint(0, 0))
         bottom_right = self.view.indexAt(QPoint(max(0, vp.width() - 1), max(0, vp.height() - 1)))
 
-        # compute visible rows (fallbacks if indexes are invalid)
         start = top_left.row() if top_left.isValid() else 0
         end = bottom_right.row() if bottom_right.isValid() else min(start + 200, model.rowCount() - 1)
         center = (start + end) // 2
 
-        # scale preload to ~2 screens worth
         icon = self.view.iconSize().height()
         spacing = self.view.spacing()
         rows_visible = max(1, vp.height() // max(1, icon + spacing))
@@ -479,7 +456,6 @@ class ImageGridDock(QDockWidget):
             return
         prev_indices = list(self._current_indices)        
         if self._mode == "overview":
-            # switching back to normal grid mode
             self.show_grid()
         if query:
             self._cluster_source_indices = None
@@ -498,7 +474,6 @@ class ImageGridDock(QDockWidget):
                 feats = self.session.features[idxs]
                 sims = SIM_METRIC(ref.reshape(1, -1), feats)[0]
                 idxs = [i for _, i in sorted(zip(sims, idxs), reverse=True)]
-        # determine highlight colors
         is_query = bool(highlight) or query
         highlight_map: dict[int, QColor] = {}
         if isinstance(highlight, dict):
@@ -894,16 +869,13 @@ class ImageGridDock(QDockWidget):
 
 
     def eventFilter(self, obj, event):
-        # existing behavior: double-click on the overview labels
         if isinstance(obj, _ClickableLabel) and event.type() == QEvent.MouseButtonDblClick:
             self.labelDoubleClicked.emit(obj.text())
             return True
 
-        # new: when the list view's viewport resizes, re-evaluate visible range
         if obj is self.view.viewport():
             if event.type() == QEvent.Resize:
                 if hasattr(self, "_scroll_timer"):
-                    self._scroll_timer.start()  # debounce, then _prefetch_visible()
-            # (You could also react to QEvent.Paint here, but Resize is enough.)
+                    self._scroll_timer.start() 
 
         return super().eventFilter(obj, event)

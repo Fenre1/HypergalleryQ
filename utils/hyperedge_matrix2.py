@@ -48,7 +48,6 @@ from .image_utils import (
 
 
 class TooltipManager:
-    """Simple helper to show persistent HTML tooltips."""
 
     def __init__(self, parent_widget):
         from PyQt5.QtWidgets import QLabel
@@ -70,10 +69,6 @@ class TooltipManager:
     def hide(self):
         self.tooltip.hide()
 
-
-# ──────────────────────────────────────────────────────────────────────
-# Helper functions
-# ──────────────────────────────────────────────────────────────────────
 def f1_colour(score: float, max_score: float) -> QColor:
     if max_score == 0:
         return QColor("#555555")
@@ -109,7 +104,7 @@ class HyperedgeHeaderView(QHeaderView):
             txt_h = min(fm.lineSpacing() * self._text_lines, int(s * 0.75))
             sz.setHeight(int(s + txt_h + 2 * self._margin))
         else:
-            txt_w = int(fm.averageCharWidth() * 12)  # room for a few words
+            txt_w = int(fm.averageCharWidth() * 12) 
             sz.setWidth(int(s + txt_w + 2 * self._margin))
         return sz
 
@@ -155,7 +150,7 @@ class HyperedgeHeaderView(QHeaderView):
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        painter.setPen(self.palette().color(QPalette.ButtonText))  # visible text color
+        painter.setPen(self.palette().color(QPalette.ButtonText))  
 
         reference_dim = min(rect.width(), rect.height())
         scaled_font_size = self._BASE_FONT_SIZE * (reference_dim / self._BASE_SECTION_SIZE)
@@ -207,8 +202,6 @@ class HyperedgeHeaderView(QHeaderView):
         painter.restore()
 
 
-
-
 class HyperedgeMatrixModel(QAbstractTableModel):
 
     def __init__(
@@ -256,24 +249,15 @@ class HyperedgeMatrixModel(QAbstractTableModel):
         self.headerDataChanged.emit(Qt.Vertical, 0, len(self._edges) - 1)
 
     def update_edges(self, edges: List[str]) -> None:
-        """Recompute matrix rows/columns for the specified edges.
-
-        This avoids rebuilding the entire matrix when only a subset of
-        hyperedges changed.  If the set of hyperedges in the session no
-        longer matches the model (e.g. edges were removed), the matrix is
-        rebuilt completely.
-        """
         if not self._session or not edges:
             return
 
         session_edges = set(self._session.hyperedges.keys())
-        # Rebuild if any existing edge disappeared
         missing = [e for e in self._edges if e not in session_edges]
         if missing:
             self.set_session(self._session)
             return
 
-        # Handle newly added edges
         added = [e for e in edges if e not in self._edges]
         if added:
             self.beginResetModel()
@@ -288,8 +272,6 @@ class HyperedgeMatrixModel(QAbstractTableModel):
                 self._scores.insert(insert_idx, [0.0] * len(self._edges))
             self.endResetModel()
 
-        # Update overlaps for changed edges
-        # Recompute lengths once to avoid repeated work
         len_cache = {name: len(self._session.hyperedges[name]) for name in self._edges}
         for name in edges:
             if name not in self._edges:
@@ -312,7 +294,6 @@ class HyperedgeMatrixModel(QAbstractTableModel):
                     self._scores[r][c] = score
                     self._scores[c][r] = score
 
-        # Recompute maximum score
         self._max_score = max(
             (score for r, row in enumerate(self._scores) for c, score in enumerate(row) if r != c),
             default=0.0,
@@ -341,10 +322,8 @@ class HyperedgeMatrixModel(QAbstractTableModel):
 
         if role == Qt.DisplayRole:
             return str(self._overlap[r][c])
-
         if role == Qt.TextAlignmentRole:
             return Qt.AlignCenter
-
         if role == Qt.BackgroundRole:
             if r == c:
                 return QColor("#5555FF")
@@ -359,13 +338,10 @@ class HyperedgeMatrixModel(QAbstractTableModel):
 
         if role == Qt.DisplayRole:                          
             return name
-
         if role == Qt.ToolTipRole:
             return name
-
         if role == Qt.DecorationRole and orient in (Qt.Horizontal, Qt.Vertical):
             return self._load_thumb(name)
-
         if role == Qt.SizeHintRole:
             if orient == Qt.Horizontal:
                 return QSize(self._thumb_size, int(self._thumb_size * 1.6))
@@ -376,7 +352,6 @@ class HyperedgeMatrixModel(QAbstractTableModel):
 
     @lru_cache(maxsize=1024)
     def _load_thumb(self, edge_name: str) -> QPixmap:
-        """Load & scale the first image of the hyperedge."""
         if not self._session:
             return QPixmap()
         idxs = sorted(self._session.hyperedges[edge_name])
@@ -403,7 +378,6 @@ class HyperedgeMatrixModel(QAbstractTableModel):
 
 
     def _build_matrix(self):
-        """Pre‑compute overlaps + F1 scores to speed up delegate drawing."""
         edges = self._edges
         sz = len(edges)
         self._overlap = [[0] * sz for _ in range(sz)]
@@ -432,8 +406,6 @@ class HyperedgeMatrixModel(QAbstractTableModel):
 
 
 class HyperedgeMatrixDock(QDockWidget):
-    """Dock widget that shows the overlap matrix with zooming capability."""
-
     _MIN_SIZE = 16
     _MAX_SIZE = 512
     _ZOOM_STEP = 1.15
@@ -514,7 +486,6 @@ class HyperedgeMatrixDock(QDockWidget):
 
 
     def set_model(self, session: SessionModel | None):
-        """Load / clear the matrix."""
         if self._model._session:
             try:
                 self._model._session.edgeRenamed.disconnect(self._on_edge_renamed)
@@ -534,7 +505,6 @@ class HyperedgeMatrixDock(QDockWidget):
             self._model.set_session(self._model._session)
 
     def set_use_full_images(self, flag: bool) -> None:
-        """Forward the image mode to the underlying model."""
         self._use_full = flag
         self._model.set_use_full_images(flag)
 
@@ -550,7 +520,6 @@ class HyperedgeMatrixDock(QDockWidget):
             self._model.headerDataChanged.emit(Qt.Vertical, idx, idx)
             self._view.viewport().update()
 
-    # Zoom stuff
     def zoom_in(self):
         self._set_zoom(self._zoom * self._ZOOM_STEP)
 
@@ -571,19 +540,16 @@ class HyperedgeMatrixDock(QDockWidget):
 
         hh = self._view.horizontalHeader()
         vh = self._view.verticalHeader()
-        hh.setDefaultSectionSize(size)   # column width
-        vh.setDefaultSectionSize(size)   # row height
+        hh.setDefaultSectionSize(size)   
+        vh.setDefaultSectionSize(size)   
 
-        # Provide space for wrapped names
         if isinstance(hh, HyperedgeHeaderView):
             hh.updateGeometryForZoom()
         if isinstance(vh, HyperedgeHeaderView):
             vh.updateGeometryForZoom()
 
-        # repaint everything
         self._model.dataChanged.emit(QModelIndex(), QModelIndex(), [Qt.DecorationRole, Qt.SizeHintRole])
         self._view.viewport().update()
-
 
 
 
@@ -607,9 +573,6 @@ class HyperedgeMatrixDock(QDockWidget):
         if idxs:
             show_image_metadata(self._model._session, idxs[0], self)
 
-
-
-    # Tooltip handling 
     def eventFilter(self, obj, event):
         if obj is self._view.viewport():
             if event.type() == QEvent.MouseMove:
@@ -639,13 +602,11 @@ class HyperedgeMatrixDock(QDockWidget):
             return
 
         if idx != self._pending_index:
-            # Hovering a new cell → (re)start debounce
             self._pending_index = idx
             self._pending_pos = event.pos()
             self.tooltip_manager.hide()
             self._tooltip_timer.start()
         else:
-            # Same cell: if tooltip is visible, just reposition smoothly
             if self.tooltip_manager.tooltip.isVisible():
                 global_pos = self._view.viewport().mapToGlobal(event.pos())
                 self.tooltip_manager.tooltip.move(global_pos + QPoint(15, 10))

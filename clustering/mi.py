@@ -43,9 +43,6 @@ class StudentTeacherLoss(nn.Module, ABC):
         pass
 
     def update_ema(self, output, ema, momentum, use_momentum=True):
-        """
-        Update exponential moving averages for teacher output.
-        """
         if isinstance(output, tuple):
             output = torch.cat(output)
         batch_center = torch.sum(output, dim=0, keepdim=True)

@@ -26,11 +26,6 @@ class ImageFileDataset(Dataset):
     A PyTorch Dataset for loading and transforming images given a list of file paths.
     """
     def __init__(self, file_list, transform, image_size=None):
-        """
-        Args:
-            file_list (List[str]): List of image file paths.
-            transform: A transformation function to apply to each image.
-        """
         self.file_list = file_list
         self.transform = transform
         self.image_size = image_size    
@@ -56,24 +51,14 @@ class FeatureExtractor:
     Extracts features from images using a timm model.
     """
     def __init__(self, model_name: str, batch_size: int = 32):
-        """
-        Initialize the feature extractor.
-
-        Args:
-            model_name (str): The name of the model to be used from timm.
-            batch_size (int, optional): The batch size for processing images.
-                                        Default is 32.
-        """
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model_name = model_name
         self.batch_size = batch_size
 
-        # Load the model from timm; using num_classes=0 removes the final classification layer.
         self.model = timm.create_model(model_name, pretrained=True, num_classes=0)
         self.model.to(self.device)
         self.model.eval()
 
-        # Set up transformation based on the model's default configuration.
         self.transform = timm.data.transforms_factory.create_transform(
             input_size=self.model.default_cfg['input_size']
         )
@@ -109,8 +94,6 @@ class FeatureExtractor:
 
 
 class Swinv2LargeFeatureExtractor(FeatureExtractor):
-    """Convenience wrapper for the SwinV2 large model."""
-
     def __init__(self, batch_size: int = 32):
         super().__init__("swinv2_large_window12to24_192to384", batch_size)
 
@@ -169,19 +152,19 @@ def _download_places365(checkpoint_dir: str | Path = MODEL_DIR / "places365") ->
 
 
 
-_LEGACY_PATTERN = re.compile(r"\.(norm|relu|conv)\.(\d+)")     # ".norm.1" → ".norm1"
+_LEGACY_PATTERN = re.compile(r"\.(norm|relu|conv)\.(\d+)")   
 
 def _remap_legacy_keys(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-    """Convert PyTorch‑0.2 DenseNet key style to modern style."""
+    """Convert PyTorch-0.2 DenseNet key style to modern style."""
     new_state = {}
     for k, v in state_dict.items():
-        k = k.replace("module.", "")                           # DataParallel prefix
+        k = k.replace("module.", "")
         k = _LEGACY_PATTERN.sub(lambda m: f".{m.group(1)}{m.group(2)}", k)
         new_state[k] = v
     return new_state
 
 class DenseNet161Places365FeatureExtractor:
-    """Return 2208‑D global‑pooled features of DenseNet‑161 Places365."""
+    """Return 2208 length features of DenseNet-161-Places365."""
 
     def __init__(
         self,

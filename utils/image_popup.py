@@ -18,7 +18,6 @@ from .feature_extraction import Swinv2LargeFeatureExtractor
 from .image_utils import pixmap_from_file, qimage_from_data
 
 class ZoomPanGraphicsView(QGraphicsView):
-    """Graphics view supporting zooming and shift-drag rectangle selection."""
 
     selectionChanged = Signal(QRectF)
     prevImageRequested = Signal()
@@ -32,7 +31,6 @@ class ZoomPanGraphicsView(QGraphicsView):
         self._rect_item = None
 
     def keyPressEvent(self, event):
-        """Handle Left/Right arrow keys for navigation."""
         if event.key() == Qt.Key_Left:
             self.prevImageRequested.emit()
             event.accept()  
@@ -96,7 +94,6 @@ class ZoomPanGraphicsView(QGraphicsView):
 
 
 class ImageMetadataDialog(QDialog):
-    """Dialog showing a larger image with metadata and ranking tools."""
 
     _extractor: Swinv2LargeFeatureExtractor | None = None
 
@@ -171,9 +168,7 @@ class ImageMetadataDialog(QDialog):
             match = text in combined
             self.table.setRowHidden(row, not match)
 
-    # ------------------------------------------------------------------
     def _on_selection_changed(self, rect: QRectF):
-        """Handle selection rectangle updates from the graphics view."""
         if rect is None or rect.isNull():
             self._sel_rect = None
         else:
@@ -182,7 +177,6 @@ class ImageMetadataDialog(QDialog):
         self.rank_btn.setEnabled(self._session is not None and self._sel_rect is not None)
 
     def _load_image(self, idx: int) -> None:
-        """Load image and metadata for the given session index."""
         self._sel_rect = None
         self.rank_btn.setEnabled(False)
         self.view.clear_selection()

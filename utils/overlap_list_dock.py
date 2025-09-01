@@ -38,11 +38,9 @@ COUNT_ROLE = Qt.UserRole + 2
 
 @lru_cache(maxsize=1024)
 def _scaled_full(path: str, size: int) -> QPixmap:
-    """Load and scale a full image from *path*."""
     return load_thumbnail(path, size, size)
 
 class _OverlapDelegate(QStyledItemDelegate):
-    """Paint hyperedge name with small thumbnails."""
 
     def __init__(
         self,
@@ -85,10 +83,9 @@ class _OverlapDelegate(QStyledItemDelegate):
         path = self._session.im_list[idx]
         return _scaled_full(path, self._thumb)
 
-    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:  # type: ignore[override]
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:  
         painter.save()
 
-        # background & selection
         if option.state & QStyle.State_Selected:
             painter.fillRect(option.rect, option.palette.highlight())
         else:
@@ -130,7 +127,7 @@ class _OverlapDelegate(QStyledItemDelegate):
 
         painter.restore()
 
-    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:  # type: ignore[override]
+    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:  
         fm: QFontMetrics = option.fontMetrics
         name = index.data(NAME_ROLE)
         count = index.data(COUNT_ROLE)
@@ -205,7 +202,7 @@ class OverlapListDock(QDockWidget):
             self.list_widget.addItem(item)
 
         self._last_indices = indices
-    # ------------------------------------------------------------------
+        
     def _on_double_clicked(self, item: QListWidgetItem):
         name = item.data(NAME_ROLE)
         if not name or self.session is None:

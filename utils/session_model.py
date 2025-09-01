@@ -14,7 +14,6 @@ import time
 from .similarity import SIM_METRIC
 
 def generate_n_colors(n: int, saturation: int = 150, value: int = 230) -> list[str]:
-    """Return ``n`` distinct HSV colors converted to hex RGB strings."""
     colors: list[str] = []
     for i in range(max(n, 1)):
         hue = int(360 * i / n) if n else 0
@@ -24,7 +23,6 @@ def generate_n_colors(n: int, saturation: int = 150, value: int = 230) -> list[s
     return colors
 
 def jaccard_similarity(a: Set[int], b: Set[int]) -> float:
-    """Return the Jaccard similarity between two sets."""
     if not a and not b:
         return 1.0
     return len(a & b) / len(a | b)
@@ -32,13 +30,11 @@ def jaccard_similarity(a: Set[int], b: Set[int]) -> float:
 
 
 class SessionModel(QObject):
-    # ─── signals any view can subscribe to ──────────────────────────────
     edgeRenamed      = Signal(str, str)      # old, new
     layoutChanged    = Signal()              # big regroup or reload
     similarityDirty  = Signal()              # vectors changed; views may flush
     hyperedgeModified = Signal(str)
 
-    # ─── construction helpers ───────────────────────────────────────────
     @classmethod
     def load_h5(cls, path: Path) -> "SessionModel":
         with h5py.File(path, "r") as hdf:
@@ -126,7 +122,6 @@ class SessionModel(QObject):
 
 
     def save_h5(self, path: Path | None = None) -> None:
-        """Write current session state to an HDF5 file."""
         target = Path(path) if path else self.h5_path
         if not target.suffix:
             target = target.with_suffix(".h5")
@@ -292,10 +287,8 @@ class SessionModel(QObject):
 
     @property
     def features_unit(self) -> np.ndarray:
-        """Return precomputed unit-normalised feature vectors."""
         return self._features_unit
 
-    # ─── internal helpers (static) ──────────────────────────────────────
     @staticmethod
     def _prepare_hypergraph_structures(df):
         hyperedges = {col: set(np.where(df[col] == 1)[0]) for col in df.columns}
@@ -312,12 +305,6 @@ class SessionModel(QObject):
 
     @staticmethod
     def _sanitize_metadata(df: pd.DataFrame) -> pd.DataFrame:
-        """Return ``df`` with complex objects converted to strings.
-
-        Some EXIF parsers return nested objects that ``pandas``/JSON can't
-        serialise directly. Converting those values to ``str`` ensures the
-        metadata can always be written to disk.
-        """
         return df.applymap(
             lambda x: x
             if isinstance(x, (int, float, str, bool))
@@ -326,7 +313,6 @@ class SessionModel(QObject):
     
     @staticmethod
     def _extract_image_metadata(im_list: List[str]) -> pd.DataFrame:
-        """Return a DataFrame with EXIF metadata for each image."""
         meta_rows = []
         for path in im_list:
             entry = {"image_path": path}
@@ -345,7 +331,6 @@ class SessionModel(QObject):
 
 
     def generate_thumbnails(self, size: tuple[int, int] = (100, 100)) -> None:
-        """Generate thumbnail JPEG bytes for all images."""
         thumbs: List[bytes] = []
         for p in self.im_list:
             try:
@@ -368,7 +353,6 @@ class SessionModel(QObject):
 
     # ------------------------------------------------------------------
     def _update_edit_status(self, name: str, *, renamed: bool = False, modified: bool = False) -> None:
-        """Update the edit status for a hyperedge."""
         entry = self.status_map.get(name)
         if not entry:
             return
@@ -391,17 +375,13 @@ class SessionModel(QObject):
             entry["status"] = "Original"
 
 
-    # ─── public API used by the GUI today ───────────────────────────────
     def rename_edge(self, old: str, new: str) -> bool:
-        """Return True on success, False if duplicate/invalid."""
         new = new.strip()
         if (not new) or (new in self.hyperedges):
             return False
 
         old_indices = self.hyperedges.get(old, set()).copy()
 
-
-        # raw structures -------------------------------------------------
         self.hyperedges[new] = self.hyperedges.pop(old)
         self.df_edges.rename(columns={old: new}, inplace=True)
         self.cat_list[self.cat_list.index(old)] = new
@@ -426,25 +406,15 @@ class SessionModel(QObject):
         
         return True
 
-    # ------------------ NEW METHOD --------------------------------------
     def add_empty_hyperedge(self, name: str) -> None:
         start12 = time.perf_counter()
         """Adds a new, empty hyperedge to the model."""
-        # This assumes 'name' has already been validated for uniqueness and is not empty.
-        # 1. Update hyperedges dictionary
         self.hyperedges[name] = set()
-
-        # 2. Add a new column of zeros to the DataFrame
         self.df_edges[name] = 0
-
-        # 3. Add to the category list
         self.cat_list.append(name)
-
-        # 4. Create a zero-vector for the new edge's average features
         n_features = self.features.shape[1]
         self.hyperedge_avg_features[name] = np.zeros(n_features)
 
-        # 5. Add a status entry for the new edge
         self.status_map[name] = {"uuid": str(uuid.uuid4()), "status": "New"}
         self.edge_origins[name] = "New"
         self.edge_colors[name] = generate_n_colors(len(self.edge_colors) + 1)[-1]
@@ -453,7 +423,6 @@ class SessionModel(QObject):
         cmap_hues = max(idx + 1, 16)
         self.edge_colors[name] = pg.mkColor(pg.intColor(idx, hues=cmap_hues)).name()
         self.edge_seen_times[name] = 0.0
-        # 6. Signal to the UI that the overall layout has changed
         self.overview_triplets = None
         print('12',time.perf_counter() - start12)
         self.layoutChanged.emit()
@@ -462,7 +431,7 @@ class SessionModel(QObject):
         print('14',time.perf_counter() - start12)
 
     def add_images_to_hyperedge(self, name: str, idxs: Iterable[int]) -> None:
-        """Add given image indices to an existing hyperedge."""
+        """Add selected images to an existing hyperedge."""
         if name not in self.hyperedges:
             return
 
@@ -488,7 +457,7 @@ class SessionModel(QObject):
             self.hyperedgeModified.emit(name)
 
     def remove_images_from_edges(self, img_idxs: List[int], edges: List[str]) -> None:
-        """Remove given image indices from the specified hyperedges."""
+        """Remove selected images from the specified hyperedges."""
         changed_edges: set[str] = set()
         for edge in edges:
             if edge not in self.hyperedges:
@@ -507,7 +476,6 @@ class SessionModel(QObject):
                 if idx < len(self.df_edges.index):
                     self.df_edges.at[idx, edge] = 0
 
-            # update average features for this edge
             if members:
                 self.hyperedge_avg_features[edge] = self.features[list(members)].mean(axis=0)
             else:
@@ -524,7 +492,6 @@ class SessionModel(QObject):
                 self.hyperedgeModified.emit(edge)
 
     def delete_hyperedge(self, name: str, orphan_name: str = "orphaned images") -> None:
-        """Remove a hyperedge and reassign lone images to an orphan group."""
         if name not in self.hyperedges:
             return
 
@@ -542,7 +509,6 @@ class SessionModel(QObject):
         if getattr(self, "image_umap", None):
             self.image_umap.pop(name, None)
 
-        # ensure orphan hyperedge exists
         if orphan_name not in self.hyperedges:
             self.hyperedges[orphan_name] = set()
             self.df_edges[orphan_name] = 0
@@ -550,8 +516,6 @@ class SessionModel(QObject):
             n_features = self.features.shape[1]
             self.hyperedge_avg_features[orphan_name] = np.zeros(n_features)
             self.status_map[orphan_name] = {"uuid": str(uuid.uuid4()), "status": "Orphaned"}
-            # cmap_hues = max(len(self.cat_list), 16)
-            # self.edge_colors[orphan_name] = pg.mkColor(pg.intColor(len(self.edge_colors), hues=cmap_hues)).name()
             self.edge_colors[orphan_name] = generate_n_colors(len(self.edge_colors) + 1)[-1]
             self.edge_origins[orphan_name] = "system"
             self.edge_seen_times[orphan_name] = 0.0
@@ -564,10 +528,8 @@ class SessionModel(QObject):
                     self.hyperedges[orphan_name].add(idx)
                     self.df_edges.at[idx, orphan_name] = 1
             if idx < len(self.df_edges.index):
-                # column already removed but ensure value cleared if leftover
                 pass
 
-        # update features for orphan group
         orphans = self.hyperedges[orphan_name]
         if orphans:
             self.hyperedge_avg_features[orphan_name] = self.features[list(orphans)].mean(axis=0)
@@ -608,7 +570,6 @@ class SessionModel(QObject):
             self.delete_hyperedge(name)
 
 
-    # convenience read-only properties -----------------------------------
     def vector_for(self, name: str) -> np.ndarray | None:
         return self.hyperedge_avg_features.get(name)
 
@@ -622,7 +583,6 @@ class SessionModel(QObject):
         return dict(zip(names, sims))
     
     def similarity_std(self, name: str) -> float | None:
-        """Return the standard deviation of image-to-average similarities."""
         idxs = list(self.hyperedges.get(name, []))
         if not idxs:
             return None
@@ -631,9 +591,8 @@ class SessionModel(QObject):
         sims = SIM_METRIC(avg, feats)[0]
         return float(np.std(sims))
 
-    # ------------------------------------------------------------------
     def overview_triplet_for(self, name: str) -> tuple[int | None, ...]:
-        """Return cached representative images for a single edge."""
+        # not actually triplets anymore, but sextets
         if self.overview_triplets is None:
             self.overview_triplets = {}
         trip = self.overview_triplets.get(name)
@@ -679,7 +638,6 @@ class SessionModel(QObject):
         self.overview_triplets[name] = trip
         return trip
 
-    # ------------------------------------------------------------------
     def compute_overview_triplets(self) -> Dict[str, tuple[int | None, ...]]:
         """Return and cache up to six representative image indices per edge."""
         if self.overview_triplets is None:
@@ -694,7 +652,6 @@ class SessionModel(QObject):
     def apply_clustering_matrix(
         self, matrix: np.ndarray, *, prefix: str = "edge", origin: str = "swinv2"
     ) -> None:
-        """Replace current hyperedges with clustering results."""
         if matrix.ndim != 2:
             raise ValueError("clustering matrix must be 2D")
 
@@ -716,11 +673,6 @@ class SessionModel(QObject):
             name: {"uuid": str(uuid.uuid4()), "status": status}
             for name in self.cat_list
         }
-        # cmap_hues = max(len(self.cat_list), 16)
-        # self.edge_colors = {
-        #     name: pg.mkColor(pg.intColor(i, hues=cmap_hues)).name()
-        #     for i, name in enumerate(self.cat_list)
-        # }
         colors = generate_n_colors(len(self.cat_list))
         self.edge_colors = {name: colors[i % len(colors)] for i, name in enumerate(self.cat_list)}
         self.edge_seen_times = {name: 0.0 for name in self.cat_list}
@@ -731,7 +683,6 @@ class SessionModel(QObject):
     def append_clustering_matrix(
         self, matrix: np.ndarray, *, prefix: str = "edge", origin: str = "swinv2"
     ) -> None:
-        """Append new hyperedges from a clustering matrix."""
         if matrix.ndim != 2:
             raise ValueError("clustering matrix must be 2D")
         if matrix.shape[0] != len(self.im_list):
@@ -757,9 +708,6 @@ class SessionModel(QObject):
             )
             status = "Original" if origin == "places365" else "Origin"
             self.status_map[name] = {"uuid": str(uuid.uuid4()), "status": status}
-            # cmap_hues = max(len(self.cat_list), 16)
-            # self.edge_colors[name] = pg.mkColor(
-            #     pg.intColor(len(self.edge_colors), hues=cmap_hues)
             # ).name()
             self.edge_colors[name] = color_list[start_idx + i]
             self.edge_origins[name] = origin

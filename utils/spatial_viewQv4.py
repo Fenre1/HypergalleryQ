@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import os
-os.environ["PYQTGRAPH_QT_LIB"] = "PyQt5"   # force pyqtgraph to PyQt5
-os.environ.pop("QT_API", None)             # avoid other libs nudging Qt differently
+os.environ["PYQTGRAPH_QT_LIB"] = "PyQt5"   # force pyqtgraph to PyQt5, pyside 6 does not want to work properly
+os.environ.pop("QT_API", None)             
 import time
 import numpy as np
 from math import cos, sin, pi
-from time import perf_counter
 import numba as nb
 import umap
 from types import SimpleNamespace
@@ -42,12 +41,10 @@ import time
 
 from .selection_bus import SelectionBus
 from .session_model import SessionModel
-from .similarity import SIM_METRIC       # kept for non‑cosine fallback
+from .similarity import SIM_METRIC  
 from .image_utils import qimage_from_data
 
-THUMB_SIZE = 128
-
-
+THUMB_SIZE = 128 #default thumbnail size.
 
 @nb.njit(fastmath=True, cache=True)
 def _resolve_overlaps_numba(pos, radii, iterations, strength):
@@ -112,7 +109,6 @@ class _RecalcWorker(QtCore.QObject):
         if session is None:
             return
 
-        # If an edge_name is provided, recompute its UMAP (existing logic)
         if edge_name:
             feats_norm = session.features_unit
             mapping: dict[int, np.ndarray] = {}
@@ -126,10 +122,8 @@ class _RecalcWorker(QtCore.QObject):
                         emb = emb / m
                     mapping = {i: emb[k] for k, i in enumerate(idx)}
             self.imageEmbeddingReady.emit(edge_name, mapping)
-            # We only recomputed one image embedding, so we are done for this path.
             return
 
-        # If edge_name is empty, compute the full hyperedge layout (NEW LOGIC)
         edges = list(session.hyperedges)
         if not edges:
             self.layoutReady.emit({})
@@ -244,7 +238,6 @@ class _RecalcWorker(QtCore.QObject):
         self.radialReady.emit(sel_name, offsets, links)
     
 class TooltipManager:
-    """Manages a custom QLabel widget to provide persistent tooltips."""
     def __init__(self, parent_widget: QWidget):
         self.tooltip = QLabel(parent_widget)
         self.tooltip.setWindowFlags(Qt.ToolTip | Qt.FramelessWindowHint)
@@ -273,9 +266,6 @@ class TooltipManager:
         """Hides the tooltip."""
         self.tooltip.hide()
 
-# ---------------------------------------------------------------------------- #
-# Helper view‑boxes                                                            #
-# ---------------------------------------------------------------------------- #
 
 class LassoViewBox(pg.ViewBox):
     sigLassoFinished = Signal(list)
@@ -323,35 +313,12 @@ class MiniMapViewBox(pg.ViewBox):
         else: super().mouseClickEvent(ev)
 
 
-# ---------------------------------------------------------------------------- #
-# Graphics items (now simplified)                                              #
-# ---------------------------------------------------------------------------- #
-# class HyperedgeItem(QGraphicsEllipseItem):
-#     """
-#     Represents a hyperedge. Tooltip logic is handled by the parent view.
-#     It now only stores its name for identification.
-#     """
-#     def __init__(self, name: str, rect):
-#         super().__init__(rect)
-#         self.name = name
-#         # No longer needs hover events; the main view will handle it.
-
 class HyperedgeItem(QGraphicsEllipseItem):
-    """
-    Represents a hyperedge.
-    This version includes a custom, mathematically accurate `contains` method
-    to ensure tooltips only trigger when the cursor is inside the ellipse.
-    """
     def __init__(self, name: str, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = name
 
     def contains(self, pos: QPointF) -> bool:
-        """
-        Overrides the default QGraphicsItem.contains() to use a precise
-        mathematical check for whether a point is inside the ellipse, rather
-        than just its bounding box.
-        """
         rect = self.rect()
         center_x = rect.x() + rect.width() / 2.0
         center_y = rect.y() + rect.height() / 2.0
@@ -368,16 +335,8 @@ class HyperedgeItem(QGraphicsEllipseItem):
 
 
 class ImageScatterItem(pg.ScatterPlotItem):
-    """
-    Represents image nodes. Tooltip logic is handled by the parent view.
-    This class is now just a standard ScatterPlotItem.
-    """
-    # No custom logic needed here anymore.
     pass
 
-# ---------------------------------------------------------------------------- #
-# Main dock widget                                                             #
-# ---------------------------------------------------------------------------- #
 class SpatialViewQDock(QDockWidget):
     requestRecalc = Signal(str)
     requestRadial = Signal(str)    
@@ -394,10 +353,10 @@ class SpatialViewQDock(QDockWidget):
     def __init__(self, bus: SelectionBus, parent=None):
         super().__init__("Spatial Hypergraph", parent)
         self.bus = bus
-        self._layout_version: int | None = None   # current data version
-        self._rendered_version: int | None = None # last version sent to GPU
+        self._layout_version: int | None = None   
+        self._rendered_version: int | None = None 
 
-        self._highlight_anim_duration = 1000  # ms (1 second)
+        self._highlight_anim_duration = 1000  
         self._highlight_anim_steps = 20
         
         self._highlight_timer = QTimer(self)
@@ -409,9 +368,9 @@ class SpatialViewQDock(QDockWidget):
         self._edge_timer = QTimer(self)
         self._edge_timer.setSingleShot(True)
         self._edge_timer.timeout.connect(self._on_edges_deferred)
-        # runtime
+
         self.session: SessionModel | None = None
-        self.fa2_layout: SimpleNamespace | None = None
+        self.fa2_layout: SimpleNamespace | None = None # old version used fa2_layout, maybe i'll change name sometime.
         self.hyperedgeItems: dict[str, HyperedgeItem] = {}
         self.image_scatter: ImageScatterItem | None = None
         self.link_curve: pg.PlotCurveItem | None = None
@@ -429,20 +388,17 @@ class SpatialViewQDock(QDockWidget):
         self._current_edge: str | None = None
         self._pending_edge_names: list[str] = []        
 
-        # limit settings
         self.limit_images_enabled = False
         self.limit_images_value = 10
         self.limit_edges_enabled = False
         self.limit_edges_value = 10
         self._use_full = True
 
-        # fast‑similarity pre‑computes
         self._features_norm: np.ndarray | None = None
         self._centroid_norm: dict[str, np.ndarray] = {}
         self._centroid_sim: dict[str, np.ndarray] = {}
         self._image_umap: dict[str, dict[int, np.ndarray]] = {}
         
-        # background worker for recomputing embeddings
         self._worker_thread = QtCore.QThread(self)
         self._worker = _RecalcWorker()
         self._worker.moveToThread(self._worker_thread)
@@ -453,10 +409,8 @@ class SpatialViewQDock(QDockWidget):
         self._worker.layoutReady.connect(self._on_worker_layout)
         self._worker.radialReady.connect(self._on_worker_radial)        
         
-        # GUI Setup
         self.view = LassoViewBox(); self.view.setBackgroundColor("#444444")
         self.view.sigRangeChanged.connect(self._update_minimap_view)
-        #self.view.sigRangeChanged.connect(self._update_image_layer)      
         self.view.sigRangeChanged.connect(self._update_visibility_on_zoom)
 
     
@@ -465,7 +419,6 @@ class SpatialViewQDock(QDockWidget):
         self.plot = pg.PlotWidget(viewBox=self.view); self.plot.setBackground("#444444")
         self.plot.scene().sigMouseClicked.connect(self._on_click)
 
-        # NEW: Install event filter to centralize hover logic
         self.plot.scene().installEventFilter(self)
 
         self.minimap_view = MiniMapViewBox(enableMenu=False)
@@ -489,8 +442,6 @@ class SpatialViewQDock(QDockWidget):
 
         self.setWidget(w); self._pos_minimap()
 
-        # Bus connections
-        # self.bus.edgesChanged.connect(self._on_edges)
         self.bus.edgesChanged.connect(self._on_edges, type=Qt.QueuedConnection)
         self.bus.imagesChanged.connect(self._on_images)
 
@@ -521,7 +472,6 @@ class SpatialViewQDock(QDockWidget):
         self.legend.move(10, pw.height() - self.legend.height() - 10)
         self.legend.raise_()
 
-    # ------------------------------------------------------------------
     def update_colors(self, mapping: dict[str, str]):
         """Update colors of hyperedge nodes."""
         self.color_map = mapping.copy()
@@ -564,7 +514,6 @@ class SpatialViewQDock(QDockWidget):
         self._update_mini_scatter(); self._update_minimap_view()
         if changed:
             self._radial_cache_by_edge.clear()
-            # self._radial_layout_cache = None  # <<< REMOVE THIS LINE
             self._layout_version = (self._layout_version or 0) + 1
             self._update_image_layer()
         self._update_selected_overlay()
@@ -584,7 +533,6 @@ class SpatialViewQDock(QDockWidget):
         }
         self._update_mini_scatter(); self._update_minimap_view()
         self._radial_cache_by_edge.clear()
-        # self._radial_layout_cache = None  # <<< REMOVE THIS LINE
         self._layout_version = (self._layout_version or 0) + 1
         self._update_image_layer()
         self._update_selected_overlay()
@@ -596,148 +544,25 @@ class SpatialViewQDock(QDockWidget):
     def set_image_limit(self, enabled: bool, value: int):
         self.limit_images_enabled = enabled
         self.limit_images_value = value
-        self._worker.limit_images_enabled = enabled # Update worker state
+        self._worker.limit_images_enabled = enabled 
         self._worker.limit_images_value = value
-        self._radial_cache_by_edge.clear() # Invalidate all caches
+        self._radial_cache_by_edge.clear() 
 
         if self._current_edge:
-            # Request the worker to recompute the radial layout for the current edge
             self.requestRadial.emit(self._current_edge)
 
     def set_intersection_limit(self, enabled: bool, value: int):
         self.limit_edges_enabled = enabled
         self.limit_edges_value = value
-        self._worker.limit_edges_enabled = enabled # Update worker state
+        self._worker.limit_edges_enabled = enabled 
         self._worker.limit_edges_value = value
-        self._radial_cache_by_edge.clear() # Invalidate all caches
+        self._radial_cache_by_edge.clear() 
 
         if self._current_edge:
-            # Request the worker to recompute the radial layout for the current edge
             self.requestRadial.emit(self._current_edge)
 
 
 
-    # ============================================================================ #
-    # Session / model setup (No changes here, kept for context)                    #
-    # ============================================================================ #
-    # def set_model(self, session: SessionModel | None):
-    #     self._clear_scene()
-    #     if self.session:
-    #         try:
-    #             self.session.hyperedgeModified.disconnect(self._on_hyperedge_modified)
-    #         except TypeError:
-    #             pass
-    #         try:
-    #             self.session.edgeRenamed.disconnect(self._on_edge_renamed)
-    #         except TypeError:
-    #             pass
-    #     self.session = session
-    #     self.fa2_layout = None
-    #     self._radial_cache_by_edge = {}
-    #     self._radial_layout_cache = None
-    #     self._layout_version = (self._layout_version or 0) + 1
-
-    #     self._overview_triplets = None
-    #     if session is None:
-    #         return
-    #     self.session.hyperedgeModified.connect(self._on_hyperedge_modified)
-    #     self.session.edgeRenamed.connect(self._on_edge_renamed)
-    #     self.color_map = session.edge_colors.copy()
-    #     # edges = list(session.hyperedges)
-    #     # edge_feats = np.stack([session.hyperedge_avg_features[e] for e in edges]).astype(np.float32)
-    #     # sizes = np.maximum(np.array([np.sqrt(len(session.hyperedges[n])) for n in edges]) * self.NODE_SIZE_SCALER,
-    #     #                    self.MIN_HYPEREDGE_DIAMETER)
-    #     # reducer = umap.UMAP(n_components=2, random_state=42, min_dist=0.8, n_jobs=-1)
-    #     # initial_pos = reducer.fit_transform(edge_feats)
-
-    #     # final_diameters = np.maximum(
-    #     #     np.array([np.sqrt(len(session.hyperedges[n])) for n in edges]) * self.NODE_SIZE_SCALER,
-    #     #     self.MIN_HYPEREDGE_DIAMETER
-    #     # )
-
-    #     # raw_scale = np.max(np.abs(initial_pos))
-    #     # if raw_scale == 0: raw_scale = 1.0
-        
-    #     # pos_for_resolver = initial_pos * (10.0 / raw_scale)        
-    #     # radii_for_resolver = final_diameters / 2.0
-    #     # resolved_pos = _resolve_overlaps(pos_for_resolver, radii_for_resolver)
-    #     # pos = resolved_pos - resolved_pos.mean(axis=0)
-    #     # self.edge_index = {n: i for i, n in enumerate(edges)}
-    #     # self.fa2_layout = SimpleNamespace(names=edges, node_sizes=final_diameters,
-    #     #                                   positions={n: p for n, p in zip(edges, pos)})
-    #     # for name, size in zip(edges, final_diameters):
-    #     #     r = size / 2
-    #     #     # Use the simplified HyperedgeItem
-    #     #     ell = HyperedgeItem(name, QtCore.QRectF(-r, -r, size, size))
-    #     #     col = self.color_map.get(name, '#AAAAAA')
-    #     #     ell.setPen(pg.mkPen(col)); ell.setBrush(pg.mkBrush(col))
-    #     #     self.view.addItem(ell)
-    #     #     ell.setZValue(-1)
-    #     #     self.hyperedgeItems[name] = ell
-    #     self._worker.session = self.session
-    #     # Request a full recompute by passing an empty string
-    #     self.requestRecalc.emit("")
-
-    #     self.hidden_edges.intersection_update(session.hyperedges.keys())
-    #     for n, it in self.hyperedgeItems.items():
-    #         it.setVisible(n not in self.hidden_edges)
-
-    #     self._features_norm = session.features_unit
-    #     self._centroid_norm.clear(); self._centroid_sim.clear()
-    #     self._image_umap = session.image_umap or {}
-
-
-
-
-    #     if not self._image_umap:
-    #         # Precompute global PCA → UMAP if not already done
-    #         if not hasattr(session, "features_pca"):
-    #             pca = IncrementalPCA(n_components=64, batch_size=2048)
-    #             session.features_pca = pca.fit_transform(session.features.astype(np.float32))
-            
-    #         if not hasattr(session, "global_xy"):
-    #             reducer = umap.UMAP(
-    #                 n_components=2,
-    #                 n_neighbors=15,
-    #                 metric="euclidean",
-    #                 random_state=42,
-    #                 n_jobs=-1
-    #             )
-    #             session.global_xy = reducer.fit_transform(session.features_pca)
-
-    #         for edge in edges:
-    #             c = session.hyperedge_avg_features[edge].astype(np.float32)
-    #             c /= max(np.linalg.norm(c), 1e-9)
-    #             self._centroid_norm[edge] = c
-
-    #             idx = list(session.hyperedges[edge])
-    #             self._centroid_sim[edge] = self._features_norm[idx] @ c if idx else np.array([])
-
-    #             if idx:
-    #                 emb = session.global_xy[idx]
-    #                 emb -= emb.mean(0)
-    #                 r = np.linalg.norm(emb, axis=1).max()
-    #                 if r > 0:
-    #                     emb /= r
-    #                 self._image_umap[edge] = dict(zip(idx, emb))
-    #             else:
-    #                 self._image_umap[edge] = {}
-
-    #         session.image_umap = self._image_umap
-    #     else:
-    #         for edge in edges:
-    #             c = session.hyperedge_avg_features[edge].astype(np.float32)
-    #             c /= max(np.linalg.norm(c), 1e-9)
-    #             self._centroid_norm[edge] = c
-
-    #             idx = list(session.hyperedges[edge])
-    #             self._centroid_sim[edge] = self._features_norm[idx] @ c if idx else np.array([])
-
-
-    #     self._refresh_edges()
-    #     self._update_mini_scatter()
-    #     self._update_minimap_view()
-    #     self._pos_minimap()
 
     def set_model(self, session: SessionModel | None):
         startE = time.perf_counter()
@@ -747,7 +572,7 @@ class SpatialViewQDock(QDockWidget):
                 self.session.hyperedgeModified.disconnect(self._on_hyperedge_modified)
                 self.session.edgeRenamed.disconnect(self._on_edge_renamed)
             except TypeError:
-                pass # Ignore errors if not connected
+                pass 
                 
         self.session = session
         self.fa2_layout = None
@@ -818,80 +643,47 @@ class SpatialViewQDock(QDockWidget):
 
 
     def _update_tooltip(self, event: QtGui.QGraphicsSceneMouseEvent):
-        """
-        Main handler for showing/hiding tooltips with a clear priority:
-        1. Image node (small, precise target)
-        2. Hyperedge node (large, general target)
-        """
-        # --- Priority 1: Check for Image Node ---
+        
         if self._should_show_image_tooltip() and self.image_scatter and self.image_scatter.isVisible():
             point = self._get_image_point_at(event.scenePos())
             if point:
                 self._show_image_tooltip(point, event.screenPos())
-                return  # Found image node, so we are done.
+                return  
 
-        # --- Priority 2: Check for Hyperedge Node ---
+        
         if self._should_show_hyperedge_tooltip():
-            # Broad-phase: get all items under cursor (fast, uses bounding boxes)
+        
             items = self.plot.scene().items(event.scenePos())
             for item in items:
                 if isinstance(item, HyperedgeItem):
-                    # Narrow-phase: check if cursor is inside the item's actual shape
+        
                     if item.contains(item.mapFromScene(event.scenePos())):
                         self._show_hyperedge_tooltip(item.name, event.screenPos())
-                        return  # Found hyperedge, so we are done.
+                        return 
 
-        # --- If nothing relevant was found, hide the tooltip ---
+        
         self.tooltip_manager.hide()
-
-    # def _get_image_point_at(self, scene_pos: QPointF):
-    #     """
-    #     Performs a precise hit-test on the image scatter plot.
-    #     Returns the specific point under the cursor, or None.
-    #     """
-    #     if not self.image_scatter or self.image_scatter.points().size == 0:
-    #         return None
-
-    #     # FIX: Ensure we use coordinates relative to the ViewBox, which is the
-    #     # scatter plot's parent. This makes the hit-test reliable.
-    #     view_pos = self.view.mapSceneToView(scene_pos)
-    #     points = self.image_scatter.pointsAt(view_pos)
-    #     if not points:
-    #         return None
-
-    #     # The rest of this is a precise check against the circular point area
-    #     pixel_size = self.view.pixelSize()
-    #     radius = self.image_scatter.opts['size'] * 0.5
-    #     radius_in_scene_coords_sq = (radius * pixel_size[0])**2
-
-    #     for p in points:
-    #         p_pos = p.pos()
-    #         dist_sq = (p_pos.x() - scene_pos.x())**2 + (p_pos.y() - scene_pos.y())**2
-    #         if dist_sq <= radius_in_scene_coords_sq:
-    #             return p  # Return the first point that is a true match
-
-    #     return None
 
       
     def _get_image_point_at(self, scene_pos: QPointF):
-        # 1) Early exit if the scatter plot is invalid or has no points.
+
         if not self.image_scatter or len(self.image_scatter.points()) == 0:
             return None
 
         view_pos = self.view.mapSceneToView(scene_pos)
 
-        # Fast broad-phase: candidates under cursor
+
         points = self.image_scatter.pointsAt(view_pos)
         if len(points) == 0:
             return None
 
-        # Narrow-phase: consistent units (ViewBox data coords)
+
         pixel_width_in_view_coords = self.view.pixelWidth()
         radius = self.image_scatter.opts['size'] * 0.5
         radius_in_view_coords_sq = (radius * pixel_width_in_view_coords) ** 2
 
         for p in points:
-            p_pos = p.pos()  # in view coords
+            p_pos = p.pos()
             dist_sq = (p_pos.x() - view_pos.x())**2 + (p_pos.y() - view_pos.y())**2
             if dist_sq <= radius_in_view_coords_sq:
                 return p
@@ -926,7 +718,6 @@ class SpatialViewQDock(QDockWidget):
         html = f"<b>{name}</b><br>" + "".join(html_parts)
         self.tooltip_manager.show(screen_pos, html)
 
-        # self.tooltip_manager.show(screen_pos, "".join(html_parts))
 
     def _show_image_tooltip(self, point, screen_pos: QPoint):
         if self.session is None:
@@ -964,10 +755,8 @@ class SpatialViewQDock(QDockWidget):
             self._animating_items = []
             return
 
-        # Calculate progress (from 0.0 to 1.0) over the animation duration
         progress = (self._highlight_anim_steps - self._anim_step_count) / self._highlight_anim_steps
         
-        # Use a sine wave for a smooth pulse up and down: sin(pi * x)
         pulse_factor = math.sin(math.pi * progress)
         
         for item in self._animating_items:
@@ -982,11 +771,6 @@ class SpatialViewQDock(QDockWidget):
             item.setPen(pen)
 
         self._anim_step_count -= 1
-
-    
-    # ============================================================================ #
-    # Other methods (unchanged)                                                    #
-    # ============================================================================ #
 
     def _clear_scene(self):
         for it in self.hyperedgeItems.values():
@@ -1039,24 +823,16 @@ class SpatialViewQDock(QDockWidget):
 
 
     def _update_visibility_on_zoom(self):
-        """
-        A very fast function connected to sigRangeChanged.
-        It only toggles the visibility of items, it does not re-calculate them.
-        """
-        # Get the current horizontal view width
         xr, _ = self.view.viewRange()
         view_width = xr[1] - xr[0]
 
-        # Decide if the detailed view should be visible
         is_visible = view_width <= self.zoom_threshold
 
-        # Toggle visibility (this is a very cheap operation)
         if self.image_scatter:
             self.image_scatter.setVisible(is_visible)
         if self.link_curve:
             self.link_curve.setVisible(is_visible)
         
-        # Also hide the tooltip if we zoom out too far
         if not is_visible:
             self.tooltip_manager.hide()
 
@@ -1298,59 +1074,13 @@ class SpatialViewQDock(QDockWidget):
             self._edge_timer.start(0)
 
 
-    # def _on_edges(self, names: list[str]):
-    #     for name, ell in self.hyperedgeItems.items():
-    #         col = self.color_map.get(name, '#AAAAAA')
-    #         ell.setPen(pg.mkPen(col))
-    #         ell.setBrush(pg.mkBrush(col))
-
-    #     self._selected_nodes.clear()
-    #     if len(names) == 1:
-    #         sel = names[0]
-    #         self._current_edge = sel
-    #         self._radial_layout_cache = None
-    #         if self.image_scatter: self.image_scatter.setData([], [])
-    #         if self.link_curve: self.link_curve.setData([], [])
-    #         if self.selected_scatter: self.selected_scatter.setData([], [])
-    #         if self.selected_links: self.selected_links.setData([], [])
-
-    #         if sel in self._radial_cache_by_edge:
-    #             # If layout is cached, use it immediately
-    #             self._radial_layout_cache = self._radial_cache_by_edge[sel]
-    #             self._layout_version = (self._layout_version or 0) + 1
-    #             self._update_image_layer() # Redraw with cached data
-    #         else:
-    #             # Otherwise, request from worker (UI is now clean and responsive)
-    #             if self.session and self.fa2_layout:
-    #                 self._worker.session = self.session
-    #                 self._worker.layout = self.fa2_layout
-    #                 self._worker.image_umap = self._image_umap
-    #                 self._worker.limit_images_enabled = self.limit_images_enabled
-    #                 self._worker.limit_images_value = self.limit_images_value
-    #                 self._worker.limit_edges_enabled = self.limit_edges_enabled
-    #                 self._worker.limit_edges_value = self.limit_edges_value
-    #                 self._worker.hidden_edges = self.hidden_edges.copy()
-    #                 self._worker.edge_index = self.edge_index
-    #                 self._worker.radial_placement_factor = self.radial_placement_factor
-
-    #                 self.requestRadial.emit(sel)
-    #     else:
-    #         # Multiple or no edges selected, clear the detailed view
-    #         self._current_edge = None
-    #         self._radial_layout_cache = None
-    #         self._layout_version = (self._layout_version or 0) + 1
-    #         self._update_image_layer() # This will hide items as the cache is None
 
     def _on_edges_deferred(self):
-        start0 = time.perf_counter()
         names = getattr(self, "_pending_edge_names", [])
-        # ---- original body starts here (unchanged) ----
         for name, ell in self.hyperedgeItems.items():
             col = self.color_map.get(name, '#AAAAAA')
             ell.setPen(pg.mkPen(col))
             ell.setBrush(pg.mkBrush(col))
-        start1 = time.perf_counter()
-        print('1',start1-start0)
         self._selected_nodes.clear()
         if len(names) == 1:
             sel = names[0]
@@ -1360,20 +1090,12 @@ class SpatialViewQDock(QDockWidget):
             if self.link_curve: self.link_curve.setData([], [])
             if self.selected_scatter: self.selected_scatter.setData([], [])
             if self.selected_links: self.selected_links.setData([], [])
-            start2 = time.perf_counter()
-            print('2',start2-start0)
             if sel in self._radial_cache_by_edge:
                 self._radial_layout_cache = self._radial_cache_by_edge[sel]
                 self._layout_version = (self._layout_version or 0) + 1
-                start3 = time.perf_counter()
-                print('3',start3-start0)
                 self._update_image_layer()
-                start4 = time.perf_counter()
-                print('4',start4-start0)
             else:
                 if self.session and self.fa2_layout:
-                    start5 = time.perf_counter()
-                    print('5',start5-start0)
                     self._worker.session = self.session
                     self._worker.layout = self.fa2_layout
                     self._worker.image_umap = self._image_umap
@@ -1385,20 +1107,14 @@ class SpatialViewQDock(QDockWidget):
                     self._worker.edge_index = self.edge_index
                     self._worker.radial_placement_factor = self.radial_placement_factor
                     self.requestRadial.emit(sel)
-                    start6 = time.perf_counter()
-                    print('6',start6-start0)        
         else:
             self._current_edge = None
             self._radial_layout_cache = None
             self._layout_version = (self._layout_version or 0) + 1
             self._update_image_layer()
-            start7 = time.perf_counter()
-            print('7',start7-start0)
-
 
 
     def _on_images(self, idxs: list[int]):
-        start8 = time.perf_counter()
         if not self.session:
             return
 
@@ -1433,17 +1149,10 @@ class SpatialViewQDock(QDockWidget):
                 self._highlight_timer.start()
 
         self._selected_nodes = {(e, i) for i in idxs for e in self.session.image_mapping.get(i, [])}
-        start9 = time.perf_counter()
-        print('9',start9-start8)
-
         self._update_selected_overlay()
-        start10 = time.perf_counter()
-        print('10',start10-start8)
 
 
     def _on_hyperedge_modified(self, name: str):
-        startA = time.perf_counter()
-        print('A',time.perf_counter() - startA)
         if not self.session:
             return
         self._worker.session = self.session
@@ -1451,10 +1160,8 @@ class SpatialViewQDock(QDockWidget):
         names = getattr(self.fa2_layout, "names", [])
         if not names or name not in names:
             self.requestRecalc.emit("")
-        print('A',time.perf_counter() - startA)
 
     def _on_edge_renamed(self, old: str, new: str) -> None:
-        startB = time.perf_counter()
 
         if old in self.hyperedgeItems:
             item = self.hyperedgeItems.pop(old)
@@ -1476,7 +1183,7 @@ class SpatialViewQDock(QDockWidget):
             if hasattr(self, "edge_index") and old in self.edge_index:
                 idx = self.edge_index.pop(old)
                 self.edge_index[new] = idx
-        # Update all cached radial layouts so they no longer reference the old name
+
         def _rename_cache(cache: tuple[dict, list]):
             offs, links = cache
             new_offs = {(new if e == old else e, i): off for (e, i), off in offs.items()}
@@ -1510,12 +1217,8 @@ class SpatialViewQDock(QDockWidget):
         self._abs_pos_cache = {(new if e == old else e, i): pos for (e, i), pos in self._abs_pos_cache.items()}
         if self._overview_triplets is not None and old in self._overview_triplets:
             self._overview_triplets[new] = self._overview_triplets.pop(old)
-        self._update_image_layer()
-        print('B',time.perf_counter() - startB)
-
 
     def _on_worker_image(self, edge: str, mapping: dict):
-        startC = time.perf_counter()
 
         if not self.session:
             return
@@ -1527,12 +1230,10 @@ class SpatialViewQDock(QDockWidget):
         self._radial_layout_cache = None
         self._layout_version = (self._layout_version or 0) + 1        
         self._update_image_layer()
-        print('C',time.perf_counter() - startC)
 
     def _on_worker_layout(self, layout: dict):
         if not self.session:
             return
-        startD = time.perf_counter()
             
         self.plot.setTitle("") # Clear the "Loading..." message
         names = list(layout)
@@ -1570,7 +1271,6 @@ class SpatialViewQDock(QDockWidget):
         self._update_minimap_view()
         self._pos_minimap()
         self._update_image_layer() # Ensure the view is updated
-        print('D',time.perf_counter() - startD)
 
 
     def _on_worker_radial(self, sel_name: str, offsets: dict, links: list):
@@ -1586,13 +1286,11 @@ class SpatialViewQDock(QDockWidget):
 
         scene_pos = ev.scenePos()
 
-        # If we clicked an actual scatter POINT, let the scatter's own handler deal with it
         if self.image_scatter and self.image_scatter.isVisible():
             hit = self._get_image_point_at(scene_pos)
             if hit is not None:
-                return  # do not change hyperedge selection
+                return  
 
-        # Otherwise try to select the top-most hyperedge actually under the cursor
         for it in self.plot.scene().items(scene_pos):
             if isinstance(it, HyperedgeItem) and it.isVisible():
                 if it.contains(it.mapFromScene(scene_pos)):   # precise in-ellipse test
@@ -1600,7 +1298,6 @@ class SpatialViewQDock(QDockWidget):
                     ev.accept()
                     return
 
-        # Clicked empty space: clear selection (unless Shift held)
         if not (QApplication.keyboardModifiers() & Qt.ShiftModifier):
             self.bus.set_edges([])
 
@@ -1657,7 +1354,7 @@ class SpatialViewQDock(QDockWidget):
         offsets = np.array(list(rel.values()), dtype=float)
         abs_pos = centres + offsets
 
-        contained = mpl_path.contains_points(abs_pos)  # center-in test for images is fine
+        contained = mpl_path.contains_points(abs_pos)  
         sel_nodes = {k for k, inside in zip(keys, contained) if inside}
         sel_imgs = [idx for (_e, idx) in sel_nodes]
         if sel_imgs:

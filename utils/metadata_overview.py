@@ -11,7 +11,6 @@ from PyQt5.QtCore import Qt
 
 
 def _summarize_column(series: pd.Series) -> tuple[int, int, str]:
-    """Return ``(valid_count, unique_count, range_or_type)`` for a metadata column."""
 
     valid = [v for v in series.dropna() if str(v).strip() and str(v).lower() not in {"none", "nan"}]
     valid_count = len(valid)
