@@ -1831,6 +1831,33 @@ class MainWin(QMainWindow):
             self.legend_layout.addWidget(lab)
         self.legend_box.show()
 
+
+    def _update_list_colors(self, mapping: dict[str, str]) -> None:
+        """Update icons in the hyperedge list to reflect the colors selected by user."""
+        src_model = self._source_model()
+        if not src_model:
+            return
+        root = src_model.invisibleRootItem()
+
+        def _apply(item: QStandardItem) -> None:
+            name = item.text()
+            col = mapping.get(name)
+            if col:
+                pix = QPixmap(12, 12)
+                pix.fill(QColor(col))
+                item.setIcon(QIcon(pix))
+            else:
+                item.setIcon(QIcon())
+
+        for r in range(root.rowCount()):
+            parent = root.child(r, 0)
+            if parent.hasChildren():
+                for c in range(parent.rowCount()):
+                    _apply(parent.child(c, 0))
+            else:
+                _apply(parent)
+        self.tree.viewport().update()
+
     def _hide_legend(self):
         self.legend_box.hide()
     
@@ -1877,6 +1904,7 @@ class MainWin(QMainWindow):
                         col = QColor.fromHsvF(300 / 360, 1.0, value).name()
                     mapping[name] = col
         self.spatial_dock.update_colors(mapping)
+        self._update_list_colors(mapping)        
         self.spatial_dock.hide_legend()
         self._hide_legend()
 
@@ -1918,6 +1946,7 @@ class MainWin(QMainWindow):
         if not self.model:
             return
         self.spatial_dock.update_colors(self.model.edge_colors)
+        self._update_list_colors(self.model.edge_colors)        
         self.spatial_dock.hide_legend()
         self._hide_legend()
 
@@ -1930,6 +1959,7 @@ class MainWin(QMainWindow):
         colors = {s: color_list[i % len(color_list)] for i, s in enumerate(statuses)}
         mapping = {name: colors[self.model.status_map[name]["status"]] for name in self.model.hyperedges}
         self.spatial_dock.update_colors(mapping)
+        self._update_list_colors(mapping)        
         self.spatial_dock.show_legend(colors)
         self._show_legend(colors)
 
@@ -1942,6 +1972,7 @@ class MainWin(QMainWindow):
         colors = {o: color_list[i % len(color_list)] for i, o in enumerate(origins)}
         mapping = {name: colors[self.model.edge_origins.get(name, "") ] for name in self.model.hyperedges}
         self.spatial_dock.update_colors(mapping)
+        self._update_list_colors(mapping)        
         self.spatial_dock.show_legend(colors)
         self._show_legend(colors)
 
@@ -1976,6 +2007,7 @@ class MainWin(QMainWindow):
             cmap[name] = col
 
         self.spatial_dock.update_colors(cmap)
+        self._update_list_colors(cmap)        
         self.spatial_dock.hide_legend()
         self._hide_legend()
 
