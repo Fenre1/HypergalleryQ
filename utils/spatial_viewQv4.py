@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 os.environ["PYQTGRAPH_QT_LIB"] = "PyQt5"   # force pyqtgraph to PyQt5, pyside 6 does not want to work properly
 os.environ.pop("QT_API", None)             
-import time
 import numpy as np
 from math import cos, sin, pi
 import numba as nb
@@ -37,7 +36,6 @@ import pyqtgraph as pg
 from matplotlib.path import Path as MplPath
 import math
 from sklearn.decomposition import IncrementalPCA
-import time
 
 from .selection_bus import SelectionBus
 from .session_model import SessionModel
@@ -45,6 +43,52 @@ from .similarity import SIM_METRIC
 from .image_utils import qimage_from_data
 
 THUMB_SIZE = 128 #default thumbnail size.
+
+
+class CompactPointMap:
+    """Array-backed index-to-2D-point map used for dense image layout caches."""
+
+    def __init__(self, indices, xy):
+        indices_arr = np.asarray(indices, dtype=np.int64)
+        xy_arr = np.asarray(xy, dtype=np.float32)
+        if indices_arr.size:
+            order = np.argsort(indices_arr)
+            indices_arr = indices_arr[order]
+            xy_arr = xy_arr[order]
+        self.indices = indices_arr
+        self.xy = xy_arr
+
+    @classmethod
+    def from_mapping(cls, mapping):
+        if isinstance(mapping, cls):
+            return mapping
+        if not mapping:
+            return cls([], np.empty((0, 2), dtype=np.float32))
+        items = list(mapping.items())
+        return cls([idx for idx, _ in items], [vec for _, vec in items])
+
+    def get(self, idx: int, default=None):
+        pos = np.searchsorted(self.indices, idx)
+        if pos < len(self.indices) and int(self.indices[pos]) == idx:
+            return self.xy[pos]
+        return default
+
+    def items(self):
+        for idx, vec in zip(self.indices, self.xy):
+            yield int(idx), vec
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __bool__(self):
+        return len(self) > 0
+
+
+def _compact_image_umap(image_umap: dict | None) -> dict:
+    if not image_umap:
+        return {}
+    return {edge: CompactPointMap.from_mapping(mapping) for edge, mapping in image_umap.items()}
+
 
 @nb.njit(fastmath=True, cache=True)
 def _resolve_overlaps_numba(pos, radii, iterations, strength):
@@ -87,6 +131,7 @@ def _resolve_overlaps(positions: np.ndarray, radii: np.ndarray,
 
 class _RecalcWorker(QtCore.QObject):
     imageEmbeddingReady = Signal(str, dict)
+    imageLayoutReady = Signal(object, dict)
     layoutReady = Signal(dict)
     radialReady = Signal(str, dict, list)
 
@@ -94,7 +139,7 @@ class _RecalcWorker(QtCore.QObject):
         super().__init__(parent)
         self.session: SessionModel | None = None
         self.layout: SimpleNamespace | None = None
-        self.image_umap: dict[str, dict[int, np.ndarray]] = {}
+        self.image_umap: dict[str, CompactPointMap] = {}
         self.limit_images_enabled = False
         self.limit_images_value = 10
         self.limit_edges_enabled = False
@@ -148,6 +193,57 @@ class _RecalcWorker(QtCore.QObject):
 
         layout = {n: (pos[i], diameters[i]) for i, n in enumerate(edges)}
         self.layoutReady.emit(layout)
+
+    @pyqtSlot()
+    def prepare_image_layout(self):
+        session = self.session
+        if session is None:
+            self.imageLayoutReady.emit(None, {})
+            return
+
+        if session.image_umap:
+            self.imageLayoutReady.emit(session, session.image_umap)
+            return
+
+        edges = list(session.hyperedges)
+        if not edges:
+            self.imageLayoutReady.emit(session, {})
+            return
+
+        features = session.features.astype(np.float32, copy=False)
+        n_pca = min(64, features.shape[0], features.shape[1])
+        if n_pca <= 1:
+            features_pca = features[:, :1]
+        else:
+            pca = IncrementalPCA(n_components=n_pca, batch_size=2048)
+            features_pca = pca.fit_transform(features)
+
+        if features.shape[0] < 3:
+            global_xy = np.zeros((features.shape[0], 2), dtype=np.float32)
+        else:
+            reducer = umap.UMAP(
+                n_components=2,
+                n_neighbors=min(15, features.shape[0] - 1),
+                metric="euclidean",
+                random_state=42,
+                n_jobs=-1,
+            )
+            global_xy = reducer.fit_transform(features_pca)
+
+        image_umap: dict[str, CompactPointMap] = {}
+        for edge in edges:
+            idx = list(session.hyperedges[edge])
+            if idx:
+                emb = global_xy[idx].copy()
+                emb -= emb.mean(0)
+                r = np.linalg.norm(emb, axis=1).max()
+                if r > 0:
+                    emb /= r
+                image_umap[edge] = CompactPointMap(idx, emb)
+            else:
+                image_umap[edge] = CompactPointMap([], np.empty((0, 2), dtype=np.float32))
+
+        self.imageLayoutReady.emit(session, image_umap)
 
     @pyqtSlot(str)
     def compute_radial(self, sel_name: str):
@@ -339,6 +435,7 @@ class ImageScatterItem(pg.ScatterPlotItem):
 
 class SpatialViewQDock(QDockWidget):
     requestRecalc = Signal(str)
+    requestImageLayout = Signal()
     requestRadial = Signal(str)    
     MIN_HYPEREDGE_DIAMETER = 0.5
     NODE_SIZE_SCALER       = 0.1
@@ -397,15 +494,18 @@ class SpatialViewQDock(QDockWidget):
         self._features_norm: np.ndarray | None = None
         self._centroid_norm: dict[str, np.ndarray] = {}
         self._centroid_sim: dict[str, np.ndarray] = {}
-        self._image_umap: dict[str, dict[int, np.ndarray]] = {}
+        self._image_umap: dict[str, CompactPointMap] = {}
+        self._image_layout_ready = False
         
         self._worker_thread = QtCore.QThread(self)
         self._worker = _RecalcWorker()
         self._worker.moveToThread(self._worker_thread)
         self.requestRecalc.connect(self._worker.recompute)
+        self.requestImageLayout.connect(self._worker.prepare_image_layout)
         self.requestRadial.connect(self._worker.compute_radial)        
         self._worker_thread.start()
         self._worker.imageEmbeddingReady.connect(self._on_worker_image)
+        self._worker.imageLayoutReady.connect(self._on_worker_image_layout)
         self._worker.layoutReady.connect(self._on_worker_layout)
         self._worker.radialReady.connect(self._on_worker_radial)        
         
@@ -548,7 +648,7 @@ class SpatialViewQDock(QDockWidget):
         self._worker.limit_images_value = value
         self._radial_cache_by_edge.clear() 
 
-        if self._current_edge:
+        if self._current_edge and self._image_layout_ready:
             self.requestRadial.emit(self._current_edge)
 
     def set_intersection_limit(self, enabled: bool, value: int):
@@ -558,14 +658,13 @@ class SpatialViewQDock(QDockWidget):
         self._worker.limit_edges_value = value
         self._radial_cache_by_edge.clear() 
 
-        if self._current_edge:
+        if self._current_edge and self._image_layout_ready:
             self.requestRadial.emit(self._current_edge)
 
 
 
 
     def set_model(self, session: SessionModel | None):
-        startE = time.perf_counter()
         self._clear_scene()
         if self.session:
             try:
@@ -580,6 +679,10 @@ class SpatialViewQDock(QDockWidget):
         self._radial_layout_cache = None
         self._layout_version = (self._layout_version or 0) + 1
         self._overview_triplets = None
+        self._image_layout_ready = False
+        self._worker.session = None
+        self._worker.layout = None
+        self._worker.image_umap = {}
 
         if session is None:
             return
@@ -588,58 +691,23 @@ class SpatialViewQDock(QDockWidget):
         self.session.edgeRenamed.connect(self._on_edge_renamed)
         self.color_map = session.edge_colors.copy()
 
-        edges = list(session.hyperedges)
-
-        self.plot.setTitle("Calculating hypergraph layout...")
         self._worker.session = self.session
-        self.requestRecalc.emit("") 
         self.hidden_edges.intersection_update(session.hyperedges.keys())
         self._features_norm = session.features_unit
         self._centroid_norm.clear()
         self._centroid_sim.clear()
-        self._image_umap = session.image_umap or {}
-
-        if not self._image_umap:
-            if not hasattr(session, "features_pca"):
-                pca = IncrementalPCA(n_components=64, batch_size=2048)
-                session.features_pca = pca.fit_transform(session.features.astype(np.float32))
-            
-            if not hasattr(session, "global_xy"):
-                reducer = umap.UMAP(
-                    n_components=2,
-                    n_neighbors=15,
-                    metric="euclidean",
-                    random_state=42,
-                    n_jobs=-1
-                )
-                session.global_xy = reducer.fit_transform(session.features_pca)
-
-            for edge in edges:
-                c = session.hyperedge_avg_features[edge].astype(np.float32)
-                c /= max(np.linalg.norm(c), 1e-9)
-                self._centroid_norm[edge] = c
-
-                idx = list(session.hyperedges[edge])
-                self._centroid_sim[edge] = self._features_norm[idx] @ c if idx else np.array([])
-
-                if idx:
-                    emb = session.global_xy[idx]
-                    emb -= emb.mean(0)
-                    r = np.linalg.norm(emb, axis=1).max()
-                    if r > 0: emb /= r
-                    self._image_umap[edge] = dict(zip(idx, emb))
-                else:
-                    self._image_umap[edge] = {}
+        self._image_umap = _compact_image_umap(session.image_umap)
+        if self._image_umap:
             session.image_umap = self._image_umap
-        else:
-            for edge in edges:
-                c = session.hyperedge_avg_features[edge].astype(np.float32)
-                c /= max(np.linalg.norm(c), 1e-9)
-                self._centroid_norm[edge] = c
+        self._image_layout_ready = bool(self._image_umap)
 
-                idx = list(session.hyperedges[edge])
-                self._centroid_sim[edge] = self._features_norm[idx] @ c if idx else np.array([])
-        print("E",time.perf_counter()-startE)
+        title = "Calculating hypergraph layout..."
+        if not self._image_layout_ready:
+            title = "Calculating hypergraph and image layouts..."
+        self.plot.setTitle(title)
+        self.requestRecalc.emit("")
+        if not self._image_layout_ready:
+            self.requestImageLayout.emit()
 
 
     def _update_tooltip(self, event: QtGui.QGraphicsSceneMouseEvent):
@@ -1095,6 +1163,8 @@ class SpatialViewQDock(QDockWidget):
                 self._layout_version = (self._layout_version or 0) + 1
                 self._update_image_layer()
             else:
+                if not self._image_layout_ready:
+                    return
                 if self.session and self.fa2_layout:
                     self._worker.session = self.session
                     self._worker.layout = self.fa2_layout
@@ -1218,10 +1288,27 @@ class SpatialViewQDock(QDockWidget):
         if self._overview_triplets is not None and old in self._overview_triplets:
             self._overview_triplets[new] = self._overview_triplets.pop(old)
 
+    def _on_worker_image_layout(self, session: object, mapping: dict):
+        if session is not self.session:
+            return
+        mapping = _compact_image_umap(mapping)
+        self._image_umap = mapping
+        if self.session is not None:
+            self.session.image_umap = mapping
+        self._image_layout_ready = True
+        self._radial_cache_by_edge.clear()
+        self._radial_layout_cache = None
+        self._layout_version = (self._layout_version or 0) + 1
+        if self.fa2_layout is not None:
+            self.plot.setTitle("")
+        if self._current_edge and self.fa2_layout is not None:
+            self.requestRadial.emit(self._current_edge)
+
     def _on_worker_image(self, edge: str, mapping: dict):
 
         if not self.session:
             return
+        mapping = CompactPointMap.from_mapping(mapping)
         self._image_umap[edge] = mapping
         if self.session.image_umap is None:
             self.session.image_umap = {}
@@ -1235,7 +1322,7 @@ class SpatialViewQDock(QDockWidget):
         if not self.session:
             return
             
-        self.plot.setTitle("") # Clear the "Loading..." message
+        self.plot.setTitle("" if self._image_layout_ready else "Calculating image layout...")
         names = list(layout)
         node_sizes = np.array([layout[n][1] for n in names])
         positions = {n: layout[n][0] for n in names}

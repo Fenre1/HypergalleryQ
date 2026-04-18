@@ -176,7 +176,7 @@ class MultiHeadClassifier(nn.Module):
 
             # accumulate outputs
             _out = torch.stack(_out.chunk(len(batch_idx)))
-            output.index_copy_(0, batch_idx.cuda(), _out)
+            output.index_copy_(0, batch_idx.to(output.device), _out)
             start_idx = end_idx
         output = torch.cat(torch.unbind(output))
         return (output - self.embed_mean) / self.embed_std

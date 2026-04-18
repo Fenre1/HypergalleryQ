@@ -2,7 +2,7 @@ import os
 os.environ["PYQTGRAPH_QT_LIB"] = "PyQt5"   
 os.environ.pop("QT_API", None)             
 
-import sys, uuid, numpy as np
+import sys, uuid
 import pandas as pd
 import numpy as np
 from utils.similarity import SIM_METRIC
@@ -62,9 +62,7 @@ from PyQt5.QtCore import (
     QRectF
 )
 
-from utils.data_loader import (
-    DATA_DIRECTORY, get_h5_files_in_directory, load_session_data
-)
+from utils.data_loader import DATA_DIRECTORY, load_session_data
 from utils.selection_bus import SelectionBus
 from utils.session_model import SessionModel, generate_n_colors
 from utils.image_grid import ImageGridDock
@@ -81,7 +79,6 @@ from utils.session_stats import show_session_stats
 from utils.metadata_overview import show_metadata_overview
 from clustering.temi_clustering import temi_cluster
 from clustering.fuzzy_cmeans import fuzzy_cmeans_cluster
-import pyqtgraph as pg
 try:
     import darkdetect
     SYSTEM_DARK_MODE = darkdetect.isDark()
@@ -399,23 +396,41 @@ def calculate_similarity_matrix(vecs):
 
 
 def perform_hierarchical_grouping(model, thresh=0.8):
-    vecs   = model.hyperedge_avg_features.copy()
-    comp   = {k: [k] for k in vecs}
-    counts = {k: 1     for k in vecs}
+    names = list(model.hyperedge_avg_features)
+    if not names:
+        return {}
 
-    while len(vecs) > 1:
-        sim = calculate_similarity_matrix(vecs)
-        if sim.empty or sim.values.max() < thresh:
+    vectors = np.asarray([model.hyperedge_avg_features[n] for n in names], dtype=np.float32)
+    comp = {name: [name] for name in names}
+    counts = {name: 1 for name in names}
+
+    while len(names) > 1:
+        sim = SIM_METRIC(vectors, vectors)
+        np.fill_diagonal(sim, -np.inf)
+
+        col_max = sim.max(axis=0)
+        best = float(col_max.max())
+        if best < thresh:
             break
-        col = sim.max().idxmax()
-        row = sim[col].idxmax()
+
+        col_idx = int(np.argmax(col_max))
+        row_idx = int(np.argmax(sim[:, col_idx]))
+        row = names[row_idx]
+        col = names[col_idx]
 
         new = f"temp_{uuid.uuid4()}"
         c1, c2 = counts[row], counts[col]
-        vecs[new] = (vecs[row] * c1 + vecs[col] * c2) / (c1 + c2)
+        new_vec = (vectors[row_idx] * c1 + vectors[col_idx] * c2) / (c1 + c2)
         comp[new] = comp.pop(row) + comp.pop(col)
         counts[new] = c1 + c2
-        vecs.pop(row), vecs.pop(col)
+
+        drop = {row_idx, col_idx}
+        keep = [i for i in range(len(names)) if i not in drop]
+        names = [names[i] for i in keep] + [new]
+        vectors = np.vstack([vectors[keep], new_vec[None, :]])
+        counts.pop(row, None)
+        counts.pop(col, None)
+
     return comp
 
 
@@ -630,6 +645,10 @@ class MainWin(QMainWindow):
         self._skip_reset_timer = QTimer(self)
         self._skip_reset_timer.setSingleShot(True)
         self._skip_reset_timer.timeout.connect(lambda: setattr(self, "_skip_next_layout", False))
+        self._regroup_timer = QTimer(self)
+        self._regroup_timer.setSingleShot(True)
+        self._regroup_timer.setInterval(150)
+        self._regroup_timer.timeout.connect(self.regroup)
 
 
         self.tree = HyperEdgeTree(self.bus)
@@ -899,11 +918,7 @@ class MainWin(QMainWindow):
         self.temi_results = {}
 
 
-        self.slider.valueChanged.connect(self.regroup)
-
-        files = get_h5_files_in_directory()
-        if files:
-            self.load_session(Path(DATA_DIRECTORY) / files[0])
+        self.slider.valueChanged.connect(self._schedule_regroup)
 
 
     def on_add_hyperedge(self):
@@ -2011,8 +2026,12 @@ class MainWin(QMainWindow):
         self.spatial_dock.hide_legend()
         self._hide_legend()
 
+    def _schedule_regroup(self):
+        thr = self.slider.value() / 100
+        self.label.setText(f"Grouping threshold: {thr:.2f}")
+        self._regroup_timer.start()
+
     def regroup(self):
-        startF = time.perf_counter()
         if not self.model: 
             return
         thr = self.slider.value() / 100
@@ -2020,7 +2039,6 @@ class MainWin(QMainWindow):
 
         old_groups = getattr(self, "groups", None)
         self.groups = rename_groups_sequentially(perform_hierarchical_grouping(self.model, thresh=thr))
-        print('F1',time.perf_counter()-startF)
 
         dirty_edges = set(getattr(self, "_dirty_edges", set()))
         dirty = set(dirty_edges)
@@ -2048,24 +2066,15 @@ class MainWin(QMainWindow):
             "Std. Dev.",
             "Intersection",
         ]
-        print('F2',time.perf_counter()-startF)
         model = build_qmodel(rows, headers)
-        print('F3',time.perf_counter()-startF)
         model.itemChanged.connect(self._on_item_changed)
-        print('F4',time.perf_counter()-startF)
         self.tree_proxy.setSourceModel(model)
-        print('F5',time.perf_counter()-startF)
         self.tree.setModel(self.tree_proxy)
-        print('F6',time.perf_counter()-startF)
         self.tree.sortByColumn(0, Qt.AscendingOrder)
-        print('F7',time.perf_counter()-startF)
         self.tree.selectionModel().selectionChanged.connect(self.tree._send_bus_update)
-        print('F8',time.perf_counter()-startF)
         self.tree.collapseAll()
-        print('F9',time.perf_counter()-startF)
         if hasattr(self, 'matrix_dock') and dirty_edges:
             self.matrix_dock.update_matrix(dirty_edges)
-        print('F10',time.perf_counter()-startF)
 
     def _update_group_similarity(self, group_item: QStandardItem):
         vals = [v for v in (group_item.child(r, SIM_COL).data(Qt.UserRole) for r in range(group_item.rowCount())) if v is not None]

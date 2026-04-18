@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QPixmap, QIcon, QImage, QPainter, QPen, QColor, QImageReader
 from PyQt5.QtCore import (
     Qt, QAbstractListModel, QModelIndex, QSize, QObject, QThread,
-    pyqtSignal as Signal, QEvent, QTimer, QRect, QPoint
+    pyqtSignal as Signal, pyqtSlot, QEvent, QTimer, QRect, QPoint
 )
 from pathlib import Path
 import hashlib
@@ -183,6 +183,35 @@ class _ThumbWorker(QObject):
         self.thumbReady.emit(idx, img)
 
 
+class _ClusterWorker(QObject):
+    clusterReady = Signal(object, object, list)
+
+    @pyqtSlot(object, object, int)
+    def cluster(self, session: SessionModel, key, slider_val: int):
+        idxs = list(key[1])
+        n = len(idxs)
+        n_clusters = max(1, int(n * (100 - slider_val) / 100))
+
+        if n_clusters >= n:
+            clusters = [(i, [i]) for i in idxs]
+        else:
+            feats = session.features[idxs]
+            clust = AgglomerativeClustering(n_clusters=n_clusters, linkage="ward")
+            labels_arr = clust.fit_predict(feats)
+            clusters = []
+            for lbl in np.unique(labels_arr):
+                mask = labels_arr == lbl
+                cluster_indices = [idxs[i] for i in range(n) if mask[i]]
+                cluster_feats = feats[mask]
+                avg = cluster_feats.mean(axis=0, keepdims=True)
+                sims = SIM_METRIC(avg, cluster_feats)[0]
+                best = cluster_indices[int(np.argmax(sims))]
+                clusters.append((best, cluster_indices))
+            clusters.sort(key=lambda c: len(c[1]), reverse=True)
+
+        self.clusterReady.emit(session, key, clusters)
+
+
 
 class ImageListModel(QAbstractListModel):
 
@@ -221,10 +250,13 @@ class ImageListModel(QAbstractListModel):
         self._worker.thumbReady.connect(self._on_thumb_ready)
         self._thread.start()
 
-    def __del__(self):
+    def shutdown(self):
         if self._thread.isRunning():
             self._thread.quit()
             self._thread.wait()
+
+    def __del__(self):
+        self.shutdown()
 
     def rowCount(self, parent: QModelIndex | None = None) -> int:  
         if parent and parent.isValid():
@@ -314,6 +346,7 @@ class ImageGridDock(QDockWidget):
 
     labelDoubleClicked = Signal(str)
     historyChanged = Signal()
+    requestClusters = Signal(object, object, int)
     def __init__(self, bus: SelectionBus, parent=None, thumb_size: int = 128):
         super().__init__("Images", parent)
         self.bus = bus
@@ -383,6 +416,16 @@ class ImageGridDock(QDockWidget):
         self._clusters: list[tuple[int, list[int]]] = []
         self._expanded_clusters: set[int] = set()
         self._row_info: list[tuple[int, int]] = []     
+        self._cluster_cache: OrderedDict[tuple, list[tuple[int, list[int]]]] = OrderedDict()
+        self._cluster_cache_cap = 8
+        self._pending_cluster_key = None
+
+        self._cluster_thread = QThread(self)
+        self._cluster_worker = _ClusterWorker()
+        self._cluster_worker.moveToThread(self._cluster_thread)
+        self.requestClusters.connect(self._cluster_worker.cluster)
+        self._cluster_worker.clusterReady.connect(self._on_clusters_ready)
+        self._cluster_thread.start()
 
         self.view.doubleClicked.connect(self._on_double_clicked)
 
@@ -439,6 +482,8 @@ class ImageGridDock(QDockWidget):
         self.session = model
         self._history.clear()
         self._history_index = -1
+        self._cluster_cache.clear()
+        self._pending_cluster_key = None
         self.historyChanged.emit()
         self.update_images([])
 
@@ -451,7 +496,11 @@ class ImageGridDock(QDockWidget):
         labels: list[str] | None = None,
         separators: set[int] | None = None,
     ) -> None:
+        old_model = self.view.model()
         if self.session is None:
+            if isinstance(old_model, ImageListModel):
+                old_model.shutdown()
+                old_model.deleteLater()
             self.view.setModel(None)
             return
         prev_indices = list(self._current_indices)        
@@ -529,6 +578,9 @@ class ImageGridDock(QDockWidget):
             separators=separators,
         )
         self.view.setModel(model)
+        if isinstance(old_model, ImageListModel):
+            old_model.shutdown()
+            old_model.deleteLater()
         self.view.selectionModel().selectionChanged.connect(self._on_selection_changed)
         QTimer.singleShot(0, self._prefetch_visible)
 
@@ -657,7 +709,7 @@ class ImageGridDock(QDockWidget):
     def _show_clusters(self):
         if not self.session or self._cluster_source_indices is None:
             return
-        idxs = self._cluster_source_indices
+        idxs = list(self._cluster_source_indices)
         n = len(idxs)
         if n == 0:
             self.update_images([])
@@ -665,26 +717,40 @@ class ImageGridDock(QDockWidget):
 
         slider_val = self.cluster_slider.value()
         n_clusters = max(1, int(n * (100 - slider_val) / 100))
+        key = (id(self.session), tuple(idxs), slider_val)
 
-        clusters: list[tuple[int, list[int]]] = []
         if n_clusters >= n:
-            clusters = [(i, [i]) for i in idxs]
-        else:
-            feats = self.session.features[idxs]
-            clust = AgglomerativeClustering(n_clusters=n_clusters, linkage="ward")
-            labels_arr = clust.fit_predict(feats)
-            for lbl in np.unique(labels_arr):
-                mask = labels_arr == lbl
-                cluster_indices = [idxs[i] for i in range(n) if mask[i]]
-                cluster_feats = feats[mask]
-                avg = cluster_feats.mean(axis=0, keepdims=True)
-                sims = SIM_METRIC(avg, cluster_feats)[0]
-                best = cluster_indices[int(np.argmax(sims))]
-                clusters.append((best, cluster_indices))
-            clusters.sort(key=lambda c: len(c[1]), reverse=True)
+            self._clusters = [(i, [i]) for i in idxs]
+            self._expanded_clusters = set()
+            self._build_cluster_view()
+            return
+
+        cached = self._cluster_cache.get(key)
+        if cached is not None:
+            self._cluster_cache.move_to_end(key)
+            self._clusters = cached
+            self._expanded_clusters = set()
+            self._build_cluster_view()
+            return
+
+        self._pending_cluster_key = key
+        self.requestClusters.emit(self.session, key, slider_val)
+
+    def _on_clusters_ready(self, session: SessionModel, key, clusters: list[tuple[int, list[int]]]):
+        if session is not self.session:
+            return
+
+        self._cluster_cache[key] = clusters
+        self._cluster_cache.move_to_end(key)
+        while len(self._cluster_cache) > self._cluster_cache_cap:
+            self._cluster_cache.popitem(last=False)
+
+        if key != self._pending_cluster_key:
+            return
 
         self._clusters = clusters
         self._expanded_clusters = set()
+        self._pending_cluster_key = None
         self._build_cluster_view()
 
 
@@ -879,3 +945,12 @@ class ImageGridDock(QDockWidget):
                     self._scroll_timer.start() 
 
         return super().eventFilter(obj, event)
+
+    def closeEvent(self, event):
+        model = self.view.model()
+        if isinstance(model, ImageListModel):
+            model.shutdown()
+        if self._cluster_thread.isRunning():
+            self._cluster_thread.quit()
+            self._cluster_thread.wait()
+        super().closeEvent(event)
