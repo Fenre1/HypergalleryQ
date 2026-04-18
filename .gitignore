@@ -6,3 +6,5 @@ utils/old/
 clustering/old/
 spatialOptimizer/
 models/
+.venv/
+venv/  

@@ -38,9 +38,13 @@ from PyQt5.QtWidgets import (
     QGroupBox,
     QCheckBox,
     QHBoxLayout,
+    QFormLayout,
     QGridLayout,
     QComboBox,
-    QProgressDialog
+    QProgressDialog,
+    QSpinBox,
+    QDoubleSpinBox,
+    QTabWidget,
 )
  
 from PyQt5.QtGui import (
@@ -55,6 +59,7 @@ from PyQt5.QtGui import (
 from PyQt5.QtCore import (
     Qt,
     QSignalBlocker,
+    QSettings,
     QObject,
     pyqtSignal as Signal,
     QTimer,
@@ -77,6 +82,8 @@ from utils.feature_extraction import (
 from utils.file_utils import get_image_files
 from utils.session_stats import show_session_stats
 from utils.metadata_overview import show_metadata_overview
+from utils.metadata_hyperedges import MetadataBinSettings, plan_metadata_hyperedges
+from utils.app_settings import AppSettings
 from clustering.temi_clustering import temi_cluster
 from clustering.fuzzy_cmeans import fuzzy_cmeans_cluster
 try:
@@ -170,7 +177,12 @@ class HyperedgeSelectDialog(QDialog):
 
 
 class NewSessionDialog(QDialog):
-    def __init__(self, image_count: int, parent=None):
+    def __init__(
+        self,
+        image_count: int,
+        parent=None,
+        duplicate_jaccard_threshold: float = JACCARD_PRUNE_DEFAULT,
+    ):
         super().__init__(parent)
         self.setWindowTitle("New Session")
 
@@ -197,7 +209,7 @@ class NewSessionDialog(QDialog):
         layout.addWidget(thr_info)
 
         layout.addWidget(QLabel("Duplicate removal Jaccard threshold:"))
-        self.jacc_edit = QLineEdit(str(JACCARD_PRUNE_DEFAULT))
+        self.jacc_edit = QLineEdit(str(duplicate_jaccard_threshold))
         layout.addWidget(self.jacc_edit)
 
         layout.addWidget(QLabel("Clustering algorithm:"))
@@ -236,7 +248,14 @@ class NewSessionDialog(QDialog):
 
 class ReconstructDialog(QDialog):
 
-    def __init__(self, current_edges: int, has_openclip: bool, has_places: bool, parent=None):
+    def __init__(
+        self,
+        current_edges: int,
+        has_openclip: bool,
+        has_places: bool,
+        parent=None,
+        duplicate_jaccard_threshold: float = JACCARD_PRUNE_DEFAULT,
+    ):
         super().__init__(parent)
         self.setWindowTitle("Reconstruct Hypergraph")
 
@@ -256,7 +275,7 @@ class ReconstructDialog(QDialog):
         layout.addWidget(self.thr_edit)
 
         layout.addWidget(QLabel("Duplicate removal Jaccard threshold:"))
-        self.jacc_edit = QLineEdit(str(JACCARD_PRUNE_DEFAULT))
+        self.jacc_edit = QLineEdit(str(duplicate_jaccard_threshold))
         layout.addWidget(self.jacc_edit)
 
         self.openclip_cb = QCheckBox("Include OpenCLIP features")
@@ -281,6 +300,114 @@ class ReconstructDialog(QDialog):
             float(self.jacc_edit.text()),
             self.openclip_cb.isChecked(),
             self.places_cb.isChecked(),
+        )
+
+
+class OptionsDialog(QDialog):
+    def __init__(self, settings: AppSettings, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Options")
+
+        layout = QVBoxLayout(self)
+        tabs = QTabWidget(self)
+        layout.addWidget(tabs)
+
+        general_tab = QWidget()
+        general_form = QFormLayout(general_tab)
+        self.max_grid_results = self._spin(settings.max_grid_results, 1, 1_000_000, 100)
+        self.default_grouping_threshold = self._double_spin(
+            settings.default_grouping_threshold, 0.5, 1.0, 0.05, 2
+        )
+        self.default_duplicate_jaccard_threshold = self._double_spin(
+            settings.default_duplicate_jaccard_threshold, 0.0, 1.0, 0.05, 2
+        )
+        general_form.addRow("Max grid results:", self.max_grid_results)
+        general_form.addRow("Default grouping threshold:", self.default_grouping_threshold)
+        general_form.addRow("Default duplicate Jaccard threshold:", self.default_duplicate_jaccard_threshold)
+        tabs.addTab(general_tab, "General")
+
+        spatial_tab = QWidget()
+        spatial_form = QFormLayout(spatial_tab)
+        self.spatial_limit_images_enabled = QCheckBox()
+        self.spatial_limit_images_enabled.setChecked(settings.spatial_limit_images_enabled)
+        self.spatial_limit_images_value = self._spin(settings.spatial_limit_images_value, 1, 100_000, 1)
+        self.spatial_limit_edges_enabled = QCheckBox()
+        self.spatial_limit_edges_enabled.setChecked(settings.spatial_limit_edges_enabled)
+        self.spatial_limit_edges_value = self._spin(settings.spatial_limit_edges_value, 1, 100_000, 1)
+        spatial_form.addRow("Limit image nodes:", self.spatial_limit_images_enabled)
+        spatial_form.addRow("Image node limit:", self.spatial_limit_images_value)
+        spatial_form.addRow("Limit intersecting hyperedges:", self.spatial_limit_edges_enabled)
+        spatial_form.addRow("Intersecting hyperedge limit:", self.spatial_limit_edges_value)
+        tabs.addTab(spatial_tab, "Spatial")
+
+        metadata_tab = QWidget()
+        metadata_form = QFormLayout(metadata_tab)
+        self.metadata_large_bin_threshold = self._spin(
+            settings.metadata_large_bin_threshold, 2, 1_000_000, 100
+        )
+        self.metadata_max_category_edges = self._spin(settings.metadata_max_category_edges, 1, 10_000, 5)
+        self.metadata_max_exact_numeric_values = self._spin(
+            settings.metadata_max_exact_numeric_values, 1, 10_000, 1
+        )
+        self.metadata_max_numeric_bins = self._spin(settings.metadata_max_numeric_bins, 2, 100, 1)
+        self.metadata_max_date_groups = self._spin(settings.metadata_max_date_groups, 2, 1_000, 1)
+        self.metadata_max_date_day_groups = self._spin(settings.metadata_max_date_day_groups, 2, 366, 1)
+        self.metadata_max_numeric_refinement_depth = self._spin(
+            settings.metadata_max_numeric_refinement_depth, 0, 10, 1
+        )
+        metadata_form.addRow("Split bins above images:", self.metadata_large_bin_threshold)
+        metadata_form.addRow("Max category value edges:", self.metadata_max_category_edges)
+        metadata_form.addRow("Exact numeric values before binning:", self.metadata_max_exact_numeric_values)
+        metadata_form.addRow("Numeric bins per split:", self.metadata_max_numeric_bins)
+        metadata_form.addRow("Max date groups before decades:", self.metadata_max_date_groups)
+        metadata_form.addRow("Max day groups before weeks:", self.metadata_max_date_day_groups)
+        metadata_form.addRow("Numeric refinement depth:", self.metadata_max_numeric_refinement_depth)
+        tabs.addTab(metadata_tab, "Metadata")
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    @staticmethod
+    def _spin(value: int, minimum: int, maximum: int, step: int) -> QSpinBox:
+        spin = QSpinBox()
+        spin.setRange(minimum, maximum)
+        spin.setSingleStep(step)
+        spin.setValue(value)
+        return spin
+
+    @staticmethod
+    def _double_spin(
+        value: float,
+        minimum: float,
+        maximum: float,
+        step: float,
+        decimals: int,
+    ) -> QDoubleSpinBox:
+        spin = QDoubleSpinBox()
+        spin.setRange(minimum, maximum)
+        spin.setSingleStep(step)
+        spin.setDecimals(decimals)
+        spin.setValue(value)
+        return spin
+
+    def values(self) -> AppSettings:
+        return AppSettings(
+            max_grid_results=self.max_grid_results.value(),
+            default_grouping_threshold=self.default_grouping_threshold.value(),
+            default_duplicate_jaccard_threshold=self.default_duplicate_jaccard_threshold.value(),
+            spatial_limit_images_enabled=self.spatial_limit_images_enabled.isChecked(),
+            spatial_limit_images_value=self.spatial_limit_images_value.value(),
+            spatial_limit_edges_enabled=self.spatial_limit_edges_enabled.isChecked(),
+            spatial_limit_edges_value=self.spatial_limit_edges_value.value(),
+            metadata_large_bin_threshold=self.metadata_large_bin_threshold.value(),
+            metadata_max_category_edges=self.metadata_max_category_edges.value(),
+            metadata_max_exact_numeric_values=self.metadata_max_exact_numeric_values.value(),
+            metadata_max_numeric_bins=self.metadata_max_numeric_bins.value(),
+            metadata_max_date_groups=self.metadata_max_date_groups.value(),
+            metadata_max_date_day_groups=self.metadata_max_date_day_groups.value(),
+            metadata_max_numeric_refinement_depth=self.metadata_max_numeric_refinement_depth.value(),
         )
 
 
@@ -622,6 +749,7 @@ class MainWin(QMainWindow):
         self.setWindowTitle("Hypergraph Desktop Prototype")
         self.resize(1200, 800)
 
+        self.app_settings = self._load_app_settings()
         self.model = None
         self._clip_extractor = None
         self._openclip_extractor = None
@@ -737,12 +865,14 @@ class MainWin(QMainWindow):
         self.btn_manage_visibility.clicked.connect(self.choose_hidden_edges)
 
         self.limit_images_cb = QCheckBox("Limit number of image nodes per hyperedge")
-        self.limit_images_edit = QLineEdit("10")
+        self.limit_images_cb.setChecked(self.app_settings.spatial_limit_images_enabled)
+        self.limit_images_edit = QLineEdit(str(self.app_settings.spatial_limit_images_value))
         lim_img_row = QHBoxLayout(); lim_img_row.addWidget(self.limit_images_cb); lim_img_row.addWidget(self.limit_images_edit)
         lim_img_w = QWidget(); lim_img_w.setLayout(lim_img_row)
 
         self.limit_edges_cb = QCheckBox("Limit number of intersecting hyperedges")
-        self.limit_edges_edit = QLineEdit("10")
+        self.limit_edges_cb.setChecked(self.app_settings.spatial_limit_edges_enabled)
+        self.limit_edges_edit = QLineEdit(str(self.app_settings.spatial_limit_edges_value))
         lim_edge_row = QHBoxLayout(); lim_edge_row.addWidget(self.limit_edges_cb); lim_edge_row.addWidget(self.limit_edges_edit)
         lim_edge_w = QWidget(); lim_edge_row.setContentsMargins(0,0,0,0); lim_img_row.setContentsMargins(0,0,0,0); lim_edge_w.setLayout(lim_edge_row)
 
@@ -870,7 +1000,13 @@ class MainWin(QMainWindow):
         self.matrix_dock = HyperedgeMatrixDock(self.bus, self)
         self.matrix_dock.setObjectName("HyperedgeMatrixDock")
 
-        self.slider = QSlider(Qt.Horizontal, minimum=50, maximum=100, singleStep=5, value=int(THRESHOLD_DEFAULT * 100))
+        self.slider = QSlider(
+            Qt.Horizontal,
+            minimum=50,
+            maximum=100,
+            singleStep=5,
+            value=int(self.app_settings.default_grouping_threshold * 100),
+        )
         self.label = QLabel()
         self.label.setAlignment(Qt.AlignCenter)
         toolbar_layout.insertWidget(0, self.label)
@@ -897,6 +1033,7 @@ class MainWin(QMainWindow):
         open_act = QAction("&Open Session…", self, triggered=self.open_session)
         new_act = QAction("&New Session…", self, triggered=self.new_session)
         save_act = QAction("&Save", self, triggered=self.save_session)
+        options_act = QAction("&Options...", self, triggered=self.show_options_dialog)
         save_as_act = QAction("Save &As…", self, triggered=self.save_session_as)
 
         reconstruct_act = QAction("Reconstruct Hypergraph…", self,
@@ -911,6 +1048,7 @@ class MainWin(QMainWindow):
         file_menu.addAction(save_act)
         file_menu.addAction(save_as_act)
         file_menu.addAction(self.thumb_toggle_act)
+        file_menu.addAction(options_act)
         file_menu.addAction(reconstruct_act)        
 
         self.model = None
@@ -919,6 +1057,154 @@ class MainWin(QMainWindow):
 
 
         self.slider.valueChanged.connect(self._schedule_regroup)
+
+
+    def metadata_bin_settings(self) -> MetadataBinSettings:
+        return self.app_settings.metadata_bin_settings()
+
+    def set_metadata_large_bin_threshold(self, value: int) -> None:
+        self.app_settings.metadata_large_bin_threshold = value
+        self._save_app_settings()
+
+    def show_options_dialog(self):
+        dlg = OptionsDialog(self.app_settings, self)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+        self.apply_app_settings(dlg.values())
+
+    def apply_app_settings(self, settings: AppSettings) -> None:
+        self.app_settings = settings
+
+        blockers = [
+            QSignalBlocker(self.limit_images_cb),
+            QSignalBlocker(self.limit_images_edit),
+            QSignalBlocker(self.limit_edges_cb),
+            QSignalBlocker(self.limit_edges_edit),
+        ]
+        self.limit_images_cb.setChecked(settings.spatial_limit_images_enabled)
+        self.limit_images_edit.setText(str(settings.spatial_limit_images_value))
+        self.limit_edges_cb.setChecked(settings.spatial_limit_edges_enabled)
+        self.limit_edges_edit.setText(str(settings.spatial_limit_edges_value))
+        del blockers
+
+        self._update_spatial_limits()
+        self.slider.setValue(int(settings.default_grouping_threshold * 100))
+        self._save_app_settings()
+        self.statusBar().showMessage("Options updated.", 4000)
+
+    def _settings_store(self) -> QSettings:
+        return QSettings("HypergalleryQ", "HypergalleryQ")
+
+    def _load_app_settings(self) -> AppSettings:
+        defaults = AppSettings()
+        store = self._settings_store()
+        return AppSettings(
+            max_grid_results=self._settings_int(store, "general/max_grid_results", defaults.max_grid_results),
+            default_grouping_threshold=self._settings_float(
+                store,
+                "general/default_grouping_threshold",
+                defaults.default_grouping_threshold,
+            ),
+            default_duplicate_jaccard_threshold=self._settings_float(
+                store,
+                "general/default_duplicate_jaccard_threshold",
+                defaults.default_duplicate_jaccard_threshold,
+            ),
+            spatial_limit_images_enabled=self._settings_bool(
+                store,
+                "spatial/limit_images_enabled",
+                defaults.spatial_limit_images_enabled,
+            ),
+            spatial_limit_images_value=self._settings_int(
+                store,
+                "spatial/limit_images_value",
+                defaults.spatial_limit_images_value,
+            ),
+            spatial_limit_edges_enabled=self._settings_bool(
+                store,
+                "spatial/limit_edges_enabled",
+                defaults.spatial_limit_edges_enabled,
+            ),
+            spatial_limit_edges_value=self._settings_int(
+                store,
+                "spatial/limit_edges_value",
+                defaults.spatial_limit_edges_value,
+            ),
+            metadata_large_bin_threshold=self._settings_int(
+                store,
+                "metadata/large_bin_threshold",
+                defaults.metadata_large_bin_threshold,
+            ),
+            metadata_max_category_edges=self._settings_int(
+                store,
+                "metadata/max_category_edges",
+                defaults.metadata_max_category_edges,
+            ),
+            metadata_max_exact_numeric_values=self._settings_int(
+                store,
+                "metadata/max_exact_numeric_values",
+                defaults.metadata_max_exact_numeric_values,
+            ),
+            metadata_max_numeric_bins=self._settings_int(
+                store,
+                "metadata/max_numeric_bins",
+                defaults.metadata_max_numeric_bins,
+            ),
+            metadata_max_date_groups=self._settings_int(
+                store,
+                "metadata/max_date_groups",
+                defaults.metadata_max_date_groups,
+            ),
+            metadata_max_date_day_groups=self._settings_int(
+                store,
+                "metadata/max_date_day_groups",
+                defaults.metadata_max_date_day_groups,
+            ),
+            metadata_max_numeric_refinement_depth=self._settings_int(
+                store,
+                "metadata/max_numeric_refinement_depth",
+                defaults.metadata_max_numeric_refinement_depth,
+            ),
+        )
+
+    def _save_app_settings(self) -> None:
+        s = self.app_settings
+        store = self._settings_store()
+        store.setValue("general/max_grid_results", s.max_grid_results)
+        store.setValue("general/default_grouping_threshold", s.default_grouping_threshold)
+        store.setValue("general/default_duplicate_jaccard_threshold", s.default_duplicate_jaccard_threshold)
+        store.setValue("spatial/limit_images_enabled", s.spatial_limit_images_enabled)
+        store.setValue("spatial/limit_images_value", s.spatial_limit_images_value)
+        store.setValue("spatial/limit_edges_enabled", s.spatial_limit_edges_enabled)
+        store.setValue("spatial/limit_edges_value", s.spatial_limit_edges_value)
+        store.setValue("metadata/large_bin_threshold", s.metadata_large_bin_threshold)
+        store.setValue("metadata/max_category_edges", s.metadata_max_category_edges)
+        store.setValue("metadata/max_exact_numeric_values", s.metadata_max_exact_numeric_values)
+        store.setValue("metadata/max_numeric_bins", s.metadata_max_numeric_bins)
+        store.setValue("metadata/max_date_groups", s.metadata_max_date_groups)
+        store.setValue("metadata/max_date_day_groups", s.metadata_max_date_day_groups)
+        store.setValue("metadata/max_numeric_refinement_depth", s.metadata_max_numeric_refinement_depth)
+
+    @staticmethod
+    def _settings_int(store: QSettings, key: str, default: int) -> int:
+        try:
+            return int(store.value(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _settings_float(store: QSettings, key: str, default: float) -> float:
+        try:
+            return float(store.value(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _settings_bool(store: QSettings, key: str, default: bool) -> bool:
+        value = store.value(key, default)
+        if isinstance(value, str):
+            return value.lower() in {"1", "true", "yes"}
+        return bool(value)
 
 
     def on_add_hyperedge(self):
@@ -1022,7 +1308,7 @@ class MainWin(QMainWindow):
         ref = feats[sel_idxs].mean(axis=0, keepdims=True)
         sims = SIM_METRIC(ref, feats)[0]
         ranked = np.argsort(sims)[::-1]
-        ranked = [i for i in ranked if i not in sel_idxs][:MAX_IMGS_ON_GRID]
+        ranked = [i for i in ranked if i not in sel_idxs][:self.app_settings.max_grid_results]
         final_idxs = sel_idxs + ranked
         self.image_grid.update_images(
             final_idxs, highlight=sel_idxs, sort=False, query=True
@@ -1055,7 +1341,7 @@ class MainWin(QMainWindow):
         sims = SIM_METRIC(ref.reshape(1, -1), feats)[0]
         ranked = np.argsort(sims)[::-1]
         exclude = self.model.hyperedges[name]
-        ranked = [i for i in ranked if i not in exclude][:MAX_IMGS_ON_GRID]
+        ranked = [i for i in ranked if i not in exclude][:self.app_settings.max_grid_results]
         self.image_grid.update_images(ranked, sort=False, query=True)
 
     def rank_image_file(self):
@@ -1084,7 +1370,7 @@ class MainWin(QMainWindow):
 
         feats = self.model.features
         sims = SIM_METRIC(vec.reshape(1, -1), feats)[0]
-        ranked = np.argsort(sims)[::-1][:MAX_IMGS_ON_GRID]
+        ranked = np.argsort(sims)[::-1][:self.app_settings.max_grid_results]
         self.image_grid.update_images(list(ranked), sort=False, query=True)
 
     def rank_clipboard_image(self):
@@ -1122,7 +1408,7 @@ class MainWin(QMainWindow):
 
         feats = self.model.features
         sims = SIM_METRIC(feat.reshape(1, -1), feats)[0]
-        ranked = np.argsort(sims)[::-1][:MAX_IMGS_ON_GRID]
+        ranked = np.argsort(sims)[::-1][:self.app_settings.max_grid_results]
         self.image_grid.update_images(ranked, sort=False, query=True)
 
 
@@ -1143,7 +1429,7 @@ class MainWin(QMainWindow):
         vec = self._openclip_extractor.encode_text([text])[0]
         feats = self.model.openclip_features
         sims = SIM_METRIC(vec.reshape(1, -1), feats)[0]
-        ranked = np.argsort(sims)[::-1][:MAX_IMGS_ON_GRID]
+        ranked = np.argsort(sims)[::-1][:self.app_settings.max_grid_results]
         self.image_grid.update_images(list(ranked), sort=False, query=True)
 
     def show_overview(self):
@@ -1164,7 +1450,7 @@ class MainWin(QMainWindow):
         if not self.model:
             QMessageBox.warning(self, "No Session", "Please load a session first.")
             return
-        show_metadata_overview(self.model, self)
+        show_metadata_overview(self.model, self, metadata_settings=self.metadata_bin_settings())
 
 
     def show_session_stats(self):
@@ -1174,72 +1460,75 @@ class MainWin(QMainWindow):
             return
         show_session_stats(self.model, self)
 
-    def add_metadata_hyperedges(self, column: str) -> None:
+    def add_metadata_hyperedges(
+        self,
+        column: str,
+        metadata_settings: MetadataBinSettings | None = None,
+    ) -> None:
         """Create hyperedges from metadata."""
         if not self.model:
             QMessageBox.warning(self, "No Session", "Please load a session first.")
             return
-        if column not in self.model.metadata.columns:
-            QMessageBox.warning(self, "Unknown Metadata", f"No metadata column '{column}'.")
+
+        plan = plan_metadata_hyperedges(
+            self.model.metadata,
+            self.model.im_list,
+            column,
+            self.model.hyperedges.keys(),
+            metadata_settings or self.metadata_bin_settings(),
+        )
+        if not plan.edges:
+            QMessageBox.warning(
+                self,
+                "No Metadata Hyperedges",
+                "\n".join(plan.warnings) or f"No hyperedges could be created for '{column}'.",
+            )
             return
 
-        series = self.model.metadata[column]
-        strs = series.astype(str)
-        valid_mask = series.notna() & strs.str.strip().ne("") & ~strs.str.lower().isin(["none", "nan"])
-        if column in self.model.hyperedges:
-            QMessageBox.warning(self, "Duplicate Hyperedge", f"Hyperedge '{column}' already exists.")
-            return
-
+        created_names: list[str] = []
         self._skip_next_layout = True
-        self.model.add_empty_hyperedge(column)
-        self.model.edge_origins[column] = "Metadata"
-        self.model.add_images_to_hyperedge(column, series[valid_mask].index.tolist())
+        try:
+            for edge in plan.edges:
+                self.model.add_empty_hyperedge(edge.name)
+                self.model.edge_origins[edge.name] = "Metadata"
+                self.model.add_images_to_hyperedge(edge.name, edge.image_indices)
+                created_names.append(edge.name)
 
-        categorical = True
-        valid_values = strs[valid_mask].tolist()
-        if valid_values:
-            try:
-                [float(v) for v in valid_values]
-                categorical = False
-            except Exception:
-                categorical = True
-        sub_edges = []
-        if categorical:
-            unique_vals = sorted({str(v) for v in strs[valid_mask]})
-            for val in unique_vals:
-                name = f"{val} {column}"
-                self.model.add_empty_hyperedge(name)
-                self.model.edge_origins[name] = "Metadata"
-                # self.model.edge_colors[name] = "#808080"
-                mask = valid_mask & (strs == val)
-                self.model.add_images_to_hyperedge(name, series[mask].index.tolist())
-                sub_edges.append(name)
+            if hasattr(self, "spatial_dock") and self.spatial_dock.fa2_layout:
+                fa = self.spatial_dock.fa2_layout
+                pos = np.array(list(fa.positions.values()))
+                max_x = pos[:, 0].max() if pos.size else 0.0
+                max_y = pos[:, 1].max() if pos.size else 0.0
+                new_pos = np.array([max_x * 1.1, max_y])
+                for name in created_names:
+                    size = max(np.sqrt(len(self.model.hyperedges[name])) * self.spatial_dock.NODE_SIZE_SCALER,
+                               self.spatial_dock.MIN_HYPEREDGE_DIAMETER)
+                    fa.node_sizes = np.append(fa.node_sizes, size)
+                    fa.names.append(name)
+                    fa.positions[name] = new_pos.copy()
+                    self.spatial_dock.edge_index[name] = len(fa.names) - 1
+                    ell = HyperedgeItem(name, QRectF(-size/2, -size/2, size, size))
+                    col = self.model.edge_colors.get(name, "#000000")
+                    ell.setPen(pg.mkPen(col))
+                    ell.setBrush(pg.mkBrush(col))
+                    self.spatial_dock.view.addItem(ell)
+                    ell.setPos(*new_pos)
+                    self.spatial_dock.hyperedgeItems[name] = ell
+                self.spatial_dock._refresh_edges()
+                self.spatial_dock._update_image_layer()
+        finally:
+            self._skip_next_layout = False
+        self.regroup()
 
-        if hasattr(self, "spatial_dock") and self.spatial_dock.fa2_layout:
-            fa = self.spatial_dock.fa2_layout
-            pos = np.array(list(fa.positions.values()))
-            max_x = pos[:, 0].max() if pos.size else 0.0
-            max_y = pos[:, 1].max() if pos.size else 0.0
-            new_pos = np.array([max_x * 1.1, max_y])
-            all_edges = [column] + sub_edges
-            for name in all_edges:
-                size = max(np.sqrt(len(self.model.hyperedges[name])) * self.spatial_dock.NODE_SIZE_SCALER,
-                           self.spatial_dock.MIN_HYPEREDGE_DIAMETER)
-                fa.node_sizes = np.append(fa.node_sizes, size)
-                fa.names.append(name)
-                fa.positions[name] = new_pos.copy()
-                self.spatial_dock.edge_index[name] = len(fa.names) - 1
-                ell = HyperedgeItem(name, QRectF(-size/2, -size/2, size, size))
-                # col = "#000000" if name == column else "#808080"
-                col = self.model.edge_colors.get(name, "#000000")
-                ell.setPen(pg.mkPen(col))
-                ell.setBrush(pg.mkBrush(col))
-                self.spatial_dock.view.addItem(ell)
-                ell.setPos(*new_pos)
-                self.spatial_dock.hyperedgeItems[name] = ell
-            self.spatial_dock._refresh_edges()
-            self.spatial_dock._update_image_layer()
-        self._skip_next_layout = False
+        message = (
+            f"Created {len(created_names)} metadata hyperedge"
+            f"{'' if len(created_names) == 1 else 's'} from '{column}' "
+            f"({plan.kind}, {plan.mapped_count} images)."
+        )
+        if plan.warnings:
+            QMessageBox.information(self, "Metadata Hyperedges", message + "\n\n" + "\n".join(plan.warnings))
+        else:
+            self.statusBar().showMessage(message, 5000)
 
 
 
@@ -1284,7 +1573,11 @@ class MainWin(QMainWindow):
             )
             return
 
-        dlg = NewSessionDialog(len(files), self)
+        dlg = NewSessionDialog(
+            len(files),
+            self,
+            duplicate_jaccard_threshold=self.app_settings.default_duplicate_jaccard_threshold,
+        )
         if dlg.exec_() != QDialog.Accepted:
             return
         try:
@@ -1626,6 +1919,7 @@ class MainWin(QMainWindow):
             self.model.openclip_features is not None,
             self.model.places365_features is not None,
             self,
+            duplicate_jaccard_threshold=self.app_settings.default_duplicate_jaccard_threshold,
         )
         if dlg.exec_() != QDialog.Accepted:
             return
@@ -1885,8 +2179,13 @@ class MainWin(QMainWindow):
             edge_val = int(self.limit_edges_edit.text())
         except ValueError:
             edge_val = 10
+        self.app_settings.spatial_limit_images_enabled = self.limit_images_cb.isChecked()
+        self.app_settings.spatial_limit_images_value = img_val
+        self.app_settings.spatial_limit_edges_enabled = self.limit_edges_cb.isChecked()
+        self.app_settings.spatial_limit_edges_value = edge_val
         self.spatial_dock.set_image_limit(self.limit_images_cb.isChecked(), img_val)
         self.spatial_dock.set_intersection_limit(self.limit_edges_cb.isChecked(), edge_val)
+        self._save_app_settings()
 
     def color_edges_by_seen_time(self):
         """Color hyperedges based on when they were last seen."""

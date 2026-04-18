@@ -83,6 +83,22 @@ class SessionModel(QObject):
             # Backwards compatibility: older sessions may use "Loaded" as origin
             edge_orig = ["swinv2" if o == "Loaded" else o for o in edge_orig]
 
+            if "edge_statuses" in hdf:
+                status_raw = hdf["edge_statuses"][()]
+                edge_statuses = [
+                    s.decode() if isinstance(s, bytes) else str(s) for s in status_raw
+                ]
+            else:
+                edge_statuses = None
+
+            if "edge_uuids" in hdf:
+                uuid_raw = hdf["edge_uuids"][()]
+                edge_uuids = [
+                    u.decode() if isinstance(u, bytes) else str(u) for u in uuid_raw
+                ]
+            else:
+                edge_uuids = None
+
             thumbnails_embedded = hdf.attrs.get("thumbnails_are_embedded", True)
             thumbnail_data: Optional[List[bytes] | List[str]] = None
             if thumbnails_embedded and "thumbnail_data_embedded" in hdf:
@@ -100,7 +116,7 @@ class SessionModel(QObject):
                 meta_json = hdf["metadata"][()]
                 if isinstance(meta_json, bytes):
                     meta_json = meta_json.decode("utf-8")
-                metadata_df = pd.read_json(meta_json, orient="table")
+                metadata_df = pd.read_json(io.StringIO(meta_json), orient="table")
 
             seen_raw = hdf["edge_seen_times"][()] if "edge_seen_times" in hdf else None
 
@@ -116,6 +132,8 @@ class SessionModel(QObject):
             thumbnail_data=thumbnail_data,
             thumbnails_are_embedded=thumbnails_embedded,
             edge_origins=edge_orig,
+            edge_statuses=edge_statuses,
+            edge_uuids=edge_uuids,
             edge_last_seen=seen_raw,            
             metadata=metadata_df,
         )
@@ -151,6 +169,23 @@ class SessionModel(QObject):
                 dtype=dt,
             )
             print('saved edge origins')
+            hdf.create_dataset(
+                "edge_statuses",
+                data=np.array(
+                    [self.status_map.get(n, {}).get("status", "Original") for n in self.cat_list],
+                    dtype=object,
+                ),
+                dtype=dt,
+            )
+            hdf.create_dataset(
+                "edge_uuids",
+                data=np.array(
+                    [self.status_map.get(n, {}).get("uuid", str(uuid.uuid4())) for n in self.cat_list],
+                    dtype=object,
+                ),
+                dtype=dt,
+            )
+            print('saved edge statuses')
 
             hdf.create_dataset(
                 "edge_seen_times",
@@ -233,6 +268,8 @@ class SessionModel(QObject):
                  thumbnail_data: Optional[List[bytes] | List[str]] = None,
                  thumbnails_are_embedded: bool = True,
                  edge_origins: Optional[List[str]] | None = None,
+                 edge_statuses: Optional[List[str]] | None = None,
+                 edge_uuids: Optional[List[str]] | None = None,
                  edge_last_seen: Optional[List[float]] | None = None,                 
                  metadata: pd.DataFrame | None = None):
         super().__init__()
@@ -255,15 +292,25 @@ class SessionModel(QObject):
 
         self.metadata = metadata if metadata is not None else self._extract_image_metadata(im_list)
 
-        self.status_map = {n: {"uuid": str(uuid.uuid4()), "status": "Original"}
-                           for n in self.cat_list}
+        self.status_map = {
+            name: {
+                "uuid": (
+                    edge_uuids[i]
+                    if edge_uuids is not None and i < len(edge_uuids)
+                    else str(uuid.uuid4())
+                ),
+                "status": (
+                    edge_statuses[i]
+                    if edge_statuses is not None and i < len(edge_statuses)
+                    else "Original"
+                ),
+            }
+            for i, name in enumerate(self.cat_list)
+        }
         self.edge_seen_times = {
             name: (edge_last_seen[i] if edge_last_seen is not None and i < len(edge_last_seen) else 0.0)
             for i, name in enumerate(self.cat_list)
         }
-
-        self.status_map = {n: {"uuid": str(uuid.uuid4()), "status": "Original"}
-                           for n in self.cat_list}
 
         colors = generate_n_colors(len(self.cat_list))
         self.edge_colors = {
@@ -305,11 +352,12 @@ class SessionModel(QObject):
 
     @staticmethod
     def _sanitize_metadata(df: pd.DataFrame) -> pd.DataFrame:
-        return df.applymap(
-            lambda x: x
-            if isinstance(x, (int, float, str, bool))
-            else str(x)
-        )
+        def sanitize_value(x):
+            return x if isinstance(x, (int, float, str, bool)) else str(x)
+
+        if hasattr(df, "map"):
+            return df.map(sanitize_value)
+        return df.applymap(sanitize_value)
     
     @staticmethod
     def _extract_image_metadata(im_list: List[str]) -> pd.DataFrame:
