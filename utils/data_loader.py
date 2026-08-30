@@ -1,4 +1,3 @@
-# data_loader.py ------------------------------------------------------------
 import os
 import h5py
 import numpy as np
@@ -6,7 +5,6 @@ import pandas as pd
 
 DATA_DIRECTORY = "F:/PhD/Projects/HyperGalleryDash/Sessions"
 
-# --------------------------------------------------------------------------
 def _prepare_hypergraph_structures(df):
     """Return (hyperedges_dict, image_mapping_dict)."""
     if "image_path" in df.columns:
@@ -46,12 +44,11 @@ def load_session_data(h5_path):
                            hdf["file_list"][()]))
 
         matrix = hdf["clustering_results"][()]
-        cat_list = (
-            list(map(lambda x: x.decode() if isinstance(x, bytes) else x,
-                 hdf["catList"][()]))
-            if "catList" in hdf
-            else [f"edge_{i}" for i in range(matrix.shape[1])]
-        )
+        cat_list = list(map(lambda x: x.decode() if isinstance(x, bytes) else x,
+                            hdf["edge_ids"][()]))
+        edge_names_raw = list(map(lambda x: x.decode() if isinstance(x, bytes) else x,
+                                  hdf["edge_names"][()]))
+        edge_names = dict(zip(cat_list, edge_names_raw))
         df_hyper = pd.DataFrame(matrix, columns=cat_list)
 
         features = hdf["features"][()]
@@ -63,6 +60,7 @@ def load_session_data(h5_path):
         im_list=im_list,
         df_hyperedges=df_hyper,
         cat_list=cat_list,
+        edge_names=edge_names,
         hyperedges=hyperedges,
         image_mapping=image_map,
         hyperedge_avg_features=he_avg,

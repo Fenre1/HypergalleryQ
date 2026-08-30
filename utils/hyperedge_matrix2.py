@@ -215,7 +215,9 @@ class HyperedgeMatrixModel(QAbstractTableModel):
         self._session = session
         self._thumb_size = thumb_size
         self._use_full = use_full_images
-        self._edges: List[str] = natsorted(session.hyperedges.keys()) if session else []
+        self._edges: List[str] = (
+            natsorted(session.hyperedges.keys(), key=session.edge_label) if session else []
+        )
         self._overlap: List[List[int]] = []
         self._scores: List[List[float]] = []
         self._max_score: float = 0.0
@@ -225,7 +227,9 @@ class HyperedgeMatrixModel(QAbstractTableModel):
     def set_session(self, session: SessionModel | None):
         self.beginResetModel()
         self._session = session
-        self._edges = natsorted(session.hyperedges.keys()) if session else []
+        self._edges = (
+            natsorted(session.hyperedges.keys(), key=session.edge_label) if session else []
+        )
         self._overlap.clear()
         self._scores.clear()
         self._max_score = 0.0
@@ -262,7 +266,10 @@ class HyperedgeMatrixModel(QAbstractTableModel):
         if added:
             self.beginResetModel()
             for name in added:
-                insert_idx = natsorted(self._edges + [name]).index(name)
+                sorted_edges = natsorted(
+                    self._edges + [name], key=self._session.edge_label
+                )
+                insert_idx = sorted_edges.index(name)
                 self._edges.insert(insert_idx, name)
                 for row in self._overlap:
                     row.insert(insert_idx, 0)
@@ -334,14 +341,14 @@ class HyperedgeMatrixModel(QAbstractTableModel):
     def headerData(self, section: int, orient: Qt.Orientation, role: int = Qt.DisplayRole):
         if not self._session or section >= len(self._edges):
             return None
-        name = self._edges[section]
+        edge_id = self._edges[section]
 
         if role == Qt.DisplayRole:                          
-            return name
+            return self._session.edge_label(edge_id)
         if role == Qt.ToolTipRole:
-            return name
+            return self._session.edge_label(edge_id)
         if role == Qt.DecorationRole and orient in (Qt.Horizontal, Qt.Vertical):
-            return self._load_thumb(name)
+            return self._load_thumb(edge_id)
         if role == Qt.SizeHintRole:
             if orient == Qt.Horizontal:
                 return QSize(self._thumb_size, int(self._thumb_size * 1.6))
@@ -508,13 +515,11 @@ class HyperedgeMatrixDock(QDockWidget):
         self._use_full = flag
         self._model.set_use_full_images(flag)
 
-    def _on_edge_renamed(self, old: str, new: str) -> None:
+    def _on_edge_renamed(self, edge_id: str, new: str) -> None:
         edges = self._model._edges
-        if old in edges:
-            idx = edges.index(old)
-            edges[idx] = new
-            if self._overview_triplets is not None and old in self._overview_triplets:
-                self._overview_triplets[new] = self._overview_triplets.pop(old)
+        if edge_id in edges:
+            idx = edges.index(edge_id)
+            self._tooltip_html_cache.clear()
             self._model._load_thumb.cache_clear()
             self._model.headerDataChanged.emit(Qt.Horizontal, idx, idx)
             self._model.headerDataChanged.emit(Qt.Vertical, idx, idx)
@@ -653,9 +658,11 @@ class HyperedgeMatrixDock(QDockWidget):
         if not row_html and not col_html:
             return ""
 
+        row_label = session.edge_label(row_edge)
+        col_label = session.edge_label(col_edge)
         return (
             f"<table><tr>"
-            f"<td valign='top'><b>{col_edge}</b><br>{col_html}</td>"
-            f"<td valign='top'><b>{row_edge}</b><br>{row_html}</td>"
+            f"<td valign='top'><b>{col_label}</b><br>{col_html}</td>"
+            f"<td valign='top'><b>{row_label}</b><br>{row_html}</td>"
             f"</tr></table>"
         )

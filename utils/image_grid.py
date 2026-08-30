@@ -115,8 +115,9 @@ class _ClusterDelegate(QStyledItemDelegate):
 
 class _ClickableLabel(QLabel):
 
-    def __init__(self, text: str, parent=None):
+    def __init__(self, text: str, edge_id: str, parent=None):
         super().__init__(text, parent)
+        self.edge_id = edge_id
 
 class LazyThumbLabel(QLabel):
 
@@ -603,8 +604,8 @@ class ImageGridDock(QDockWidget):
             
     def _remember_edges(self, names: list[str]):
         self._selected_edges = names
-        if len(names) == 1:
-            title = f"Images of {names[0]}"
+        if len(names) == 1 and self.session:
+            title = f"Images of {self.session.edge_label(names[0])}"
         elif len(names) > 1:
             title = f"Images of {len(names)} hyperedges"
         else:
@@ -762,12 +763,12 @@ class ImageGridDock(QDockWidget):
         col = row = 0
         max_cols = 3
         first = True
-        for name, imgs in triplets.items():
+        for edge_id, imgs in triplets.items():
             frame = QFrame()
             frame.setFrameShape(QFrame.Box)
             frame.setLineWidth(2)
             v = QVBoxLayout(frame)
-            lbl = _ClickableLabel(name)
+            lbl = _ClickableLabel(session.edge_label(edge_id), edge_id)
             lbl.setAlignment(Qt.AlignCenter)
             v.addWidget(lbl)
             top = QHBoxLayout()
@@ -870,7 +871,7 @@ class ImageGridDock(QDockWidget):
 
     def eventFilter(self, obj, event):
         if isinstance(obj, _ClickableLabel) and event.type() == QEvent.MouseButtonDblClick:
-            self.labelDoubleClicked.emit(obj.text())
+            self.labelDoubleClicked.emit(obj.edge_id)
             return True
 
         if obj is self.view.viewport():

@@ -14,4 +14,5 @@ scikit-learn
 scipy
 torch
 torchvision
+timm
 umap-learn

@@ -32,6 +32,7 @@ from PyQt5.QtWidgets import (
     QInputDialog,
     QDialog,
     QListWidget,
+    QListWidgetItem,
     QDialogButtonBox,
     QAbstractItemView,
     QLineEdit,
@@ -62,9 +63,7 @@ from PyQt5.QtCore import (
     QRectF
 )
 
-from utils.data_loader import (
-    DATA_DIRECTORY, get_h5_files_in_directory, load_session_data
-)
+from utils.data_loader import DATA_DIRECTORY
 from utils.selection_bus import SelectionBus
 from utils.session_model import SessionModel, generate_n_colors
 from utils.image_grid import ImageGridDock
@@ -74,7 +73,6 @@ from utils.spatial_viewQv4 import SpatialViewQDock, HyperedgeItem
 from utils.feature_extraction import (
     Swinv2LargeFeatureExtractor,
     OpenClipFeatureExtractor,
-    DenseNet161Places365FeatureExtractor,
 )
 from utils.file_utils import get_image_files
 from utils.session_stats import show_session_stats
@@ -119,11 +117,17 @@ MAX_IMGS_ON_GRID = 1000
 QPixmapCache.setCacheLimit(512 * 1024)
 
 class _MultiSelectDialog(QDialog):
-    def __init__(self, items: list[str], parent=None):
+    def __init__(self, items: list[str] | list[tuple[str, str]], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Select Hyperedges")
         self.list = QListWidget()
-        self.list.addItems(natsorted(items))
+        if items and isinstance(items[0], tuple):
+            for edge_id, label in natsorted(items, key=lambda item: item[1]):
+                item = QListWidgetItem(label)
+                item.setData(Qt.UserRole, edge_id)
+                self.list.addItem(item)
+        else:
+            self.list.addItems(natsorted(items))
         self.list.setSelectionMode(QAbstractItemView.MultiSelection)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -135,11 +139,11 @@ class _MultiSelectDialog(QDialog):
         lay.addWidget(buttons)
 
     def chosen(self) -> list[str]:
-        return [it.text() for it in self.list.selectedItems()]
+        return [it.data(Qt.UserRole) or it.text() for it in self.list.selectedItems()]
 
 
 class HyperedgeSelectDialog(QDialog):
-    def __init__(self, names: list[str], parent=None):
+    def __init__(self, names: list[str] | list[tuple[str, str]], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Select Hyperedge")
         layout = QVBoxLayout(self)
@@ -149,7 +153,13 @@ class HyperedgeSelectDialog(QDialog):
         layout.addWidget(self.filter_edit)
 
         self.list_widget = QListWidget(self)
-        self.list_widget.addItems(natsorted(names))
+        if names and isinstance(names[0], tuple):
+            for edge_id, label in natsorted(names, key=lambda item: item[1]):
+                item = QListWidgetItem(label)
+                item.setData(Qt.UserRole, edge_id)
+                self.list_widget.addItem(item)
+        else:
+            self.list_widget.addItems(natsorted(names))
         self.list_widget.setSelectionMode(QListWidget.SingleSelection)
         layout.addWidget(self.list_widget)
 
@@ -170,6 +180,10 @@ class HyperedgeSelectDialog(QDialog):
     def selected_name(self) -> str | None:
         items = self.list_widget.selectedItems()
         return items[0].text() if items else None
+
+    def selected_edge_id(self) -> str | None:
+        items = self.list_widget.selectedItems()
+        return (items[0].data(Qt.UserRole) or items[0].text()) if items else None
 
 
 class NewSessionDialog(QDialog):
@@ -216,17 +230,13 @@ class NewSessionDialog(QDialog):
         self.openclip_cb.setChecked(True)
         layout.addWidget(self.openclip_cb)
 
-        self.places_cb = QCheckBox("Include Places365 features")
-        self.places_cb.setChecked(True)
-        layout.addWidget(self.places_cb)
-
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText("Start generating hypergraph")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def parameters(self) -> tuple[int, float, float, str, float, bool, bool]:
+    def parameters(self) -> tuple[int, float, float, str, float, bool]:
         return (
             int(self.edge_edit.text()),
             float(self.thr_edit.text()),
@@ -234,12 +244,11 @@ class NewSessionDialog(QDialog):
             self.alg_combo.currentText(),
             float(self.m_edit.text()),
             self.openclip_cb.isChecked(),
-            self.places_cb.isChecked(),
         )
 
 class ReconstructDialog(QDialog):
 
-    def __init__(self, current_edges: int, has_openclip: bool, has_places: bool, parent=None):
+    def __init__(self, current_edges: int, has_openclip: bool, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Reconstruct Hypergraph")
 
@@ -267,23 +276,17 @@ class ReconstructDialog(QDialog):
         self.openclip_cb.setEnabled(has_openclip)
         layout.addWidget(self.openclip_cb)
 
-        self.places_cb = QCheckBox("Include Places365 features")
-        self.places_cb.setChecked(has_places)
-        self.places_cb.setEnabled(has_places)
-        layout.addWidget(self.places_cb)
-
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def parameters(self) -> tuple[int, float, float, bool, bool]:
+    def parameters(self) -> tuple[int, float, float, bool]:
         return (
             int(self.edge_edit.text()),
             float(self.thr_edit.text()),
             float(self.jacc_edit.text()),
             self.openclip_cb.isChecked(),
-            self.places_cb.isChecked(),
         )
 
 
@@ -299,7 +302,7 @@ class HyperEdgeTree(QTreeView):
 
     def _send_bus_update(self, *_):
         # column-0 indexes (name column)
-        names = [idx.data(Qt.DisplayRole)
+        names = [idx.data(Qt.UserRole)
                  for idx in self.selectionModel().selectedRows(0)]
         self.bus.set_edges(names)
 
@@ -348,7 +351,7 @@ def build_qmodel(rows, headers):
             continue
 
         if g not in parents:
-            group_items = [_make_item(g)] + [_make_item() for _ in headers[1:]]
+            group_items = [_make_item(g, g)] + [_make_item() for _ in headers[1:]]
             parents[g] = group_items[0]
             model.appendRow(group_items)
 
@@ -359,7 +362,7 @@ def build_qmodel(rows, headers):
 
 def _append_leaf(parent_or_model, rowdict):
     container = parent_or_model
-    name_item = _make_item(rowdict["name"], rowdict["name"], editable=True)
+    name_item = _make_item(rowdict["name"], rowdict["edge_id"], editable=True)
     name_item.setCheckable(True)
     name_item.setCheckState(Qt.Checked)    
     color = rowdict.get("color")
@@ -444,8 +447,9 @@ def build_row_data(groups, model, rows=None, dirty_edges=None):
                 stddev = model.similarity_std(child)
                 res.append(
                     dict(
+                        edge_id=child,
                         uuid=meta["uuid"],
-                        name=child,
+                        name=model.edge_label(child),
                         image_count=len(model.hyperedges[child]),
                         status=meta["status"],
                         origin=model.edge_origins.get(child, ""),
@@ -462,8 +466,8 @@ def build_row_data(groups, model, rows=None, dirty_edges=None):
         child: g for g, children in groups.items() for child in children
     }
     current_edges = set(membership)
-    res = [r for r in rows if r["name"] in current_edges]
-    index = {r["name"]: i for i, r in enumerate(res)}
+    res = [r for r in rows if r["edge_id"] in current_edges]
+    index = {r["edge_id"]: i for i, r in enumerate(res)}
 
     for edge in dirty_edges:
         if edge not in membership:
@@ -471,8 +475,9 @@ def build_row_data(groups, model, rows=None, dirty_edges=None):
         meta = status[edge]
         stddev = model.similarity_std(edge)
         row = dict(
+            edge_id=edge,
             uuid=meta["uuid"],
-            name=edge,
+            name=model.edge_label(edge),
             image_count=len(model.hyperedges[edge]),
             status=meta["status"],
             origin=model.edge_origins.get(edge, ""),
@@ -524,16 +529,17 @@ class MainWin(QMainWindow):
             sel = self.tree.selectionModel().selectedRows(0)
             if not sel:
                 return
-            ref_name = sel[0].data(Qt.DisplayRole)
+            ref_name = sel[0].data(Qt.UserRole)
 
         if ref_name == False:
             sel = self.tree.selectionModel().selectedRows(0)
             if not sel:
                 return
-            ref_name = sel[0].data(Qt.DisplayRole)            
+            ref_name = sel[0].data(Qt.UserRole)
         ref_vec = self._vector_for(ref_name)
         if ref_vec is None:
-            QMessageBox.warning(self, "No features", f"No feature vector for “{ref_name}”.")
+            label = self.model.edge_label(ref_name) if ref_name in self.model.hyperedges else ref_name
+            QMessageBox.warning(self, "No features", f"No feature vector for '{label}'.")
             return
 
         avg = self.model.hyperedge_avg_features
@@ -568,7 +574,7 @@ class MainWin(QMainWindow):
                 child_vals = [name_item.child(c, SIM_COL).data(Qt.UserRole) for c in range(name_item.rowCount())]
                 val = np.nanmean([v for v in child_vals if v is not None]) if child_vals else None
             else:
-                val = sim_map.get(name_item.text())
+                val = sim_map.get(name_item.data(Qt.UserRole))
 
             if val is None:
                 sim_item.setData(None, Qt.UserRole); sim_item.setData("", Qt.DisplayRole)
@@ -592,7 +598,7 @@ class MainWin(QMainWindow):
                 child_vals = [name_item.child(c, INTER_COL).data(Qt.UserRole) for c in range(name_item.rowCount())]
                 val = sum(v for v in child_vals if v is not None) if child_vals else None
             else:
-                val = inter_map.get(name_item.text())
+                val = inter_map.get(name_item.data(Qt.UserRole))
 
             if val is None:
                 inter_item.setData(None, Qt.UserRole)
@@ -837,7 +843,7 @@ class MainWin(QMainWindow):
         self.toolbar_dock.setWidget(toolbar_container)
 
         self.image_grid.setObjectName("ImageGridDock") # Use object name for clarity
-        self.image_grid.labelDoubleClicked.connect(lambda name: self.bus.set_edges([name]))
+        self.image_grid.labelDoubleClicked.connect(lambda edge_id: self.bus.set_edges([edge_id]))
         self.spatial_dock = SpatialViewQDock(self.bus, self)
         self.spatial_dock.setObjectName("SpatialViewDock")
         self.bus.edgesChanged.connect(self._update_bus_images)
@@ -901,9 +907,7 @@ class MainWin(QMainWindow):
 
         self.slider.valueChanged.connect(self.regroup)
 
-        files = get_h5_files_in_directory()
-        if files:
-            self.load_session(Path(DATA_DIRECTORY) / files[0])
+        # Sessions now have an explicit schema version; open them explicitly.
 
 
     def on_add_hyperedge(self):
@@ -920,7 +924,7 @@ class MainWin(QMainWindow):
                 QMessageBox.warning(self, "Invalid Name", "Hyperedge name cannot be empty.")
                 return
 
-            if clean_name in self.model.hyperedges:
+            if self.model.edge_id_for_name(clean_name) is not None:
                 QMessageBox.warning(self, "Duplicate Name",
                                     f"A hyperedge named '{clean_name}' already exists.")
                 return
@@ -945,10 +949,11 @@ class MainWin(QMainWindow):
             QMessageBox.information(self, "Invalid Selection", "Please select a single hyperedge, not a group.")
             return
 
-        name = item.text()
+        edge_id = item.data(Qt.UserRole)
+        name = self.model.edge_label(edge_id)
         res = QMessageBox.question(self, "Delete Hyperedge", f"Delete hyperedge '{name}'?", QMessageBox.Yes | QMessageBox.No)
         if res == QMessageBox.Yes:
-            self.model.delete_hyperedge(name)
+            self.model.delete_hyperedge(edge_id)
 
     def on_remove_images(self):
         if not self.model:
@@ -967,9 +972,10 @@ class MainWin(QMainWindow):
         model = self.image_grid.view.model()
         img_idxs = [model._indexes[i.row()] for i in sel_indexes]
 
-        possible_edges = natsorted(
-            {e for idx in img_idxs for e in self.model.image_mapping.get(idx, set())}
-        )
+        possible_edges = [
+            (edge_id, self.model.edge_label(edge_id))
+            for edge_id in {e for idx in img_idxs for e in self.model.image_mapping.get(idx, set())}
+        ]
         if not possible_edges:
             QMessageBox.information(
                 self,
@@ -1030,16 +1036,16 @@ class MainWin(QMainWindow):
             QMessageBox.information(self, "Invalid Selection", "Please select a single hyperedge, not a group.")
             return
 
-        name = item.text()
-        if name not in self.model.hyperedges:
+        edge_id = item.data(Qt.UserRole)
+        if edge_id not in self.model.hyperedges:
             QMessageBox.information(self, "Unknown Hyperedge", "Selected item is not a hyperedge.")
             return
 
-        ref = self.model.hyperedge_avg_features.get(name)
+        ref = self.model.hyperedge_avg_features.get(edge_id)
         feats = self.model.features
         sims = SIM_METRIC(ref.reshape(1, -1), feats)[0]
         ranked = np.argsort(sims)[::-1]
-        exclude = self.model.hyperedges[name]
+        exclude = self.model.hyperedges[edge_id]
         ranked = [i for i in ranked if i not in exclude][:MAX_IMGS_ON_GRID]
         self.image_grid.update_images(ranked, sort=False, query=True)
 
@@ -1171,14 +1177,14 @@ class MainWin(QMainWindow):
         series = self.model.metadata[column]
         strs = series.astype(str)
         valid_mask = series.notna() & strs.str.strip().ne("") & ~strs.str.lower().isin(["none", "nan"])
-        if column in self.model.hyperedges:
+        if self.model.edge_id_for_name(column) is not None:
             QMessageBox.warning(self, "Duplicate Hyperedge", f"Hyperedge '{column}' already exists.")
             return
 
         self._skip_next_layout = True
-        self.model.add_empty_hyperedge(column)
-        self.model.edge_origins[column] = "Metadata"
-        self.model.add_images_to_hyperedge(column, series[valid_mask].index.tolist())
+        column_id = self.model.add_empty_hyperedge(column)
+        self.model.edge_origins[column_id] = "Metadata"
+        self.model.add_images_to_hyperedge(column_id, series[valid_mask].index.tolist())
 
         categorical = True
         valid_values = strs[valid_mask].tolist()
@@ -1193,12 +1199,12 @@ class MainWin(QMainWindow):
             unique_vals = sorted({str(v) for v in strs[valid_mask]})
             for val in unique_vals:
                 name = f"{val} {column}"
-                self.model.add_empty_hyperedge(name)
-                self.model.edge_origins[name] = "Metadata"
+                edge_id = self.model.add_empty_hyperedge(name)
+                self.model.edge_origins[edge_id] = "Metadata"
                 # self.model.edge_colors[name] = "#808080"
                 mask = valid_mask & (strs == val)
-                self.model.add_images_to_hyperedge(name, series[mask].index.tolist())
-                sub_edges.append(name)
+                self.model.add_images_to_hyperedge(edge_id, series[mask].index.tolist())
+                sub_edges.append(edge_id)
 
         if hasattr(self, "spatial_dock") and self.spatial_dock.fa2_layout:
             fa = self.spatial_dock.fa2_layout
@@ -1206,22 +1212,22 @@ class MainWin(QMainWindow):
             max_x = pos[:, 0].max() if pos.size else 0.0
             max_y = pos[:, 1].max() if pos.size else 0.0
             new_pos = np.array([max_x * 1.1, max_y])
-            all_edges = [column] + sub_edges
-            for name in all_edges:
-                size = max(np.sqrt(len(self.model.hyperedges[name])) * self.spatial_dock.NODE_SIZE_SCALER,
+            all_edges = [column_id] + sub_edges
+            for edge_id in all_edges:
+                size = max(np.sqrt(len(self.model.hyperedges[edge_id])) * self.spatial_dock.NODE_SIZE_SCALER,
                            self.spatial_dock.MIN_HYPEREDGE_DIAMETER)
                 fa.node_sizes = np.append(fa.node_sizes, size)
-                fa.names.append(name)
-                fa.positions[name] = new_pos.copy()
-                self.spatial_dock.edge_index[name] = len(fa.names) - 1
-                ell = HyperedgeItem(name, QRectF(-size/2, -size/2, size, size))
+                fa.names.append(edge_id)
+                fa.positions[edge_id] = new_pos.copy()
+                self.spatial_dock.edge_index[edge_id] = len(fa.names) - 1
+                ell = HyperedgeItem(edge_id, QRectF(-size/2, -size/2, size, size))
                 # col = "#000000" if name == column else "#808080"
-                col = self.model.edge_colors.get(name, "#000000")
+                col = self.model.edge_colors.get(edge_id, "#000000")
                 ell.setPen(pg.mkPen(col))
                 ell.setBrush(pg.mkBrush(col))
                 self.spatial_dock.view.addItem(ell)
                 ell.setPos(*new_pos)
-                self.spatial_dock.hyperedgeItems[name] = ell
+                self.spatial_dock.hyperedgeItems[edge_id] = ell
             self.spatial_dock._refresh_edges()
             self.spatial_dock._update_image_layer()
         self._skip_next_layout = False
@@ -1242,15 +1248,15 @@ class MainWin(QMainWindow):
 
         img_idxs = [model._indexes[i.row()] for i in sel]
 
-        dialog = HyperedgeSelectDialog(natsorted(self.model.hyperedges), self)
+        dialog = HyperedgeSelectDialog(self.model.edge_choices(), self)
         if dialog.exec_() != QDialog.Accepted:
             return
-        name = dialog.selected_name()
-        if not name:
+        edge_id = dialog.selected_edge_id()
+        if not edge_id:
             QMessageBox.information(self, "No Hyperedge", "No hyperedge selected.")
             return
 
-        self.model.add_images_to_hyperedge(name, img_idxs)
+        self.model.add_images_to_hyperedge(edge_id, img_idxs)
 
 
     def new_session(self):
@@ -1273,7 +1279,7 @@ class MainWin(QMainWindow):
         if dlg.exec_() != QDialog.Accepted:
             return
         try:
-            n_edges, thr, prune_thr, algo, m_val, use_oc, use_plc = dlg.parameters()
+            n_edges, thr, prune_thr, algo, m_val, use_oc = dlg.parameters()
         except Exception:
             QMessageBox.warning(self, "Invalid Input", "Enter valid numbers.")
             return
@@ -1294,7 +1300,6 @@ class MainWin(QMainWindow):
             prog.close()
 
             oc_features = None
-            plc_features = None
             if use_oc:
                 oc_extractor = OpenClipFeatureExtractor()
                 prog = QProgressDialog("Extracting OpenCLIP features...", None, 0, len(files), self)
@@ -1306,18 +1311,6 @@ class MainWin(QMainWindow):
                     QApplication.processEvents()
                 oc_features = oc_extractor.extract_features(files, oc_cb)
                 prog.close()
-            if use_plc:
-                plc_extractor = DenseNet161Places365FeatureExtractor()
-                prog = QProgressDialog("Extracting Places365 features...", None, 0, len(files), self)
-                prog.setWindowModality(Qt.ApplicationModal)
-                prog.show()
-                def plc_cb(done, total):
-                    prog.setValue(done)
-                    prog.setLabelText(f"Extracting Places365 features ({done}/{total})")
-                    QApplication.processEvents()
-                plc_features = plc_extractor.extract_features(files, plc_cb)
-                prog.close()
-
             if algo == "Fuzzy C-Means":
                 prog = QProgressDialog("Clustering features...", None, 0, 0, self)
                 prog.setWindowModality(Qt.ApplicationModal)
@@ -1330,13 +1323,6 @@ class MainWin(QMainWindow):
                     prog.setWindowModality(Qt.ApplicationModal)
                     prog.show()
                     oc_matrix, _ = fuzzy_cmeans_cluster(oc_features, n_edges, thr, m_val)
-                    prog.close()
-                plc_matrix = np.array([])
-                if plc_features is not None:
-                    prog = QProgressDialog("Clustering Places365 features...", None, 0, 0, self)
-                    prog.setWindowModality(Qt.ApplicationModal)
-                    prog.show()
-                    plc_matrix, _ = fuzzy_cmeans_cluster(plc_features, n_edges, thr, m_val)
                     prog.close()
             else:
                 prog = QProgressDialog("Clustering features...", None, 0, 100, self)
@@ -1361,18 +1347,6 @@ class MainWin(QMainWindow):
                         QApplication.processEvents()
                     oc_matrix, _ = temi_cluster(oc_features, out_dim=n_edges, threshold=thr, progress_callback=oc_cluster_cb)
                     prog.close()
-                plc_matrix = np.array([])
-                if plc_features is not None:
-                    prog = QProgressDialog("Clustering Places365 features...", None, 0, 100, self)
-                    prog.setWindowModality(Qt.ApplicationModal)
-                    prog.show()
-                    def plc_cluster_cb(done, total):
-                        prog.setMaximum(total)
-                        prog.setValue(done)
-                        prog.setLabelText(f"Clustering Places365 features ({done}/{total})")
-                        QApplication.processEvents()
-                    plc_matrix, _ = temi_cluster(plc_features, out_dim=n_edges, threshold=thr, progress_callback=plc_cluster_cb)
-                    prog.close()
             empty_cols = np.where(matrix.sum(axis=0) == 0)[0]
             if len(empty_cols) > 0:
                 matrix = np.delete(matrix, empty_cols, axis=1)
@@ -1385,10 +1359,6 @@ class MainWin(QMainWindow):
                 oc_empty = np.where(oc_matrix.sum(axis=0) == 0)[0]
                 if len(oc_empty) > 0:
                     oc_matrix = np.delete(oc_matrix, oc_empty, axis=1)
-            if plc_matrix.size:
-                plc_empty = np.where(plc_matrix.sum(axis=0) == 0)[0]
-                if len(plc_empty) > 0:
-                    plc_matrix = np.delete(plc_matrix, plc_empty, axis=1)
         except Exception as e:
             if app:
                 app.restoreOverrideCursor()
@@ -1420,12 +1390,9 @@ class MainWin(QMainWindow):
             features,
             Path(directory),
             openclip_features=oc_features,
-            places365_features=plc_features,
         )
         if oc_matrix.size:
             self.model.append_clustering_matrix(oc_matrix, origin="openclip", prefix="clip")
-        if plc_matrix.size:
-            self.model.append_clustering_matrix(plc_matrix, origin="places365", prefix="plc365")
         self.model.prune_similar_edges(prune_thr)
         self.model.generate_thumbnails()
 
@@ -1433,6 +1400,7 @@ class MainWin(QMainWindow):
         self.image_grid.invalidate_overview_cache()
         self.model.layoutChanged.connect(self._on_layout_changed)
         self.model.hyperedgeModified.connect(self._on_model_hyperedge_modified)
+        self.model.edgeRenamed.connect(self._on_edge_renamed)
 
         self.image_grid.set_model(self.model)
         self.overlap_dock.set_model(self.model)
@@ -1482,17 +1450,6 @@ class MainWin(QMainWindow):
                     self.model.openclip_features = oc_extractor.extract_features(
                         self.model.im_list
                     )
-            if self.model.places365_features is None:
-                if QMessageBox.question(
-                    self,
-                    "Missing Places365 Features",
-                    "Places365 features are absent in this session.\nGenerate them now?",
-                ) == QMessageBox.Yes:
-                    plc_extractor = DenseNet161Places365FeatureExtractor()
-                    self.model.places365_features = plc_extractor.extract_features(
-                        self.model.im_list
-                    )
-
             if (
                 self.model.openclip_features is not None
                 and all(orig != "openclip" for orig in self.model.edge_origins.values())
@@ -1513,27 +1470,6 @@ class MainWin(QMainWindow):
                         oc_matrix = np.delete(oc_matrix, oc_empty, axis=1)
                     self.model.append_clustering_matrix(
                         oc_matrix, origin="openclip", prefix="clip"
-                    )
-            if (
-                self.model.places365_features is not None
-                and all(orig != "places365" for orig in self.model.edge_origins.values())
-            ):
-                if QMessageBox.question(
-                    self,
-                    "Generate Places365 Hyperedges",
-                    "No Places365 hyperedges found.\nGenerate them now?",
-                ) == QMessageBox.Yes:
-                    n_edges = len(self.model.cat_list)
-                    plc_matrix, _ = temi_cluster(
-                        self.model.places365_features,
-                        out_dim=n_edges,
-                        threshold=THRESHOLD_DEFAULT,
-                    )
-                    plc_empty = np.where(plc_matrix.sum(axis=0) == 0)[0]
-                    if len(plc_empty) > 0:
-                        plc_matrix = np.delete(plc_matrix, plc_empty, axis=1)
-                    self.model.append_clustering_matrix(
-                        plc_matrix, origin="places365", prefix="plc365"
                     )
             if self.model.thumbnail_data is None:
                 if QMessageBox.question(
@@ -1609,13 +1545,12 @@ class MainWin(QMainWindow):
         dlg = ReconstructDialog(
             len(self.model.cat_list),
             self.model.openclip_features is not None,
-            self.model.places365_features is not None,
             self,
         )
         if dlg.exec_() != QDialog.Accepted:
             return
         try:
-            n_edges, thr, prune_thr, use_openclip, use_places = dlg.parameters()
+            n_edges, thr, prune_thr, use_openclip = dlg.parameters()
         except Exception:
             QMessageBox.warning(self, "Invalid Input", "Enter valid numbers.")
             return
@@ -1626,15 +1561,11 @@ class MainWin(QMainWindow):
         try:
             features = self.model.features
             oc_feats = self.model.openclip_features
-            plc_feats = self.model.places365_features
 
             matrix, _ = temi_cluster(features, out_dim=n_edges, threshold=thr)
             oc_matrix = None
             if use_openclip and oc_feats is not None:
                 oc_matrix, _ = temi_cluster(oc_feats, out_dim=n_edges, threshold=thr)
-            plc_matrix = None
-            if use_places and plc_feats is not None:
-                plc_matrix, _ = temi_cluster(plc_feats, out_dim=n_edges, threshold=thr)
 
             empty_cols = np.where(matrix.sum(axis=0) == 0)[0]
             if len(empty_cols) > 0:
@@ -1648,10 +1579,6 @@ class MainWin(QMainWindow):
                 oc_empty = np.where(oc_matrix.sum(axis=0) == 0)[0]
                 if len(oc_empty) > 0:
                     oc_matrix = np.delete(oc_matrix, oc_empty, axis=1)
-            if plc_matrix is not None:
-                plc_empty = np.where(plc_matrix.sum(axis=0) == 0)[0]
-                if len(plc_empty) > 0:
-                    plc_matrix = np.delete(plc_matrix, plc_empty, axis=1)
         except Exception as e:
             if app:
                 app.restoreOverrideCursor()
@@ -1681,7 +1608,6 @@ class MainWin(QMainWindow):
             features,
             self.model.h5_path,
             openclip_features=oc_feats,
-            places365_features=plc_feats,
             thumbnail_data=self.model.thumbnail_data,
             thumbnails_are_embedded=self.model.thumbnails_are_embedded,
             metadata=self.model.metadata,
@@ -1689,8 +1615,6 @@ class MainWin(QMainWindow):
 
         if oc_matrix is not None and oc_matrix.size:
             self.model.append_clustering_matrix(oc_matrix, origin="openclip", prefix="clip")
-        if plc_matrix is not None and plc_matrix.size:
-            self.model.append_clustering_matrix(plc_matrix, origin="places365", prefix="plc365")
         self.model.prune_similar_edges(prune_thr)
 
         self._overview_triplets = None
@@ -1737,22 +1661,18 @@ class MainWin(QMainWindow):
                 comp.set_use_full_images(flag)
 
 
-    def _on_edge_renamed(self, old: str, new: str) -> None:
+    def _on_edge_renamed(self, edge_id: str, new: str) -> None:
         model = self.tree_proxy.sourceModel()
         if model is not None:
-            matches = model.findItems(old, Qt.MatchExactly | Qt.MatchRecursive, 0)
-            for it in matches:
-                it.setText(new)
-                it.setData(new, Qt.UserRole)
+            root = model.invisibleRootItem()
+            stack = [root.child(r, 0) for r in range(root.rowCount())]
+            while stack:
+                it = stack.pop()
+                if it.data(Qt.UserRole) == edge_id:
+                    it.setText(new)
+                stack.extend(it.child(r, 0) for r in range(it.rowCount()))
 
-        if hasattr(self, "groups"):
-            for g, children in self.groups.items():
-                for idx, child in enumerate(children):
-                    if child == old:
-                        children[idx] = new
-
-        if self._overview_triplets is not None and old in self._overview_triplets:
-            self._overview_triplets[new] = self._overview_triplets.pop(old)
+        self._overview_triplets = None
 
         self.image_grid.invalidate_overview_cache()
 
@@ -1769,25 +1689,19 @@ class MainWin(QMainWindow):
             return
 
         parent = item.parent()
-        old_name, new_name = item.data(Qt.UserRole), item.text().strip()
+        edge_id, new_name = item.data(Qt.UserRole), item.text().strip()
+        old_name = self.model.edge_label(edge_id)
 
         if old_name != new_name:
-            if not self.model.rename_edge(old_name, new_name):
+            if not self.model.rename_edge(edge_id, new_name):
                 item.setText(old_name)
                 return
-            item.setData(new_name, Qt.UserRole)
-            if hasattr(self, "groups"):
-                for g, children in self.groups.items():
-                    for idx, child in enumerate(children):
-                        if child == old_name:
-                            children[idx] = new_name
-                            break
             if parent is not None:
                 self._update_group_similarity(parent)
 
         if item.isCheckable():
             visible = item.checkState() == Qt.Checked
-            self.spatial_dock.set_edge_visible(new_name, visible)
+            self.spatial_dock.set_edge_visible(edge_id, visible)
 
     def _invalidate_similarity_column(self, name_item: QStandardItem):
         row = name_item.row()
@@ -1799,11 +1713,11 @@ class MainWin(QMainWindow):
             self.bus.set_images([])
             return
         idxs = set()
-        for name in names:
-            if name in self.model.hyperedges:
-                idxs.update(self.model.hyperedges.get(name, set()))
-            elif hasattr(self, "groups") and name in self.groups:
-                for child in self.groups[name]:
+        for edge_id in names:
+            if edge_id in self.model.hyperedges:
+                idxs.update(self.model.hyperedges.get(edge_id, set()))
+            elif hasattr(self, "groups") and edge_id in self.groups:
+                for child in self.groups[edge_id]:
                     idxs.update(self.model.hyperedges.get(child, set()))
         self.bus.set_images(sorted(idxs))
 
@@ -1840,8 +1754,8 @@ class MainWin(QMainWindow):
         root = src_model.invisibleRootItem()
 
         def _apply(item: QStandardItem) -> None:
-            name = item.text()
-            col = mapping.get(name)
+            edge_id = item.data(Qt.UserRole)
+            col = mapping.get(edge_id)
             if col:
                 pix = QPixmap(12, 12)
                 pix.fill(QColor(col))
@@ -1915,12 +1829,11 @@ class MainWin(QMainWindow):
     def choose_hidden_edges(self):
         if not self.model:
             return
-        names = natsorted(self.model.hyperedges)
-        dialog = _MultiSelectDialog(names, self)
+        dialog = _MultiSelectDialog(self.model.edge_choices(), self)
         hidden = self.spatial_dock.hidden_edges
         for i in range(dialog.list.count()):
             item = dialog.list.item(i)
-            if item.text() in hidden:
+            if (item.data(Qt.UserRole) or item.text()) in hidden:
                 item.setSelected(True)
         if dialog.exec() != QDialog.Accepted:
             return
@@ -1935,10 +1848,10 @@ class MainWin(QMainWindow):
                     for c in range(it.rowCount()):
                         leaf = it.child(c, 0)
                         if leaf.isCheckable():
-                            leaf.setCheckState(Qt.Unchecked if leaf.text() in to_hide else Qt.Checked)
+                            leaf.setCheckState(Qt.Unchecked if leaf.data(Qt.UserRole) in to_hide else Qt.Checked)
                 else:
                     if it.isCheckable():
-                        it.setCheckState(Qt.Unchecked if it.text() in to_hide else Qt.Checked)
+                        it.setCheckState(Qt.Unchecked if it.data(Qt.UserRole) in to_hide else Qt.Checked)
         self.spatial_dock.set_hidden_edges(to_hide)
 
     def color_edges_default(self):
@@ -1981,7 +1894,7 @@ class MainWin(QMainWindow):
         if not self.model:
             return
         sel = self.tree.selectionModel().selectedRows(0)
-        ref = sel[0].data(Qt.DisplayRole) if sel else self._last_edge
+        ref = sel[0].data(Qt.UserRole) if sel else self._last_edge
         if not ref:
             return
         if not self._similarity_computed or self._similarity_ref != ref:

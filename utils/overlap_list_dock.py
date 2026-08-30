@@ -91,11 +91,12 @@ class _OverlapDelegate(QStyledItemDelegate):
         else:
             painter.fillRect(option.rect, option.palette.base())
 
-        name = index.data(NAME_ROLE)
+        edge_id = index.data(NAME_ROLE)
+        name = self._session.edge_label(edge_id) if self._session else edge_id
         count = index.data(COUNT_ROLE)
         imgs = index.data(IMAGES_ROLE)
         if imgs is None and self._session:
-            imgs = self._session.overview_triplet_for(name)
+            imgs = self._session.overview_triplet_for(edge_id)
             index.model().setData(index, imgs, IMAGES_ROLE)
 
         fm: QFontMetrics = option.fontMetrics
@@ -194,20 +195,21 @@ class OverlapListDock(QDockWidget):
 
         triplets = self.session.compute_overview_triplets()
 
-        for name, count in sorted(edge_counts.items(), key=lambda x: x[1], reverse=True):
-            item = QListWidgetItem(f"{name} ({count})")
-            item.setData(NAME_ROLE, name)
+        for edge_id, count in sorted(edge_counts.items(), key=lambda x: x[1], reverse=True):
+            label = self.session.edge_label(edge_id)
+            item = QListWidgetItem(f"{label} ({count})")
+            item.setData(NAME_ROLE, edge_id)
             item.setData(COUNT_ROLE, count)
-            item.setData(IMAGES_ROLE, triplets.get(name, ())[:6])
+            item.setData(IMAGES_ROLE, triplets.get(edge_id, ())[:6])
             self.list_widget.addItem(item)
 
         self._last_indices = indices
         
     def _on_double_clicked(self, item: QListWidgetItem):
-        name = item.data(NAME_ROLE)
-        if not name or self.session is None:
+        edge_id = item.data(NAME_ROLE)
+        if not edge_id or self.session is None:
             return
-        overlap = set(self.session.hyperedges.get(name, set())) & self._last_indices
+        overlap = set(self.session.hyperedges.get(edge_id, set())) & self._last_indices
         highlight = {i: QColor(221, 160, 221) for i in overlap}  # plum / light violet
         self.grid._highlight_next = highlight
-        self.bus.set_edges([name])
+        self.bus.set_edges([edge_id])
