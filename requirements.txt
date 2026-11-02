@@ -16,3 +16,6 @@ torch
 torchvision
 timm
 umap-learn
+pyinstaller
+safetensors
+huggingface_hub

@@ -1,8 +1,12 @@
 Sessions/
 __pycache__/
 utils/__pycache__/
+.venv/
 hypergallery.py
 utils/old/
 clustering/old/
 spatialOptimizer/
 models/
+build/
+dist/
+*.spec.bak

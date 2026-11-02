@@ -17,6 +17,9 @@ import sys
 from types import SimpleNamespace
 from typing import Union, Tuple
 
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
 class EmbedNN(Dataset):
     def __init__(self,
                  features,
@@ -137,7 +140,8 @@ def fix_random_seeds(seed=31):
     Fix random seeds.
     """
     torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
 
 
@@ -192,6 +196,7 @@ def get_args(out_dim, embed_dim):
 
 @torch.no_grad()
 def compute_neighbors(embedding, k):
+    embedding = embedding.to(DEVICE)
     embedding = embedding / embedding.norm(p=2, dim=-1, keepdim=True)
     num_embeds = embedding.shape[0]
     if num_embeds <= 8 * 1e4:
@@ -201,9 +206,8 @@ def compute_neighbors(embedding, k):
     else:
         topk_knn_ids = []
         topk_knn_dists = []
-        print("Chunk-wise implementation of k-nn in GPU")
+        print(f"Chunk-wise implementation of k-nn on {DEVICE}")
         step_size = 64
-        embedding = embedding.cuda()
         for idx in range(0, num_embeds, step_size):
             idx_next_chunk = min((idx + step_size), num_embeds)
             features = embedding[idx:idx_next_chunk, :]
@@ -229,11 +233,10 @@ def train_one_epoch(student_teacher_model, dino_loss, data_loader,
             param_group["lr"] = lr_schedule[it]
             if i == 0:  # only the first group is regularized
                 param_group["weight_decay"] = wd_schedule[it]
-        # move images to gpu
-        images = [im.cuda(non_blocking=True) for im in images]
+        images = [im.to(DEVICE, non_blocking=DEVICE.type == "cuda") for im in images]
         
         # teacher and student forward passes + compute dino loss
-        with torch.amp.autocast("cuda", enabled=fp16_scaler is not None):
+        with torch.amp.autocast(DEVICE.type, enabled=fp16_scaler is not None and DEVICE.type == "cuda"):
             teacher_out, student_out = student_teacher_model(images)
             if losses.is_multihead(dino_loss) or args.num_heads == 1:
                 head_losses = dino_loss(student_out, teacher_out, epoch=epoch)
@@ -272,7 +275,8 @@ def train_one_epoch(student_teacher_model, dino_loss, data_loader,
             for param_q, param_k in zip(s_head_params, t_head_params):
                 param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
 
-        torch.cuda.synchronize()
+        if DEVICE.type == "cuda":
+            torch.cuda.synchronize()
         metric_logger.update(loss=loss.item())
         metric_logger.update_raw(head_losses=head_losses)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
@@ -337,7 +341,7 @@ def train_dino(args, features, knn, progress_callback=None):
     print(f"In-distribution Data loaded: there are {len(dataset)} images.")
     print("len dataloader", len(data_loader))
     student_teacher_model = TeacherStudentCombo(teacher=teacher, student=student, args=args)
-    student_teacher_model = student_teacher_model.cuda()
+    student_teacher_model = student_teacher_model.to(DEVICE)
     loss_class = getattr(losses, args.loss)
     dino_loss_args = dict(
         out_dim=args.out_dim,
@@ -350,11 +354,11 @@ def train_dino(args, features, knn, progress_callback=None):
         **args.loss_args
     )
     if losses.is_multihead(loss_class):
-        dino_loss = loss_class(**dino_loss_args).cuda()
+        dino_loss = loss_class(**dino_loss_args).to(DEVICE)
     elif args.num_heads == 1:
-        dino_loss = loss_class(**dino_loss_args).cuda()
+        dino_loss = loss_class(**dino_loss_args).to(DEVICE)
     else:
-        dino_loss = torch.nn.ModuleList([loss_class(**dino_loss_args) for _ in range(args.num_heads)]).cuda()
+        dino_loss = torch.nn.ModuleList([loss_class(**dino_loss_args) for _ in range(args.num_heads)]).to(DEVICE)
     params_groups = utils.get_params_groups(student_teacher_model.module.trainable_student)
     if args.optimizer == "adamw":
         optimizer = torch.optim.AdamW(params_groups)
@@ -401,7 +405,8 @@ def train_dino(args, features, knn, progress_callback=None):
 @torch.no_grad()
 def run_eval_pipeline(model, features, threshold, use_head=True):
     model.eval()
-    features = features.cuda()
+    model = model.to(DEVICE)
+    features = features.to(DEVICE)
 
     if use_head:
         try:
@@ -466,7 +471,9 @@ def generate_hypergraph(
     Returns:
         Binary hypergraph (np.ndarray of shape [N, out_dim])
     """
-    features = torch.tensor(features, dtype=torch.float32).cuda() if not torch.is_tensor(features) else features.cuda()
+    features = torch.tensor(features, dtype=torch.float32) if not torch.is_tensor(features) else features
+    features = features.to(DEVICE)
+    model = model.to(DEVICE)
     model.eval()
     try:
         outputs, _ = model(features)
@@ -479,15 +486,6 @@ def generate_hypergraph(
         if np.all(hypergraph[i] == 0):
             hypergraph[i, np.argmax(outputs[i])] = 1
     return hypergraph
-
-# def get_hypergraph(features,out_dim,theshold):
-#     # features = torch.load(r"F:\PhD\Projects\HyperGallery\data\embeddings\mh17\feature_vectors.pt").cpu().numpy()
-#     features = torch.tensor(features, dtype=torch.float32)
-#     args = get_args(out_dim)
-#     nn_dists, knn = make_knn(features,num_k=25) 
-#     model = train_dino(args, features, knn)
-#     hypergraph = run_eval_pipeline(model, features, threshold=0.5)
-#     return hypergraph
 
 def temi_cluster(
     features: Union[np.ndarray, torch.Tensor],

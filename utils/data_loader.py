@@ -1,9 +1,10 @@
-import os
+from pathlib import Path
+
 import h5py
 import numpy as np
 import pandas as pd
 
-DATA_DIRECTORY = "F:/PhD/Projects/HyperGalleryDash/Sessions"
+DATA_DIRECTORY = Path(__file__).resolve().parent.parent / "Sessions"
 
 def _prepare_hypergraph_structures(df):
     """Return (hyperedges_dict, image_mapping_dict)."""
@@ -32,9 +33,9 @@ def _calculate_hyperedge_avg_features(hyperedges, features_arr):
 
 
 def get_h5_files_in_directory():
-    if not os.path.isdir(DATA_DIRECTORY):
+    if not DATA_DIRECTORY.is_dir():
         return []
-    return [f for f in os.listdir(DATA_DIRECTORY) if f.lower().endswith(".h5")]
+    return [p.name for p in DATA_DIRECTORY.iterdir() if p.suffix.lower() == ".h5"]
 
 
 def load_session_data(h5_path):

@@ -2,13 +2,13 @@ import os
 os.environ["PYQTGRAPH_QT_LIB"] = "PyQt5"   
 os.environ.pop("QT_API", None)             
 
+import torch
 import sys, uuid, numpy as np
 import pandas as pd
 import numpy as np
 from utils.similarity import SIM_METRIC
 from pathlib import Path
 import io
-import torch
 import hashlib
 from natsort import natsorted, natsort_keygen
 _nat_key = natsort_keygen()
@@ -64,6 +64,7 @@ from PyQt5.QtCore import (
 )
 
 from utils.data_loader import DATA_DIRECTORY
+from utils.runtime_paths import bundled_resource_path
 from utils.selection_bus import SelectionBus
 from utils.session_model import SessionModel, generate_n_colors
 from utils.image_grid import ImageGridDock
@@ -1419,7 +1420,7 @@ class MainWin(QMainWindow):
 
 
     def open_session(self):
-        file, _ = QFileDialog.getOpenFileName(self, "Select .h5 session", DATA_DIRECTORY, "H5 files (*.h5)")
+        file, _ = QFileDialog.getOpenFileName(self, "Select .h5 session", str(DATA_DIRECTORY), "H5 files (*.h5)")
         if file: 
             self.load_session(Path(file))
 
@@ -1992,9 +1993,21 @@ class MainWin(QMainWindow):
             sim_item.setData(None, Qt.UserRole); sim_item.setData("", Qt.DisplayRole)
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "HyperGalleryDash.HyperGalleryDash"
+            )
+        except Exception:
+            pass
+
     app = QApplication(sys.argv)
+    app_icon = QIcon(str(bundled_resource_path("icon.png")))
+    app.setWindowIcon(app_icon)
     if SYSTEM_DARK_MODE:
         apply_dark_palette(app)
     win = MainWin()
+    win.setWindowIcon(app_icon)
     win.show()
     sys.exit(app.exec())

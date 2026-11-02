@@ -189,7 +189,8 @@ def fix_random_seeds(seed=31):
     Fix random seeds.
     """
     torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
 
 
@@ -221,11 +222,12 @@ class SmoothedValue(object):
         if not is_dist_avail_and_initialized():
             return
         scalar = not isinstance(self.total, torch.Tensor)
+        sync_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if scalar:
-            total = torch.tensor(self.total, dtype=torch.float64, device="cuda")
+            total = torch.tensor(self.total, dtype=torch.float64, device=sync_device)
         else:
-            total = self.total
-        count = torch.tensor(self.count, dtype=torch.int64, device="cuda")
+            total = self.total.to(sync_device)
+        count = torch.tensor(self.count, dtype=torch.int64, device=sync_device)
         dist.barrier()
         dist.all_reduce(total)
         dist.all_reduce(count)

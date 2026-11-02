@@ -11,7 +11,6 @@ def fuzzy_cmeans_cluster(
     threshold: float,
     m: float = 1.1,
 ) -> Tuple[np.ndarray, FCM]:
-    """Cluster features using Fuzzy C-Means and generate a hypergraph."""
     X = np.array(features, dtype=np.float32)
     X_centered = StandardScaler(with_std=False).fit_transform(X)
     pca = PCA(n_components=256, svd_solver="randomized", random_state=0)
